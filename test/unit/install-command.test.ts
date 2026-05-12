@@ -5,7 +5,7 @@ describe('install docs restore', () => {
   it('uses the shared content resolver instead of duplicating the docs cascade', () => {
     const source = readFileSync('src/commands/install.ts', 'utf8')
 
-    expect(source).toContain('resolveContentDocs')
-    expect(source).not.toMatch(/\b(fetchGitDocs|fetchGitHubRaw|fetchLlmsTxt|downloadLlmsDocs|fetchReadmeContent|normalizeLlmsLinks|filterFrameworkDocs|isShallowGitDocs)\b/)
+    expect(source).toContain('fetchAndCacheResources')
+    expect(source).not.toMatch(/\b(fetchGitDocs|fetchGitHubRaw|fetchLlmsTxt|downloadLlmsDocs|fetchReadmeContent|normalizeLlmsLinks|filterFrameworkDocs|isShallowGitDocs|resolveContentDocs)\b/)
   })
 })

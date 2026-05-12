@@ -9,26 +9,20 @@
  *   .claude/skills/<skill>/SKILL.md -> regenerated from package.json + cache state
  */
 
-import type { AgentType, CustomPrompt, SkillSection } from '../agent/index.ts'
+import type { AgentType } from '../agent/index.ts'
+import type { SkillContext } from '../agent/skill-builder.ts'
 import type { FeaturesConfig } from '../core/config.ts'
 import type { SkillInfo } from '../core/lockfile.ts'
+import type { ResolvedPackage } from '../sources/index.ts'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { dirname, join } from 'pathe'
-import { agents, createToolProgress, getModelLabel, linkSkillToAgents, optimizeDocs } from '../agent/index.ts'
-import { writeGeneratedSkillMd, writeSkillMd } from '../agent/prompts/skill.ts'
-import { writePromptFiles } from '../agent/skill-builder.ts'
-import {
-  classifyCachedDoc,
-  createReferenceCache,
-  ensureCacheDir,
-  getCacheDir,
-  getPackageDbPath,
-  inferDocsTypeFromCache,
-  listReferenceFiles,
-} from '../cache/index.ts'
+import { agents, getModelLabel, linkSkillToAgents } from '../agent/index.ts'
+import { writeSkillMd } from '../agent/prompts/skill.ts'
+import { enhanceSkillWithLLM, writeBaseSkill, writePromptFiles } from '../agent/skill-builder.ts'
+import { createReferenceCache, ensureCacheDir, getCacheDir } from '../cache/index.ts'
 import { promptForAgent, resolveAgent } from '../cli/agent-prompt.ts'
 import { sharedArgs } from '../cli/args.ts'
 import { defaultFeatures, readConfig } from '../core/config.ts'
@@ -38,24 +32,16 @@ import { readPackageJsonSafe } from '../core/package-json.ts'
 import { getSharedSkillsDir, skillInternalDir } from '../core/paths.ts'
 import { toStoragePackageName } from '../core/prefix.ts'
 import {
-  hasShippedDocs as checkShippedDocs,
-  getPkgKeyFiles,
   getShippedSkills,
   linkShippedSkill,
   resolvePkgDir,
 } from '../core/prepare.ts'
 import { sanitizeMarkdown } from '../core/sanitize.ts'
-import { parseGitHubUrl } from '../core/url.ts'
-import { indexResources } from '../retriv/index-pipeline.ts'
-import { createIndex, SearchDepsUnavailableError } from '../retriv/index.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
-import { resolveContentDocs } from '../sources/content-resolver.ts'
 import { fetchGitSkills } from '../sources/git-skills.ts'
-import {
-  resolveEntryFiles,
-  resolvePackageDocs,
-} from '../sources/index.ts'
+import { resolvePackageDocs } from '../sources/index.ts'
 import { selectLlmConfig } from './llm-prompts.ts'
+import { buildSkillContext, fetchAndCacheResources, prepareSkillReferences } from './sync/pipeline.ts'
 
 export interface InstallOptions {
   global: boolean
@@ -129,8 +115,7 @@ export async function installCommand(opts: InstallOptions): Promise<void> {
   p.log.info(`Restoring ${toRestore.length} references`)
   ensureCacheDir()
 
-  const allSkillNames = skills.map(([, info]) => info.packageName || '').filter(Boolean)
-  const regenerated: Array<{ name: string, pkgName: string, version: string, skillDir: string, packages?: string }> = []
+  const regenerated: Array<{ name: string, ctx: SkillContext }> = []
 
   for (const { name, info } of toRestore) {
     const version = info.version!
@@ -182,100 +167,68 @@ export async function installCommand(opts: InstallOptions): Promise<void> {
     const skillDir = join(skillsDir, name)
     const cache = createReferenceCache(pkgName, version)
     const spin = timedSpinner()
+    const wasCacheHit = cache.has()
+    spin.start(wasCacheHit ? `Linking ${name}` : `Downloading ${name}@${version}`)
+    mkdirSync(skillDir, { recursive: true })
 
-    // Check if already in global cache - just create symlinks
-    if (cache.has()) {
-      spin.start(`Linking ${name}`)
-      mkdirSync(skillDir, { recursive: true })
-      const repoGh = info.repo ? parseGitHubUrl(`https://github.com/${info.repo}`) : null
-      const docsType = inferDocsTypeFromCache(cache.dir, info.source)
-      cache.linkInto(skillDir, cwd, docsType, {
-        extraPackages: parsePackages(info.packages),
-        features,
-        repoInfo: repoGh ? { owner: repoGh.owner, repo: repoGh.repo } : undefined,
-      })
-      // Create search index from cached docs if missing
-      if (features.search && !existsSync(getPackageDbPath(pkgName, version))) {
-        spin.message(`Indexing ${name}`)
-        const cached = cache.readDocs()
-        const docsToIndex = cached.map(d => ({
-          id: d.path,
-          content: d.content,
-          metadata: { package: pkgName, source: d.path, type: classifyCachedDoc(d.path).type },
-        }))
-        await indexResources({ packageName: pkgName, version, cwd, docsToIndex, features, onProgress: msg => spin.message(msg) })
-      }
-      if (!copyFromExistingAgent(skillDir, name, allSkillsDirs)) {
-        if (regenerateBaseSkillMd(skillDir, pkgName, version, cwd, allSkillNames, info.source, info.packages))
-          regenerated.push({ name, pkgName, version, skillDir, packages: info.packages })
-      }
-      spin.stop(`Linked ${name}`)
-      continue
-    }
-
-    // Need to download to global cache first
-    spin.start(`Downloading ${name}@${version}`)
-
-    const resolved = await resolvePackageDocs(pkgName, { version })
+    const resolved: ResolvedPackage | null = wasCacheHit
+      ? synthesizeResolved(identityName, version, info, cwd)
+      : await resolvePackageDocs(pkgName, { version })
 
     if (!resolved) {
       spin.stop(`Could not resolve: ${name}`)
       continue
     }
 
-    const content = await resolveContentDocs({
+    const resources = await fetchAndCacheResources({
       packageName: pkgName,
       resolved,
       version,
+      useCache: wasCacheHit,
+      features,
       onProgress: msg => spin.message(msg),
     })
 
-    for (const warning of content.warnings)
-      p.log.warn(`${name}: ${warning}`)
+    for (const w of resources.warnings)
+      p.log.warn(`${name}: ${w}`)
 
-    if (content.docs.length > 0) {
-      cache.write(content.docs)
-
-      const repoGh = info.repo ? parseGitHubUrl(`https://github.com/${info.repo}`) : null
-      const docsType = content.docsType
-      cache.linkInto(skillDir, cwd, docsType, {
-        extraPackages: parsePackages(info.packages),
-        features,
-        repoInfo: repoGh ? { owner: repoGh.owner, repo: repoGh.repo } : undefined,
-      })
-
-      if (features.search) {
-        try {
-          if (content.docsToIndex.length > 0) {
-            await createIndex(content.docsToIndex, { dbPath: getPackageDbPath(pkgName, version) })
-          }
-
-          // Index package entry files (.d.ts / .js)
-          const pkgDir = resolvePkgDir(pkgName, cwd, version)
-          const entryFiles = pkgDir ? await resolveEntryFiles(pkgDir) : []
-          if (entryFiles.length > 0) {
-            await createIndex(entryFiles.map(e => ({
-              id: e.path,
-              content: e.content,
-              metadata: { package: pkgName, source: `pkg/${e.path}`, type: e.type },
-            })), { dbPath: getPackageDbPath(pkgName, version) })
-          }
-        }
-        catch (err) {
-          if (!(err instanceof SearchDepsUnavailableError))
-            throw err
-        }
-      }
-
-      if (!copyFromExistingAgent(skillDir, name, allSkillsDirs)) {
-        if (regenerateBaseSkillMd(skillDir, pkgName, version, cwd, allSkillNames, info.source, info.packages))
-          regenerated.push({ name, pkgName, version, skillDir, packages: info.packages })
-      }
-      spin.stop(`Downloaded and linked ${name}`)
-    }
-    else {
+    if (!cache.has()) {
       spin.stop(`No docs found for ${name}`)
+      continue
     }
+
+    const prepared = await prepareSkillReferences({
+      packageName: pkgName,
+      version,
+      cwd,
+      skillDir,
+      resources,
+      features,
+      baseDir: skillsDir,
+      extraPackages: parsePackages(info.packages),
+      onIndexProgress: msg => spin.message(msg),
+    })
+
+    const ctx = buildSkillContext({
+      packageName: identityName,
+      cachePackageName: pkgName,
+      version,
+      skillDir,
+      skillDirName: name,
+      resources,
+      prepared,
+      resolved,
+      packages: parsePackageNames(info.packages),
+      features,
+    })
+
+    if (!copyFromExistingAgent(skillDir, name, allSkillsDirs)) {
+      if (!existsSync(join(skillDir, 'SKILL.md'))) {
+        writeBaseSkill(ctx)
+        regenerated.push({ name, ctx })
+      }
+    }
+    spin.stop(wasCacheHit ? `Linked ${name}` : `Downloaded and linked ${name}`)
   }
 
   // Offer LLM enhancement for regenerated SKILL.md files
@@ -283,35 +236,17 @@ export async function installCommand(opts: InstallOptions): Promise<void> {
     const names = regenerated.map(r => r.name).join(', ')
     const llmConfig = await selectLlmConfig(undefined, `Enhance SKILL.md for ${names}`)
     if (llmConfig?.promptOnly) {
-      const features = readConfig().features ?? defaultFeatures
-      for (const { pkgName, version, skillDir } of regenerated) {
-        const globalCachePath = getCacheDir(pkgName, version)
-        writePromptFiles({
-          packageName: pkgName,
-          version,
-          skillDir,
-          references: {
-            docsType: 'docs',
-            hasShippedDocs: false,
-            pkgFiles: getPkgKeyFiles(pkgName, process.cwd(), version),
-            hasIssues: existsSync(join(globalCachePath, 'issues')),
-            hasDiscussions: existsSync(join(globalCachePath, 'discussions')),
-            hasReleases: existsSync(join(globalCachePath, 'releases')),
-            hasChangelog: false,
-          },
-          resolved: {},
-          relatedSkills: [],
-          features,
-        }, {
-          sections: llmConfig.sections,
-          customPrompt: llmConfig.customPrompt,
-        })
-      }
+      for (const { ctx } of regenerated)
+        writePromptFiles(ctx, { sections: llmConfig.sections, customPrompt: llmConfig.customPrompt })
     }
     else if (llmConfig) {
       p.log.step(getModelLabel(llmConfig.model))
-      for (const { pkgName, version, skillDir, packages: pkgPackages } of regenerated) {
-        await enhanceRegenerated(pkgName, version, skillDir, llmConfig.model, llmConfig.sections, llmConfig.customPrompt, pkgPackages)
+      for (const { ctx } of regenerated) {
+        await enhanceSkillWithLLM(ctx, {
+          model: llmConfig.model,
+          sections: llmConfig.sections,
+          customPrompt: llmConfig.customPrompt,
+        })
       }
     }
   }
@@ -374,81 +309,14 @@ function unsanitizeName(sanitized: string, source?: string): string {
   return sanitized
 }
 
-/** Run LLM enhancement on a regenerated SKILL.md */
-async function enhanceRegenerated(
-  pkgName: string,
-  version: string,
-  skillDir: string,
-  model: Parameters<typeof optimizeDocs>[0]['model'],
-  sections: SkillSection[],
-  customPrompt?: CustomPrompt,
-  packages?: string,
-): Promise<void> {
-  const llmLog = p.taskLog({ title: `Agent exploring ${pkgName}`, limit: 3 })
-
-  const docFiles = listReferenceFiles(skillDir)
-  const globalCachePath = getCacheDir(pkgName, version)
-  const hasIssues = existsSync(join(globalCachePath, 'issues'))
-  const hasDiscussions = existsSync(join(globalCachePath, 'discussions'))
-  const hasGithub = hasIssues || hasDiscussions
-  const hasReleases = existsSync(join(globalCachePath, 'releases'))
-
-  const features = readConfig().features ?? defaultFeatures
-  const { optimized, wasOptimized } = await optimizeDocs({
-    packageName: pkgName,
-    skillDir,
-    model,
-    version,
-    hasGithub,
-    hasReleases,
-    docFiles,
-    sections,
-    customPrompt,
-    features,
-    pkgFiles: getPkgKeyFiles(pkgName, process.cwd(), version),
-    onProgress: createToolProgress(llmLog),
-  })
-
-  if (wasOptimized) {
-    llmLog.success('Generated best practices')
-    // Re-read local metadata for the enhanced version
-    const cwd = process.cwd()
-    const pkgPath = resolvePkgDir(pkgName, cwd, version)
-    let description: string | undefined
-    if (pkgPath) {
-      const pkgJsonPath = join(pkgPath, 'package.json')
-      const pkgJsonResult = readPackageJsonSafe(pkgJsonPath)
-      if (pkgJsonResult) {
-        description = pkgJsonResult.parsed.description as string | undefined
-      }
-    }
-
-    const docsType = inferDocsTypeFromCache(globalCachePath)
-
-    // Derive dirName from the skill directory name
-    const dirName = skillDir.split('/').pop()
-
-    const allPackages = parsePackageNames(packages)
-    writeGeneratedSkillMd(skillDir, {
-      name: pkgName,
-      version,
-      description,
-      body: optimized,
-      relatedSkills: [],
-      hasIssues,
-      hasDiscussions,
-      hasReleases,
-      docsType,
-      hasShippedDocs: checkShippedDocs(pkgName, cwd, version),
-      pkgFiles: getPkgKeyFiles(pkgName, cwd, version),
-      dirName,
-      packages: allPackages.length > 1 ? allPackages : undefined,
-      features,
-    })
-  }
-  else {
-    llmLog.message('Enhancement skipped')
-  }
+/** Build a minimal ResolvedPackage from lockfile state for cache-hit restoration. */
+function synthesizeResolved(identityName: string, version: string, info: SkillInfo, cwd: string): ResolvedPackage {
+  const repoUrl = info.repo?.includes('/') ? `https://github.com/${info.repo}` : undefined
+  const pkgPath = resolvePkgDir(toStoragePackageName(identityName), cwd, version)
+  const description = pkgPath
+    ? readPackageJsonSafe(join(pkgPath, 'package.json'))?.parsed.description as string | undefined
+    : undefined
+  return { name: identityName, version, repoUrl, description }
 }
 
 export const installCommandDef = defineCommand({
@@ -472,69 +340,6 @@ export const installCommandDef = defineCommand({
     return installCommand({ global: args.global, agent })
   },
 })
-
-/** Regenerate base SKILL.md from local metadata if missing */
-function regenerateBaseSkillMd(
-  skillDir: string,
-  pkgName: string,
-  version: string,
-  cwd: string,
-  allSkillNames: string[],
-  source?: string,
-  packages?: string,
-): boolean {
-  const skillMdPath = join(skillDir, 'SKILL.md')
-  if (existsSync(skillMdPath))
-    return false
-
-  // Read description + deps from local package.json
-  const pkgPath = resolvePkgDir(pkgName, cwd, version)
-  let description: string | undefined
-  if (pkgPath) {
-    const pkgResult = readPackageJsonSafe(join(pkgPath, 'package.json'))
-    if (pkgResult) {
-      description = pkgResult.parsed.description as string | undefined
-    }
-  }
-
-  // Infer docsType from source or cache
-  const globalCachePath = getCacheDir(pkgName, version)
-  const docsType = inferDocsTypeFromCache(globalCachePath, source)
-
-  // Check cache dirs for issues/discussions/releases (only if feature enabled)
-  const feat = readConfig().features ?? defaultFeatures
-  const hasIssues = feat.issues && existsSync(join(globalCachePath, 'issues'))
-  const hasDiscussions = feat.discussions && existsSync(join(globalCachePath, 'discussions'))
-  const hasReleases = feat.releases && existsSync(join(globalCachePath, 'releases'))
-
-  // Related skills from other lockfile entries
-  const relatedSkills = allSkillNames.filter(n => n !== pkgName)
-
-  // Derive dirName from the skill directory name (lockfile key)
-  const dirName = skillDir.split('/').pop()
-
-  // Build multi-package list from lockfile packages field
-  const allPackages = parsePackageNames(packages)
-
-  mkdirSync(skillDir, { recursive: true })
-  writeGeneratedSkillMd(skillDir, {
-    name: pkgName,
-    version,
-    description,
-    relatedSkills,
-    hasIssues,
-    hasDiscussions,
-    hasReleases,
-    docsType,
-    hasShippedDocs: checkShippedDocs(pkgName, cwd, version),
-    pkgFiles: getPkgKeyFiles(pkgName, cwd, version),
-    dirName,
-    packages: allPackages.length > 1 ? allPackages : undefined,
-    features: readConfig().features ?? defaultFeatures,
-  })
-
-  return true
-}
 
 /** Check if .skilld/ has broken symlinks or is missing expected references from global cache */
 function hasStaleReferences(referencesPath: string, pkgName: string, version: string, features: FeaturesConfig): boolean {

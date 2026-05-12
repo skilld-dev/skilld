@@ -159,12 +159,13 @@ export async function prepareSkillReferences(opts: {
   resources: FetchResult
   features: FeaturesConfig
   baseDir?: string
+  extraPackages?: Array<{ name: string, version?: string }>
   onIndexProgress?: (msg: string) => void
 }): Promise<PreparedSkill> {
-  const { packageName, version, cwd, skillDir, resources, features, baseDir, onIndexProgress } = opts
+  const { packageName, version, cwd, skillDir, resources, features, baseDir, extraPackages, onIndexProgress } = opts
   const cache = createReferenceCache(packageName, version)
 
-  cache.linkInto(skillDir, cwd, resources.docsType, { features, repoInfo: resources.repoInfo })
+  cache.linkInto(skillDir, cwd, resources.docsType, { features, repoInfo: resources.repoInfo, extraPackages })
 
   if (features.search) {
     await indexResources({
