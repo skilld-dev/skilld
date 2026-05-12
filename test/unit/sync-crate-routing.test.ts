@@ -17,7 +17,8 @@ vi.mock('../../src/sources/crates.ts', () => ({
   }),
 }))
 
-const { syncCommand, isCrateSpec } = await import('../../src/commands/sync')
+const { syncCommand } = await import('../../src/commands/sync')
+const { isCrateSpec } = await import('../../src/core/prefix')
 
 describe('commands/sync crate routing', () => {
   beforeEach(() => {

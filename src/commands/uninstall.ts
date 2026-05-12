@@ -4,13 +4,14 @@ import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { join } from 'pathe'
 import { agents } from '../agent/index.ts'
+import { SKILLD_MARKER_END, SKILLD_MARKER_START } from '../agent/skill-installer.ts'
 import { CACHE_DIR } from '../cache/index.ts'
-import { isInteractive, sharedArgs } from '../cli-helpers.ts'
+import { sharedArgs } from '../cli/args.ts'
+import { isInteractive } from '../cli/env.ts'
 import { getRegisteredProjects, unregisterProject } from '../core/config.ts'
 import { readLock } from '../core/lockfile.ts'
 import { mapInsert } from '../core/map.ts'
 import { SHARED_SKILLS_DIR } from '../core/paths.ts'
-import { SKILLD_MARKER_END, SKILLD_MARKER_START } from './sync.ts'
 
 /**
  * Remove the skilld marker block from an agent's instruction file.

@@ -1,5 +1,5 @@
 import { defineCommand } from 'citty'
-import { sharedArgs } from '../cli-helpers.ts'
+import { sharedArgs } from '../cli/args.ts'
 import { formatSource, timeAgo } from '../core/formatting.ts'
 import { getProjectState, iterateSkills } from '../core/skills.ts'
 

@@ -5,7 +5,7 @@ export const authorGroupDef = defineCommand({
   subCommands: {
     package: () => import('./author.ts').then(m => m.authorCommandDef),
     publish: () => import('./upload.ts').then(m => m.uploadCommandDef),
-    eject: () => import('./sync.ts').then(m => m.ejectCommandDef),
+    eject: () => import('./sync/eject.ts').then(m => m.ejectCommandDef),
     validate: () => import('./validate.ts').then(m => m.validateCommandDef),
     assemble: () => import('./assemble.ts').then(m => m.assembleCommandDef),
   },

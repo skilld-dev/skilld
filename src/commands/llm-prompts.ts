@@ -15,7 +15,8 @@ import type { CustomPrompt, OptimizeModel, SkillSection } from '../agent/index.t
 import * as p from '@clack/prompts'
 import { getAvailableModels, getModelName } from '../agent/index.ts'
 import { maxItems, maxLines } from '../agent/prompts/optional/budget.ts'
-import { isInteractive, NO_MODELS_MESSAGE, pickModel } from '../cli-helpers.ts'
+import { isInteractive } from '../cli/env.ts'
+import { NO_MODELS_MESSAGE, pickModel } from '../cli/model-picker.ts'
 import { readConfig, updateConfig } from '../core/config.ts'
 import { semverDiff } from '../core/semver.ts'
 

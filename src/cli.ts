@@ -7,7 +7,12 @@ import { defineCommand, runMain } from 'citty'
 import pLimit from 'p-limit'
 import { join, resolve } from 'pathe'
 import { agents, detectImportedPackages, detectInstalledAgents } from './agent/index.ts'
-import { formatStatus, getRepoHint, guard, hasPrepareHook, isInteractive, isRunningInsideAgent, menuLoop, promptForAgent, relativeTime, resolveAgent, sharedArgs, suggestPrepareHook } from './cli-helpers.ts'
+import { promptForAgent, resolveAgent } from './cli/agent-prompt.ts'
+import { sharedArgs } from './cli/args.ts'
+import { isInteractive, isRunningInsideAgent } from './cli/env.ts'
+import { formatStatus, getRepoHint, relativeTime } from './cli/intro.ts'
+import { guard, menuLoop } from './cli/menu.ts'
+import { hasPrepareHook, suggestPrepareHook } from './cli/prepare-hook.ts'
 import { configCommand, configCommandDef } from './commands/config.ts'
 import { removeCommand, removeCommandDef } from './commands/remove.ts'
 import { infoCommandDef, statusCommand } from './commands/status.ts'
@@ -64,8 +69,8 @@ const main = defineCommand({
     agent: sharedArgs.agent,
   },
   subCommands: {
-    add: () => import('./commands/sync.ts').then(m => m.addCommandDef),
-    update: () => import('./commands/sync.ts').then(m => m.updateCommandDef),
+    add: () => import('./commands/sync/add.ts').then(m => m.addCommandDef),
+    update: () => import('./commands/sync/update.ts').then(m => m.updateCommandDef),
     info: () => infoCommandDef,
     list: () => import('./commands/list.ts').then(m => m.listCommandDef),
     config: () => configCommandDef,
@@ -79,7 +84,7 @@ const main = defineCommand({
     // Author group (nested subcommands)
     author: () => import('./commands/author-group.ts').then(m => m.authorGroupDef),
     // Deprecated forwarders (old top-level commands → skilld author <subcommand>)
-    eject: deprecatedForwarder('eject', 'author eject', () => import('./commands/sync.ts').then(m => m.ejectCommandDef)),
+    eject: deprecatedForwarder('eject', 'author eject', () => import('./commands/sync/eject.ts').then(m => m.ejectCommandDef)),
     validate: deprecatedForwarder('validate', 'author validate', () => import('./commands/validate.ts').then(m => m.validateCommandDef)),
     assemble: deprecatedForwarder('assemble', 'author assemble', () => import('./commands/assemble.ts').then(m => m.assembleCommandDef)),
     publish: deprecatedForwarder('publish', 'author publish', () => import('./commands/upload.ts').then(m => m.uploadCommandDef)),

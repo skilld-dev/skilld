@@ -35,7 +35,8 @@ vi.mock('node:fs', async () => {
   }
 })
 
-const { fetchLatestVersion, fetchNpmRegistryMeta, parseVersionSpecifier, resolveInstalledVersion } = await import('../../src/sources/npm')
+const { fetchLatestVersion, fetchNpmRegistryMeta } = await import('../../src/sources/npm-registry')
+const { parseVersionSpecifier, resolveInstalledVersion } = await import('../../src/sources/local-package')
 const { clearPackageJsonCache } = await import('../../src/core/package-json')
 
 function makeSkill(version: string | undefined): SkillEntry {

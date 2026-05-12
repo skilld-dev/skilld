@@ -240,7 +240,7 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
 
   p.outro(`${pastVerb} ${ready.length}/${packages.length} packages`)
 
-  const { suggestPrepareHook } = await import('../cli-helpers.ts')
+  const { suggestPrepareHook } = await import('../cli/prepare-hook.ts')
   try {
     await suggestPrepareHook(cwd)
   }

@@ -13,7 +13,7 @@ import {
 } from '../agent/index.ts'
 import { enhanceSkillWithLLM, writePromptFiles } from '../agent/skill-builder.ts'
 import { createReferenceCache, ensureCacheDir } from '../cache/index.ts'
-import { guard } from '../cli-helpers.ts'
+import { guard } from '../cli/menu.ts'
 import { defaultFeatures, readConfig } from '../core/config.ts'
 import { timedSpinner } from '../core/formatting.ts'
 import { detectMonorepoPackages } from '../core/monorepo.ts'

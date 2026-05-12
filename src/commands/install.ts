@@ -19,6 +19,7 @@ import { defineCommand } from 'citty'
 import { dirname, join } from 'pathe'
 import { agents, createToolProgress, getModelLabel, linkSkillToAgents, optimizeDocs } from '../agent/index.ts'
 import { writeGeneratedSkillMd, writeSkillMd } from '../agent/prompts/skill.ts'
+import { writePromptFiles } from '../agent/skill-builder.ts'
 import {
   hasShippedDocs as checkShippedDocs,
   classifyCachedDoc,
@@ -33,7 +34,8 @@ import {
   listReferenceFiles,
   resolvePkgDir,
 } from '../cache/index.ts'
-import { promptForAgent, resolveAgent, sharedArgs } from '../cli-helpers.ts'
+import { promptForAgent, resolveAgent } from '../cli/agent-prompt.ts'
+import { sharedArgs } from '../cli/args.ts'
 import { defaultFeatures, readConfig } from '../core/config.ts'
 import { timedSpinner } from '../core/formatting.ts'
 import { mergeLocks, parsePackageNames, parsePackages, readLock, syncLockfilesToDirs, writeLock } from '../core/lockfile.ts'
@@ -51,7 +53,7 @@ import {
   resolveEntryFiles,
   resolvePackageDocs,
 } from '../sources/index.ts'
-import { selectLlmConfig, writePromptFiles } from './sync.ts'
+import { selectLlmConfig } from './llm-prompts.ts'
 
 export interface InstallOptions {
   global: boolean

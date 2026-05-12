@@ -16,8 +16,8 @@ vi.mock('../../src/cache/index.ts', async (importOriginal) => {
   }
 })
 
-vi.mock('../../src/sources/npm.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/sources/npm')>()
+vi.mock('../../src/sources/resolver.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/sources/resolver')>()
   return {
     ...actual,
     resolvePackageDocsWithAttempts: vi.fn().mockResolvedValue({
@@ -33,6 +33,13 @@ vi.mock('../../src/sources/npm.ts', async (importOriginal) => {
         },
       ],
     }),
+  }
+})
+
+vi.mock('../../src/sources/local-package.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/sources/local-package')>()
+  return {
+    ...actual,
     readLocalDependencies: vi.fn().mockResolvedValue([]),
   }
 })

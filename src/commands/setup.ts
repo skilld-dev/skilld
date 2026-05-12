@@ -1,6 +1,7 @@
 import type { AgentType } from '../agent/index.ts'
 import { defineCommand } from 'citty'
-import { resolveAgent, sharedArgs } from '../cli-helpers.ts'
+import { resolveAgent } from '../cli/agent-prompt.ts'
+import { sharedArgs } from '../cli/args.ts'
 import { runWizard } from './wizard.ts'
 
 export const setupCommandDef = defineCommand({

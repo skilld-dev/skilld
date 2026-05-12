@@ -4,7 +4,8 @@ import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import { getOAuthProviderList, loginOAuthProvider } from '../agent/clis/pi-ai.ts'
 import { agents, getAvailableModels, getModelName } from '../agent/index.ts'
-import { isInteractive, NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli-helpers.ts'
+import { isInteractive } from '../cli/env.ts'
+import { NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli/model-picker.ts'
 import { defaultFeatures, updateConfig } from '../core/config.ts'
 
 function hasGhCli(): boolean {

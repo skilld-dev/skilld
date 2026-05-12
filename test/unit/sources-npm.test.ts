@@ -62,7 +62,9 @@ vi.mock('node:child_process', async () => {
 })
 
 // Must import after vi.mock
-const { fetchNpmPackage, fetchPkgDist, getInstalledSkillVersion, readLocalDependencies, resolveInstalledVersion, resolvePackageDocs } = await import('../../src/sources/npm')
+const { fetchNpmPackage, fetchPkgDist } = await import('../../src/sources/npm-registry')
+const { getInstalledSkillVersion, readLocalDependencies, resolveInstalledVersion } = await import('../../src/sources/local-package')
+const { resolvePackageDocs } = await import('../../src/sources/resolver')
 const { clearPackageJsonCache } = await import('../../src/core/package-json')
 
 describe('sources/npm', () => {

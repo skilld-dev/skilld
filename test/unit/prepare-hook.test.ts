@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildPrepareScript } from '../../src/cli-helpers.ts'
+import { buildPrepareScript } from '../../src/cli/prepare-hook.ts'
 import { editJsonProperty } from '../../src/core/package-json.ts'
 
 function makeTempCwd(hasSkilld: boolean): string {

@@ -75,22 +75,23 @@ export { resolveLocalDep } from './local-dep.ts'
 
 // ─ GitHub timeline (issues, discussions, releases) ───────────────────────
 
-export type { LocalPackageInfo, ResolveOptions, ResolveStep } from './npm.ts'
+export type { LocalPackageInfo } from './local-package.ts'
 export {
-  fetchLatestVersion,
-  fetchNpmPackage,
-  fetchNpmRegistryMeta,
-  fetchPkgDist,
   getInstalledSkillVersion,
   parseVersionSpecifier,
   readLocalDependencies,
   readLocalPackageInfo,
   resolveInstalledVersion,
   resolveLocalPackageDocs,
-  resolvePackageDocs,
-  resolvePackageDocsWithAttempts,
+} from './local-package.ts'
+
+export {
+  fetchLatestVersion,
+  fetchNpmPackage,
+  fetchNpmRegistryMeta,
+  fetchPkgDist,
   searchNpmPackages,
-} from './npm.ts'
+} from './npm-registry.ts'
 
 export type { BlogPreset, BlogRelease, DocOverride } from './package-registry.ts'
 export {
@@ -107,10 +108,13 @@ export {
 export type { GitHubRelease, ReleaseIndexOptions, SemVer } from './releases.ts'
 export { compareSemver, fetchReleaseNotes, generateReleaseIndex, isPrerelease, parseSemver } from './releases.ts'
 
-// ─ Pre-authored skills from git repos (separate flow) ────────────────────
-
 export type { PackageResolution, ResolvePackageOptions } from './resolve-package.ts'
 export { resolvePackageOrCrate } from './resolve-package.ts'
+
+// ─ Pre-authored skills from git repos (separate flow) ────────────────────
+
+export type { ResolveOptions, ResolveStep } from './resolver.ts'
+export { resolvePackageDocs, resolvePackageDocsWithAttempts } from './resolver.ts'
 
 // ─ Shared types and utilities ────────────────────────────────────────────
 

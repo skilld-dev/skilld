@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import * as p from '@clack/prompts'
 import { join, relative } from 'pathe'
 import { getShippedSkills, linkShippedSkill } from '../cache/index.ts'
-import { isInteractive } from '../cli-helpers.ts'
+import { isInteractive } from '../cli/env.ts'
 import { registerProject } from '../core/config.ts'
 import { todayIsoDate } from '../core/formatting.ts'
 import { findSkillDirsByPackage, readLock, removeLockEntry, writeLock } from '../core/lockfile.ts'
