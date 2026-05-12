@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+const configHome = () => process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 
 /**
  * OpenCode (SST)
@@ -20,13 +20,13 @@ const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 export const opencode = defineTarget({
   agent: 'opencode',
   displayName: 'OpenCode',
-  detectInstalled: () => existsSync(join(configHome, 'opencode')),
+  detectInstalled: () => existsSync(join(configHome(), 'opencode')),
   detectEnv: () => !!(process.env.OPENCODE_SESSION || process.env.OPENCODE_SESSION_ID),
   detectProject: cwd => existsSync(join(cwd, '.opencode')),
   instructionFile: 'AGENTS.md',
 
   skillsDir: '.opencode/skills',
-  globalSkillsDir: join(configHome, 'opencode/skills'),
+  globalSkillsDir: () => join(configHome(), 'opencode/skills'),
   additionalSkillsDirs: [
     '.claude/skills',
     '.agents/skills',

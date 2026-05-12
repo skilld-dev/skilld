@@ -10,12 +10,12 @@ import pLimit from 'p-limit'
 import { join } from 'pathe'
 import { computeSkillDirName } from '../../src/agent'
 import {
+  createReferenceCache,
   ensureCacheDir,
   getCacheDir,
   getPackageDbPath,
-  isCached,
-  writeToCache,
 } from '../../src/cache'
+import { parseGitHubUrl } from '../../src/core/url'
 import { createIndexDirect } from '../../src/retriv'
 import {
   downloadLlmsDocs,
@@ -24,8 +24,6 @@ import {
   fetchReadmeContent,
   isShallowGitDocs,
   normalizeLlmsLinks,
-  parseGitHubUrl,
-
   resolvePackageDocsWithAttempts,
 } from '../../src/sources'
 
@@ -108,8 +106,9 @@ export async function runPipeline(name: string): Promise<PipelineResult> {
   let cachedDocsCount: number
   let cachedFiles: string[]
 
+  const cache = createReferenceCache(name, version)
   const cacheDir = getCacheDir(name, version)
-  const cachedDocFiles = isCached(name, version) ? listDocFiles(cacheDir) : []
+  const cachedDocFiles = cache.has() ? listDocFiles(cacheDir) : []
   // Consider cached if we have docs (not just changelogs)
   // Cache valid when docs use normalized docs/ prefix or llms.txt-only.
   // Stale caches (src/, packages/, www/ prefixes) need refetch.
@@ -159,7 +158,7 @@ export async function runPipeline(name: string): Promise<PipelineResult> {
             )
             for (const r of results) {
               if (r) {
-                // Normalize paths same as sync-pipeline.ts: strip docsPrefix, ensure docs/ prefix
+                // Normalize paths same as commands/sync/pipeline.ts: strip docsPrefix, ensure docs/ prefix
                 const stripped = gitDocs.docsPrefix ? r.file.replace(gitDocs.docsPrefix, '') : r.file
                 const cachePath = stripped.startsWith('docs/') ? stripped : `docs/${stripped}`
                 cachedDocs.push({ path: cachePath, content: r.content })
@@ -228,7 +227,7 @@ export async function runPipeline(name: string): Promise<PipelineResult> {
     }
 
     if (cachedDocs.length > 0) {
-      writeToCache(name, version, cachedDocs)
+      cache.write(cachedDocs)
     }
 
     const dbPath = getPackageDbPath(name, version)

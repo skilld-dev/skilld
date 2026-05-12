@@ -3,14 +3,15 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 function hasCopilotExtension(): boolean {
   // Check common VS Code extension dirs for github.copilot
+  const h = home()
   const extDirs = [
-    join(home, '.vscode', 'extensions'),
-    join(home, '.vscode-server', 'extensions'),
-    join(home, '.cursor', 'extensions'),
+    join(h, '.vscode', 'extensions'),
+    join(h, '.vscode-server', 'extensions'),
+    join(h, '.cursor', 'extensions'),
   ]
   for (const dir of extDirs) {
     if (!existsSync(dir))
@@ -39,7 +40,7 @@ function hasCopilotExtension(): boolean {
 export const githubCopilot = defineTarget({
   agent: 'github-copilot',
   displayName: 'GitHub Copilot',
-  detectInstalled: () => existsSync(join(home, '.copilot')) || hasCopilotExtension(),
+  detectInstalled: () => existsSync(join(home(), '.copilot')) || hasCopilotExtension(),
   detectEnv: () => !!process.env.COPILOT_RUN_APP,
   detectProject: cwd =>
     existsSync(join(cwd, '.github', 'copilot-instructions.md'))
@@ -49,7 +50,7 @@ export const githubCopilot = defineTarget({
   instructionFile: '.github/copilot-instructions.md',
 
   skillsDir: '.github/skills',
-  globalSkillsDir: join(home, '.copilot/skills'),
+  globalSkillsDir: () => join(home(), '.copilot/skills'),
   additionalSkillsDirs: [
     '.claude/skills',
     '~/.claude/skills',

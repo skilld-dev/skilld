@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { extractSections, isSafeUrl, normalizeLlmsLinks, parseMarkdownLinks } from '../../src/sources/llms'
+import { isSafeUrl } from '../../src/core/url'
+import { extractSections, normalizeLlmsLinks, parseMarkdownLinks } from '../../src/sources/llms'
 
 vi.mock('../../src/sources/utils', () => ({
   fetchText: vi.fn(),

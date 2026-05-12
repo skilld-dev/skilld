@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Antigravity (Google)
@@ -21,13 +21,13 @@ const home = homedir()
 export const antigravity = defineTarget({
   agent: 'antigravity',
   displayName: 'Antigravity',
-  detectInstalled: () => existsSync(join(home, '.gemini/antigravity')),
+  detectInstalled: () => existsSync(join(home(), '.gemini/antigravity')),
   detectEnv: () => !!process.env.ANTIGRAVITY_CLI_ALIAS,
   detectProject: cwd => existsSync(join(cwd, '.agent')),
   instructionFile: 'GEMINI.md',
 
   skillsDir: '.agent/skills',
-  globalSkillsDir: join(home, '.gemini/antigravity/skills'),
+  globalSkillsDir: () => join(home(), '.gemini/antigravity/skills'),
 
   frontmatter: [
     { ...SPEC_FRONTMATTER.name!, description: 'Skill identifier. Defaults to directory name if omitted.' },

@@ -4,11 +4,8 @@
  */
 
 import type { FeaturesConfig } from '../core/config.ts'
-import type {
-  CachedReferencesResult,
-  LoadCachedReferencesOptions,
-} from './references.ts'
-import type { CachedDoc } from './types.ts'
+import type { CachedDoc, CachedReferencesResult, LoadCachedReferencesOptions } from './types.ts'
+import { getPkgKeyFiles, hasShippedDocs, resolvePkgDir } from '../core/prepare.ts'
 import {
   clearSkillInternalDir,
   detectDocsType,
@@ -16,20 +13,19 @@ import {
   forceClearCache,
   linkAllReferences,
   loadCachedReferences,
-} from './references.ts'
+} from './internal/references.ts'
 import {
   ensureCacheDir,
-  getPkgKeyFiles,
-  hasShippedDocs,
+  inferDocsTypeFromCache,
   isCached,
+  isReadmeOnlyCache,
   linkPkgNamed,
   readCachedDocs,
   readCachedSection,
-  resolvePkgDir,
   writeSections,
   writeToCache,
-} from './storage.ts'
-import { getCacheDir, getVersionKey } from './version.ts'
+} from './internal/storage.ts'
+import { getCacheDir, getVersionKey } from './internal/version.ts'
 
 export interface ReferenceCacheLinkOpts {
   extraPackages?: Array<{ name: string, version?: string }>
@@ -52,6 +48,8 @@ export interface ReferenceCache {
   readonly dir: string
   ensure: () => void
   has: () => boolean
+  isReadmeOnly: () => boolean
+  inferDocsType: (source?: string) => 'llms.txt' | 'readme' | 'docs'
   write: (docs: CachedDoc[]) => void
   writeSections: (sections: Array<{ file: string, content: string }>) => void
   readSection: (file: string) => string | null
@@ -96,6 +94,8 @@ export function createReferenceCache(packageName: string, version?: string): Ref
     get dir() { return getCacheDir(packageName, requireVersion('dir')) },
     ensure: () => ensureCacheDir(),
     has: () => !!version && isCached(packageName, version),
+    isReadmeOnly: () => isReadmeOnlyCache(getCacheDir(packageName, requireVersion('isReadmeOnly'))),
+    inferDocsType: source => inferDocsTypeFromCache(getCacheDir(packageName, requireVersion('inferDocsType')), source),
     write: docs => void writeToCache(packageName, requireVersion('write'), docs),
     writeSections: sections => writeSections(packageName, requireVersion('writeSections'), sections),
     readSection: file => readCachedSection(packageName, requireVersion('readSection'), file),

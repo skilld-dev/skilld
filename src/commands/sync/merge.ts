@@ -1,23 +1,23 @@
 /**
  * Merge mode — when a skill dir already holds a different primary package,
- * `runBaseSync` returns `merge-needed` and the frontend regenerates SKILL.md
- * combining the existing primary with the new package. Sequential only.
+ * runBaseSync returns `merge-needed` and we regenerate SKILL.md combining
+ * the existing primary with the new package. Sequential only.
  */
 
-import type { AgentType } from '../agent/index.ts'
-import type { MergeNeededState } from './sync-runner.ts'
+import type { AgentType } from '../../agent/index.ts'
+import type { MergeNeededState } from './phases.ts'
 import { existsSync } from 'node:fs'
 import * as p from '@clack/prompts'
-import { linkSkillToAgents, writeGeneratedSkillMd } from '../agent/index.ts'
-import { installSkill } from '../agent/skill-installer.ts'
-import { createReferenceCache } from '../cache/index.ts'
-import { getActiveFeatures } from '../core/config.ts'
-import { todayIsoDate } from '../core/formatting.ts'
-import { parsePackageNames, readLock } from '../core/lockfile.ts'
-import { getSharedSkillsDir, skillRefsSection } from '../core/paths.ts'
-import { toStoragePackageName } from '../core/prefix.ts'
-import { parseGitHubRepoSlug } from '../sources/index.ts'
-import { findRelatedSkills } from './sync-pipeline.ts'
+import { linkSkillToAgents, writeGeneratedSkillMd } from '../../agent/index.ts'
+import { installSkill } from '../../agent/skill-installer.ts'
+import { createReferenceCache } from '../../cache/index.ts'
+import { getActiveFeatures } from '../../core/config.ts'
+import { todayIsoDate } from '../../core/formatting.ts'
+import { parsePackageNames, readLock } from '../../core/lockfile.ts'
+import { getSharedSkillsDir, skillRefsSection } from '../../core/paths.ts'
+import { toStoragePackageName } from '../../core/prefix.ts'
+import { parseGitHubRepoSlug } from '../../core/url.ts'
+import { findRelatedSkills } from './pipeline.ts'
 
 export interface MergeConfig {
   agent: AgentType

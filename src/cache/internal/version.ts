@@ -3,7 +3,7 @@
  */
 
 import { resolve } from 'pathe'
-import { REFERENCES_DIR } from '../core/paths.ts'
+import { REFERENCES_DIR } from '../../core/paths.ts'
 
 /** Validate npm package name (scoped or unscoped) */
 const VALID_PKG_NAME = /^(?:@[a-z0-9][-a-z0-9._]*\/)?[a-z0-9][-a-z0-9._]*$/

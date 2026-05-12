@@ -5,6 +5,7 @@
 import type { FetchedDoc, LlmsContent, LlmsLink } from './types.ts'
 import pLimit from 'p-limit'
 import { extractLinks } from '../core/markdown.ts'
+import { isSafeUrl } from '../core/url.ts'
 import { fetchText, verifyUrl } from './utils.ts'
 
 /**
@@ -37,29 +38,6 @@ export async function fetchLlmsTxt(url: string): Promise<LlmsContent | null> {
  */
 export function parseMarkdownLinks(content: string): LlmsLink[] {
   return extractLinks(content).filter(l => l.url.endsWith('.md'))
-}
-
-/**
- * Download all .md files referenced in llms.txt
- */
-/** Reject non-https URLs and private/link-local IPs */
-export function isSafeUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'https:')
-      return false
-    const host = parsed.hostname
-    // Reject private/link-local/loopback
-    if (host === 'localhost' || host === '0.0.0.0' || host === '[::1]')
-      return false
-    if (/^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(host))
-      return false
-    // IPv6 private/link-local — hostname keeps brackets in Node.js
-    if (/^\[(?:f[cd]|fe[89ab]|::ffff:)/i.test(host))
-      return false
-    return true
-  }
-  catch { return false }
 }
 
 export async function downloadLlmsDocs(

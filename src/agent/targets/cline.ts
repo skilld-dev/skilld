@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Cline (VS Code extension)
@@ -21,13 +21,13 @@ const home = homedir()
 export const cline = defineTarget({
   agent: 'cline',
   displayName: 'Cline',
-  detectInstalled: () => existsSync(join(home, '.cline')),
+  detectInstalled: () => existsSync(join(home(), '.cline')),
   detectEnv: () => !!(process.env.CLINE_TASK_ID || process.env.CLINE_ACTIVE),
   detectProject: cwd => existsSync(join(cwd, '.cline')),
   instructionFile: '.clinerules',
 
   skillsDir: '.cline/skills',
-  globalSkillsDir: join(home, '.cline/skills'),
+  globalSkillsDir: () => join(home(), '.cline/skills'),
   additionalSkillsDirs: [
     '.clinerules/skills',
     '.claude/skills',

@@ -15,9 +15,11 @@ import type { IndexDoc } from './content-resolver.ts'
 import type { ResolvedPackage } from './types.ts'
 import { existsSync } from 'node:fs'
 import { join } from 'pathe'
-import { getCacheDir, getRepoCacheDir, writeToCache, writeToRepoCache } from '../cache/index.ts'
+import { getCacheDir, getRepoCacheDir } from '../cache/index.ts'
+import { writeToCache, writeToRepoCache } from '../cache/internal/storage.ts'
 import { parseFrontmatter } from '../core/markdown.ts'
 import { sanitizeMarkdown } from '../core/sanitize.ts'
+import { parseGitHubUrl } from '../core/url.ts'
 import {
   fetchBlogReleases,
   fetchGitHubDiscussions,
@@ -32,7 +34,6 @@ import {
   getPrereleaseChangelogRef,
   isGhAvailable,
   isPrerelease,
-  parseGitHubUrl,
 } from './index.ts'
 
 export interface TimelineReferences {

@@ -1,54 +1,28 @@
 /**
- * Cache module - global doc caching with symlinks
+ * Cache module — global doc caching with symlinks.
+ *
+ * Public surface:
+ *   - createReferenceCache(name, version)  → per-package factory
+ *   - createRepoCache(owner, repo)         → per-repo factory
+ *   - registry-level ops (list/clear/utilities)
  */
 
-// Project layout (re-exported from core/paths for cache consumers)
 export { CACHE_DIR, getPackageDbPath, getRepoCacheDir, REFERENCES_DIR, REPOS_DIR } from '../core/paths.ts'
-
 export type { ReferenceCache, ReferenceCacheEjectOpts, ReferenceCacheLinkOpts } from './reference-cache.ts'
 export { createReferenceCache } from './reference-cache.ts'
-// Composed reference-cache operations (the higher-level surface most callers want)
-export type { CachedReferencesResult, LoadCachedReferencesOptions } from './references.ts'
-
 export {
   classifyCachedDoc,
-  clearSkillInternalDir,
-  detectDocsType,
-  ejectReferences,
-  forceClearCache,
-  getSkillReferenceDirs,
-  linkAllReferences,
-  loadCachedReferences,
-} from './references.ts'
-
-// Storage operations
-export type { ShippedSkill } from './storage.ts'
-export {
-  clearAllCache,
-  clearCache,
+  clearAllCachedPackages,
+  clearCachedPackage,
   ensureCacheDir,
-  getPkgKeyFiles,
-  getShippedSkills,
-  hasShippedDocs,
+  getCacheDir,
+  getCacheKey,
+  getSkillReferenceDirs,
+  getVersionKey,
   inferDocsTypeFromCache,
-  isCached,
-  isReadmeOnlyCache,
-  linkCachedDir,
-  linkPkg,
-  linkPkgNamed,
-  linkRepoCachedDir,
-  linkShippedSkill,
-  listCached,
+  listCachedPackages,
   listReferenceFiles,
-  readCachedDocs,
-  readCachedSection,
-  resolvePkgDir,
-  writeSections,
-  writeToCache,
-  writeToRepoCache,
-} from './storage.ts'
-
-// Types
-export type { CacheConfig, CachedDoc, CachedPackage } from './types.ts'
-// Version utilities
-export { getCacheDir, getCacheKey, getVersionKey } from './version.ts'
+} from './registry.ts'
+export type { RepoCache } from './repo-cache.ts'
+export { createRepoCache } from './repo-cache.ts'
+export type { CacheConfig, CachedDoc, CachedPackage, CachedReferencesResult, LoadCachedReferencesOptions } from './types.ts'

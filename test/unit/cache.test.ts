@@ -43,7 +43,7 @@ describe('cache', () => {
     })
   })
 
-  describe('isCached', () => {
+  describe('createReferenceCache().has()', () => {
     beforeEach(() => {
       vi.resetAllMocks()
     })
@@ -54,41 +54,41 @@ describe('cache', () => {
 
     it('returns true when cache dir exists', async () => {
       const { existsSync } = await import('node:fs')
-      const { isCached } = await import('../../src/cache')
+      const { createReferenceCache } = await import('../../src/cache')
       vi.mocked(existsSync).mockReturnValue(true)
 
-      expect(isCached('vue', '3.4.0')).toBe(true)
+      expect(createReferenceCache('vue', '3.4.0').has()).toBe(true)
     })
 
     it('returns false when cache dir missing', async () => {
       const { existsSync } = await import('node:fs')
-      const { isCached } = await import('../../src/cache')
+      const { createReferenceCache } = await import('../../src/cache')
       vi.mocked(existsSync).mockReturnValue(false)
 
-      expect(isCached('vue', '3.4.0')).toBe(false)
+      expect(createReferenceCache('vue', '3.4.0').has()).toBe(false)
     })
   })
 
-  describe('listCached', () => {
+  describe('listCachedPackages', () => {
     beforeEach(() => {
       vi.resetAllMocks()
     })
 
     it('returns empty array when references dir missing', async () => {
       const { existsSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache')
+      const { listCachedPackages } = await import('../../src/cache')
       vi.mocked(existsSync).mockReturnValue(false)
 
-      expect(listCached()).toEqual([])
+      expect(listCachedPackages()).toEqual([])
     })
 
     it('parses cached package entries', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache')
+      const { listCachedPackages } = await import('../../src/cache')
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue(['vue@3.4', 'nuxt@3.10'] as any)
 
-      const result = listCached()
+      const result = listCachedPackages()
 
       expect(result).toHaveLength(2)
       expect(result[0]).toMatchObject({ name: 'vue', version: '3.4' })
@@ -97,25 +97,25 @@ describe('cache', () => {
 
     it('filters entries without @', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache')
+      const { listCachedPackages } = await import('../../src/cache')
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue(['vue@3.4', '.DS_Store', 'random'] as any)
 
-      const result = listCached()
+      const result = listCachedPackages()
       expect(result).toHaveLength(1)
     })
   })
 
-  describe('writeToCache', () => {
+  describe('createReferenceCache().write()', () => {
     beforeEach(() => {
       vi.resetAllMocks()
     })
 
     it('creates cache dir and writes docs', async () => {
       const { mkdirSync, writeFileSync } = await import('node:fs')
-      const { writeToCache } = await import('../../src/cache')
+      const { createReferenceCache } = await import('../../src/cache')
 
-      writeToCache('vue', '3.4.0', [
+      createReferenceCache('vue', '3.4.0').write([
         { path: 'README.md', content: '# Vue' },
         { path: 'api/core.md', content: '# Core API' },
       ])

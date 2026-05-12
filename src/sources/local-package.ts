@@ -9,8 +9,8 @@ import { pathToFileURL } from 'node:url'
 import { resolvePathSync } from 'mlly'
 import { basename, dirname, join, resolve } from 'pathe'
 import { readPackageJsonSafe } from '../core/package-json.ts'
+import { normalizeRepoUrl, parseGitHubUrl } from '../core/url.ts'
 import { fetchGitDocs, fetchReadme } from './github.ts'
-import { normalizeRepoUrl, parseGitHubUrl } from './utils.ts'
 
 export function parseVersionSpecifier(
   name: string,

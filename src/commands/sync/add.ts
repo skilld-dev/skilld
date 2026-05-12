@@ -103,7 +103,7 @@ export const addCommandDef = defineCommand({
     }
 
     if (npmEntries.length > 0) {
-      const { syncRegistrySkill } = await import('../sync-registry.ts')
+      const { syncRegistrySkill } = await import('./registry.ts')
       const seen = new Set<string>()
       const dedupedEntries = npmEntries.filter((e) => {
         if (seen.has(e.name))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isGitHubRepoUrl, normalizeRepoUrl, parseGitHubRepoSlug, parseGitHubUrl, parsePackageSpec } from '../../src/sources/utils'
+import { isGitHubRepoUrl, normalizeRepoUrl, parseGitHubRepoSlug, parseGitHubUrl, parsePackageSpec } from '../../src/core/url'
 
 describe('sources/utils', () => {
   describe('isGitHubRepoUrl', () => {

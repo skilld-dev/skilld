@@ -7,8 +7,9 @@ import { spawnSync } from 'node:child_process'
 import { createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { Writable } from 'node:stream'
 import { join } from 'pathe'
-import { getCacheDir } from '../cache/version.ts'
-import { $fetch, parsePackageSpec, SKILLD_USER_AGENT } from './utils.ts'
+import { getCacheDir } from '../cache/index.ts'
+import { parsePackageSpec } from '../core/url.ts'
+import { $fetch, SKILLD_USER_AGENT } from './utils.ts'
 
 export async function searchNpmPackages(query: string, size = 5): Promise<Array<{ name: string, description?: string, version: string }>> {
   const data = await $fetch<{

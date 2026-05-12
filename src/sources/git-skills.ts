@@ -10,8 +10,9 @@ import { tmpdir } from 'node:os'
 import { downloadTemplate } from 'giget'
 import { join, resolve } from 'pathe'
 import { parseFrontmatter } from '../core/markdown.ts'
+import { normalizeRepoUrl, parseGitHubUrl } from '../core/url.ts'
 import { getGitHubToken } from './github-common.ts'
-import { $fetch, fetchGitHubRaw, normalizeRepoUrl, parseGitHubUrl } from './utils.ts'
+import { $fetch, fetchGitHubRaw } from './utils.ts'
 
 export interface GitSkillSource {
   type: 'github' | 'gitlab' | 'git-ssh' | 'local'

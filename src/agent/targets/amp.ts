@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+const configHome = () => process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 
 /**
  * Amp (Sourcegraph)
@@ -20,13 +20,13 @@ const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 export const amp = defineTarget({
   agent: 'amp',
   displayName: 'Amp',
-  detectInstalled: () => existsSync(join(configHome, 'amp')),
+  detectInstalled: () => existsSync(join(configHome(), 'amp')),
   detectEnv: () => !!process.env.AMP_SESSION,
   detectProject: cwd => existsSync(join(cwd, '.agents', 'AGENTS.md')),
   instructionFile: 'AGENTS.md',
 
   skillsDir: '.agents/skills',
-  globalSkillsDir: join(configHome, 'agents/skills'),
+  globalSkillsDir: () => join(configHome(), 'agents/skills'),
   additionalSkillsDirs: [
     '.claude/skills',
     '~/.config/amp/skills',

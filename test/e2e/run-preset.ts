@@ -15,8 +15,8 @@ import {
   ensureCacheDir,
   getCacheDir,
   getPackageDbPath,
-  getShippedSkills,
 } from '../../src/cache'
+import { getShippedSkills } from '../../src/core/prepare'
 import { search } from '../../src/retriv'
 import { PACKAGES } from './matrix'
 import { hasValidSearchDb, parseFrontmatter, runPipeline } from './pipeline'

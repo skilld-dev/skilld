@@ -29,7 +29,7 @@ describe('cache/storage', () => {
   describe('isCached', () => {
     it('returns true when cache dir exists', async () => {
       const { existsSync } = await import('node:fs')
-      const { isCached } = await import('../../src/cache/storage')
+      const { isCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(true)
 
       expect(isCached('vue', '3.4.0')).toBe(true)
@@ -37,7 +37,7 @@ describe('cache/storage', () => {
 
     it('returns false when cache dir missing', async () => {
       const { existsSync } = await import('node:fs')
-      const { isCached } = await import('../../src/cache/storage')
+      const { isCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(false)
 
       expect(isCached('vue', '3.4.0')).toBe(false)
@@ -46,14 +46,14 @@ describe('cache/storage', () => {
 
   describe('inferDocsTypeFromCache', () => {
     it('detects llms.txt from source', async () => {
-      const { inferDocsTypeFromCache } = await import('../../src/cache/storage')
+      const { inferDocsTypeFromCache } = await import('../../src/cache/internal/storage')
 
       expect(inferDocsTypeFromCache('/cache/vue', 'llms.txt')).toBe('llms.txt')
     })
 
     it('detects cached llms.txt docs', async () => {
       const { existsSync } = await import('node:fs')
-      const { inferDocsTypeFromCache } = await import('../../src/cache/storage')
+      const { inferDocsTypeFromCache } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockImplementation(path => String(path).endsWith('docs/llms.txt'))
 
       expect(inferDocsTypeFromCache('/cache/vue')).toBe('llms.txt')
@@ -61,7 +61,7 @@ describe('cache/storage', () => {
 
     it('detects README-only cache', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { inferDocsTypeFromCache } = await import('../../src/cache/storage')
+      const { inferDocsTypeFromCache } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockImplementation(path => String(path).endsWith('docs'))
       vi.mocked(readdirSync).mockReturnValue(['README.md'] as any)
 
@@ -70,7 +70,7 @@ describe('cache/storage', () => {
 
     it('defaults to docs', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { inferDocsTypeFromCache } = await import('../../src/cache/storage')
+      const { inferDocsTypeFromCache } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockImplementation(path => String(path).endsWith('docs'))
       vi.mocked(readdirSync).mockReturnValue(['README.md', 'guide.md'] as any)
 
@@ -81,7 +81,7 @@ describe('cache/storage', () => {
   describe('ensureCacheDir', () => {
     it('creates references directory', async () => {
       const { mkdirSync } = await import('node:fs')
-      const { ensureCacheDir } = await import('../../src/cache/storage')
+      const { ensureCacheDir } = await import('../../src/cache/internal/storage')
 
       ensureCacheDir()
 
@@ -95,7 +95,7 @@ describe('cache/storage', () => {
   describe('writeToCache', () => {
     it('creates cache dir and writes docs', async () => {
       const { mkdirSync, writeFileSync } = await import('node:fs')
-      const { writeToCache } = await import('../../src/cache/storage')
+      const { writeToCache } = await import('../../src/cache/internal/storage')
 
       const result = writeToCache('vue', '3.4.0', [
         { path: 'README.md', content: '# Vue' },
@@ -111,7 +111,7 @@ describe('cache/storage', () => {
   describe('listCached', () => {
     it('returns empty array when references dir missing', async () => {
       const { existsSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache/storage')
+      const { listCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(false)
 
       expect(listCached()).toEqual([])
@@ -119,7 +119,7 @@ describe('cache/storage', () => {
 
     it('parses cached package entries', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache/storage')
+      const { listCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue(['vue@3.4', 'nuxt@3.10'] as any)
 
@@ -132,7 +132,7 @@ describe('cache/storage', () => {
 
     it('parses scoped package entries', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache/storage')
+      const { listCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue(['@vue/reactivity@3.5.0', '@nuxtjs/tailwindcss@6.12.0'] as any)
 
@@ -145,7 +145,7 @@ describe('cache/storage', () => {
 
     it('filters entries without @', async () => {
       const { existsSync, readdirSync } = await import('node:fs')
-      const { listCached } = await import('../../src/cache/storage')
+      const { listCached } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue(['vue@3.4', '.DS_Store', 'random'] as any)
 
@@ -157,7 +157,7 @@ describe('cache/storage', () => {
   describe('readCachedDocs', () => {
     it('returns empty array when cache dir missing', async () => {
       const { existsSync } = await import('node:fs')
-      const { readCachedDocs } = await import('../../src/cache/storage')
+      const { readCachedDocs } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(false)
 
       expect(readCachedDocs('vue', '3.4.0')).toEqual([])
@@ -165,7 +165,7 @@ describe('cache/storage', () => {
 
     it('walks directory and reads .md files', async () => {
       const { existsSync, readdirSync, readFileSync } = await import('node:fs')
-      const { readCachedDocs } = await import('../../src/cache/storage')
+      const { readCachedDocs } = await import('../../src/cache/internal/storage')
 
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readdirSync).mockReturnValue([
@@ -183,7 +183,7 @@ describe('cache/storage', () => {
 
     it('recursively walks subdirectories', async () => {
       const { existsSync, readdirSync, readFileSync } = await import('node:fs')
-      const { readCachedDocs } = await import('../../src/cache/storage')
+      const { readCachedDocs } = await import('../../src/cache/internal/storage')
 
       vi.mocked(existsSync).mockReturnValue(true)
       let callCount = 0
@@ -212,7 +212,7 @@ describe('cache/storage', () => {
   describe('clearCache', () => {
     it('returns false when cache does not exist', async () => {
       const { existsSync } = await import('node:fs')
-      const { clearCache } = await import('../../src/cache/storage')
+      const { clearCache } = await import('../../src/cache/internal/storage')
       vi.mocked(existsSync).mockReturnValue(false)
 
       expect(clearCache('vue', '3.4.0')).toBe(false)
@@ -222,13 +222,13 @@ describe('cache/storage', () => {
     // which is difficult to mock - integration test would be better
   })
 
-  describe('clearAllCache', () => {
+  describe('clearAllCachedPackages', () => {
     it('returns 0 when no packages cached', async () => {
       const { existsSync } = await import('node:fs')
-      const { clearAllCache } = await import('../../src/cache/storage')
+      const { clearAllCachedPackages } = await import('../../src/cache/registry')
       vi.mocked(existsSync).mockReturnValue(false)
 
-      expect(clearAllCache()).toBe(0)
+      expect(clearAllCachedPackages()).toBe(0)
     })
   })
 })

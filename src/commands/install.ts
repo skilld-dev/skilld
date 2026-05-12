@@ -21,18 +21,13 @@ import { agents, createToolProgress, getModelLabel, linkSkillToAgents, optimizeD
 import { writeGeneratedSkillMd, writeSkillMd } from '../agent/prompts/skill.ts'
 import { writePromptFiles } from '../agent/skill-builder.ts'
 import {
-  hasShippedDocs as checkShippedDocs,
   classifyCachedDoc,
   createReferenceCache,
   ensureCacheDir,
   getCacheDir,
   getPackageDbPath,
-  getPkgKeyFiles,
-  getShippedSkills,
   inferDocsTypeFromCache,
-  linkShippedSkill,
   listReferenceFiles,
-  resolvePkgDir,
 } from '../cache/index.ts'
 import { promptForAgent, resolveAgent } from '../cli/agent-prompt.ts'
 import { sharedArgs } from '../cli/args.ts'
@@ -42,14 +37,21 @@ import { mergeLocks, parsePackageNames, parsePackages, readLock, syncLockfilesTo
 import { readPackageJsonSafe } from '../core/package-json.ts'
 import { getSharedSkillsDir, skillInternalDir } from '../core/paths.ts'
 import { toStoragePackageName } from '../core/prefix.ts'
+import {
+  hasShippedDocs as checkShippedDocs,
+  getPkgKeyFiles,
+  getShippedSkills,
+  linkShippedSkill,
+  resolvePkgDir,
+} from '../core/prepare.ts'
 import { sanitizeMarkdown } from '../core/sanitize.ts'
+import { parseGitHubUrl } from '../core/url.ts'
 import { indexResources } from '../retriv/index-pipeline.ts'
 import { createIndex, SearchDepsUnavailableError } from '../retriv/index.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
 import { resolveContentDocs } from '../sources/content-resolver.ts'
 import { fetchGitSkills } from '../sources/git-skills.ts'
 import {
-  parseGitHubUrl,
   resolveEntryFiles,
   resolvePackageDocs,
 } from '../sources/index.ts'

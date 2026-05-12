@@ -1,20 +1,16 @@
 /**
- * Registry-based skill installation
- *
- * Simplified install flow for curated skills from skilld.dev:
- * fetch SKILL.md → write to disk → update lockfile → link to agents.
- *
+ * Registry-based skill installation: fetch SKILL.md → write → lockfile → link.
  * No doc resolution, no LLM, no caching. Fast path.
  */
 
-import type { AgentType } from '../agent/index.ts'
-import type { RegistrySkill } from '../registry/client.ts'
+import type { AgentType } from '../../agent/index.ts'
+import type { RegistrySkill } from '../../registry/client.ts'
 import { mkdirSync } from 'node:fs'
 import { join } from 'pathe'
-import { writeSkillMd } from '../agent/prompts/skill.ts'
-import { installSkill, resolveBaseDir } from '../agent/skill-installer.ts'
-import { SHARED_SKILLS_DIR } from '../core/paths.ts'
-import { fetchRegistrySkill } from '../registry/client.ts'
+import { writeSkillMd } from '../../agent/prompts/skill.ts'
+import { installSkill, resolveBaseDir } from '../../agent/skill-installer.ts'
+import { SHARED_SKILLS_DIR } from '../../core/paths.ts'
+import { fetchRegistrySkill } from '../../registry/client.ts'
 
 export interface SyncRegistryOptions {
   packageName: string
@@ -23,10 +19,6 @@ export interface SyncRegistryOptions {
   cwd?: string
 }
 
-/**
- * Install a package skill from the skilld.dev registry.
- * Returns the installed skill, or null if no curated skill exists.
- */
 export async function syncRegistrySkill(opts: SyncRegistryOptions): Promise<RegistrySkill | null> {
   const { packageName, agent, cwd = process.cwd() } = opts
 
@@ -34,7 +26,6 @@ export async function syncRegistrySkill(opts: SyncRegistryOptions): Promise<Regi
   if (!skill)
     return null
 
-  // Write SKILL.md to shared skills dir
   const sharedDir = join(cwd, SHARED_SKILLS_DIR)
   const skillDir = join(sharedDir, skill.name)
   mkdirSync(skillDir, { recursive: true })

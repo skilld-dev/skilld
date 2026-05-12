@@ -1,6 +1,6 @@
 /**
- * Git skill sync — install pre-authored skills from git repos,
- * or generate skills from repo docs when no pre-authored skills exist.
+ * Git skill sync — install pre-authored skills from git repos, or generate
+ * from repo docs when no pre-authored skills exist.
  */
 
 import type { AgentType, OptimizeModel } from '../agent/index.ts'
@@ -18,9 +18,9 @@ import { shutdownWorker } from '../retriv/pool.ts'
 import { fetchGitSkills } from '../sources/git-skills.ts'
 import { track } from '../telemetry.ts'
 import { DEFAULT_SECTIONS, selectLlmConfig } from './llm-prompts.ts'
-import { createGithubResolver } from './sync-resolvers.ts'
-import { runBaseSync, runEnhancePhase } from './sync-runner.ts'
-import { createClackUi } from './sync-ui-clack.ts'
+import { createGithubResolver } from './sync/resolvers.ts'
+import { createSyncRun } from './sync/run.ts'
+import { bindClackUi } from './sync/ui/clack.ts'
 
 export interface GitSyncOptions {
   source: GitSkillSource
@@ -31,7 +31,6 @@ export interface GitSyncOptions {
   force?: boolean
   debug?: boolean
   from?: string
-  /** Filter to specific skill names (comma-separated via --skill flag) */
   skillFilter?: string[]
 }
 
@@ -53,7 +52,6 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
   const { skills } = await fetchGitSkills(source, msg => spin.message(msg))
 
   if (skills.length === 0) {
-    // No pre-authored skills — fall back to generating from repo docs (GitHub only)
     if (source.type === 'github' && source.owner && source.repo) {
       spin.stop(`No pre-authored skills in ${label}, generating from repo docs...`)
       return syncGitHubRepo(opts)
@@ -64,11 +62,9 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
 
   spin.stop(`Found ${skills.length} skill(s) in ${label}`)
 
-  // Select skills to install
   let selected = skills
 
   if (opts.skillFilter?.length) {
-    // --skill flag: filter to matching names (strip -skilld suffix for comparison)
     const filterSet = new Set(opts.skillFilter.map(s => s.toLowerCase().replace(/-skilld$/, '')))
     selected = skills.filter(s => filterSet.has(s.name.toLowerCase().replace(/-skilld$/, '')))
     if (selected.length === 0) {
@@ -78,7 +74,6 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
     }
   }
   else if (source.skillPath) {
-    // Direct path: auto-select the matched skill
     selected = skills
   }
   else if (skills.length > 1 && !yes) {
@@ -101,18 +96,14 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
       return
   }
 
-  // Install each selected skill
   mkdirSync(baseDir, { recursive: true })
 
   for (const skill of selected) {
     const skillDir = join(baseDir, skill.name)
     mkdirSync(skillDir, { recursive: true })
 
-    // Sanitize and write SKILL.md
     writeSkillMd(skillDir, sanitizeMarkdown(skill.content))
 
-    // Write supporting files directly in skill dir (not under .skilld/)
-    // so SKILL.md relative paths like ./references/docs/guide.md resolve correctly
     if (skill.files.length > 0) {
       for (const f of skill.files) {
         const filePath = join(skillDir, f.path)
@@ -140,7 +131,6 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
     })
   }
 
-  // Track telemetry (skip local sources)
   if (source.type !== 'local' && source.owner && source.repo) {
     track({
       event: 'install',
@@ -161,49 +151,37 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
   }
 }
 
-/**
- * Generate a skill from a GitHub repo's docs (no npm package required).
- * Routes through the unified runner with a `createGithubResolver` so the
- * fetch / cache / install / LLM cycle is shared with npm flows.
- */
 async function syncGitHubRepo(opts: GitSyncOptions): Promise<void> {
   const { source, agent, global: isGlobal, yes } = opts
   const owner = source.owner!
   const repo = source.repo!
   const cwd = process.cwd()
-  const ui = createClackUi({ cwd })
   const spec = `${owner}/${repo}`
 
-  const result = await runBaseSync(
-    spec,
-    {
-      agent,
-      global: isGlobal,
-      force: opts.force,
-      from: opts.from,
-    },
-    ui,
-    createGithubResolver(owner, repo),
+  const run = createSyncRun({
     cwd,
-    DEFAULT_SECTIONS,
-  )
+    resolver: createGithubResolver(owner, repo),
+    agent,
+    global: isGlobal,
+    force: opts.force,
+    debug: opts.debug,
+    from: opts.from,
+    defaultSections: DEFAULT_SECTIONS,
+  })
+  bindClackUi(run.hooks, { cwd })
 
-  if (result.kind !== 'ready')
+  const base = await run.runBase(spec)
+
+  if (base.kind !== 'ready')
     return
 
-  const { state } = result
+  const { state } = base
   const globalConfig = readConfig()
   let llmConfig: import('./llm-prompts.ts').LlmConfig | null = null
   if (!state.allSectionsCached && !globalConfig.skipLlm && (!yes || opts.model))
     llmConfig = await selectLlmConfig(opts.model)
 
-  await runEnhancePhase(
-    state,
-    llmConfig,
-    { agent, global: isGlobal, force: opts.force, debug: opts.debug },
-    ui,
-    cwd,
-  )
+  await run.runEnhance(state, llmConfig)
 
   await shutdownWorker()
 

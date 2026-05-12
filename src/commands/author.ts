@@ -20,6 +20,7 @@ import { detectMonorepoPackages } from '../core/monorepo.ts'
 import { appendToJsonArray, patchPackageJson, readPackageJsonSafe } from '../core/package-json.ts'
 import { skillInternalDir } from '../core/paths.ts'
 import { sanitizeMarkdown } from '../core/sanitize.ts'
+import { parseGitHubUrl } from '../core/url.ts'
 import {
   fetchGitHubDiscussions,
   fetchGitHubIssues,
@@ -28,11 +29,10 @@ import {
   generateDiscussionIndex,
   generateIssueIndex,
   isGhAvailable,
-  parseGitHubUrl,
   readLocalPackageInfo,
 } from '../sources/index.ts'
 import { selectLlmConfig } from './llm-prompts.ts'
-import { detectChangelog } from './sync-pipeline.ts'
+import { detectChangelog } from './sync/pipeline.ts'
 
 // ── Docs resolution ──
 

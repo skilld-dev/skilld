@@ -12,7 +12,7 @@ vi.mock('node:fs', async () => {
   }
 })
 
-vi.mock('../../src/cache/version', () => ({
+vi.mock('../../src/cache/internal/version', () => ({
   getCacheDir: (name: string, version: string) => `/home/.skilld/references/${name}@${version}`,
 }))
 

@@ -15,6 +15,7 @@
 
 import type { ResolvedPackage } from './types.ts'
 import { join } from 'pathe'
+import { parseGitHubUrl } from '../core/url.ts'
 import {
   downloadLlmsDocs,
   fetchCrawledDocs,
@@ -25,7 +26,6 @@ import {
   filterFrameworkDocs,
   isShallowGitDocs,
   normalizeLlmsLinks,
-  parseGitHubUrl,
   toCrawlPattern,
 } from './index.ts'
 

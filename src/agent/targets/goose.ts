@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+const configHome = () => process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 
 /**
  * Goose (Block)
@@ -17,14 +17,14 @@ const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
 export const goose = defineTarget({
   agent: 'goose',
   displayName: 'Goose',
-  detectInstalled: () => existsSync(join(configHome, 'goose')),
+  detectInstalled: () => existsSync(join(configHome(), 'goose')),
   detectEnv: () => !!(process.env.GOOSE_SESSION || process.env.AGENT_SESSION_ID),
   detectProject: cwd => existsSync(join(cwd, '.goose')),
   cli: 'goose',
   instructionFile: '.goosehints',
 
   skillsDir: '.goose/skills',
-  globalSkillsDir: join(configHome, 'goose/skills'),
+  globalSkillsDir: () => join(configHome(), 'goose/skills'),
   additionalSkillsDirs: [
     '.claude/skills',
     '.agents/skills',

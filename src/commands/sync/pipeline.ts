@@ -1,21 +1,21 @@
-import type { SkillContext } from '../agent/skill-builder.ts'
-import type { FeaturesConfig } from '../core/config.ts'
-import type { IndexDoc } from '../sources/content-resolver.ts'
-import type { ResolvedPackage, ResolveStep } from '../sources/index.ts'
+import type { SkillContext } from '../../agent/skill-builder.ts'
+import type { FeaturesConfig } from '../../core/config.ts'
+import type { IndexDoc } from '../../sources/content-resolver.ts'
+import type { ResolvedPackage, ResolveStep } from '../../sources/index.ts'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'pathe'
-import { createReferenceCache } from '../cache/index.ts'
-import { defaultFeatures, readConfig } from '../core/config.ts'
-import { buildPackageDirMap, readLock } from '../core/lockfile.ts'
-import { indexResources } from '../retriv/index-pipeline.ts'
-import { resolveContentDocs } from '../sources/content-resolver.ts'
+import { createReferenceCache } from '../../cache/index.ts'
+import { defaultFeatures, readConfig } from '../../core/config.ts'
+import { buildPackageDirMap, readLock } from '../../core/lockfile.ts'
+import { indexResources } from '../../retriv/index-pipeline.ts'
+import { resolveContentDocs } from '../../sources/content-resolver.ts'
 import {
   fetchNpmPackage,
   generateDocsIndex,
-} from '../sources/index.ts'
-import { resolveTimelineReferences } from '../sources/timeline-resolver.ts'
+} from '../../sources/index.ts'
+import { resolveTimelineReferences } from '../../sources/timeline-resolver.ts'
 
-export type { IndexDoc } from '../sources/content-resolver.ts'
+export type { IndexDoc } from '../../sources/content-resolver.ts'
 
 export const RESOLVE_STEP_LABELS: Record<ResolveStep, string> = {
   'npm': 'npm registry',
@@ -60,13 +60,10 @@ export function detectChangelog(pkgDir: string | null, cacheDir?: string): strin
     if (found)
       return `pkg/${found}`
   }
-  // Also check cached releases/CHANGELOG.md (fetched from GitHub)
   if (cacheDir && existsSync(join(cacheDir, 'releases', 'CHANGELOG.md')))
     return 'releases/CHANGELOG.md'
   return false
 }
-
-// ── Shared pipeline functions ──
 
 export interface FetchResult {
   docSource: string
@@ -76,20 +73,17 @@ export interface FetchResult {
   hasDiscussions: boolean
   hasReleases: boolean
   warnings: string[]
-  /** Parsed GitHub owner/repo for repo-level cache */
   repoInfo?: { owner: string, repo: string }
-  /** Whether this result was served from cache (no fresh fetches) */
   usedCache: boolean
 }
 
-/** Fetch and cache all resources for a package (docs cascade + issues + discussions + releases) */
+/** Fetch and cache all resources for a package */
 export async function fetchAndCacheResources(opts: {
   packageName: string
   resolved: ResolvedPackage
   version: string
   useCache: boolean
   features?: FeaturesConfig
-  /** Lower-bound date for release/issue/discussion collection (ISO date) */
   from?: string
   onProgress: (message: string) => void
 }): Promise<FetchResult> {
@@ -97,7 +91,6 @@ export async function fetchAndCacheResources(opts: {
   const features = opts.features ?? readConfig().features ?? defaultFeatures
   const cache = createReferenceCache(packageName, version)
 
-  // Retry fetch if cache is README-only but richer sources exist (likely transient failure)
   const cacheInvalidated = opts.useCache
     && resolved.crawlUrl
     && cache.detectDocs(resolved.repoUrl, resolved.llmsUrl).docsType === 'readme'
@@ -117,7 +110,6 @@ export async function fetchAndCacheResources(opts: {
     warnings.push(...content.warnings)
     if (content.docs.length > 0) {
       cache.write(content.docs)
-      // Generate docs index when we have multiple markdown files under docs/
       if (docsType !== 'readme' && content.docs.filter(d => d.path.startsWith('docs/') && d.path.endsWith('.md')).length > 1) {
         const docsIndex = generateDocsIndex(content.docs)
         if (docsIndex)
@@ -170,14 +162,6 @@ export interface PreparedSkill {
   relatedSkills: string[]
 }
 
-/**
- * Post-fetch preparation: link references under `.skilld/`, build the search
- * index (when enabled), and gather the local facts the SkillBuilder needs
- * (changelog, shipped-docs flag, key files, related skills).
- *
- * Pass `baseDir` to populate `relatedSkills`; omit to skip the lookup
- * (e.g. for sync-git where the base dir has no installed skills to relate to).
- */
 export async function prepareSkillReferences(opts: {
   packageName: string
   version: string
@@ -185,7 +169,6 @@ export async function prepareSkillReferences(opts: {
   skillDir: string
   resources: FetchResult
   features: FeaturesConfig
-  /** When provided, run `findRelatedSkills` against this directory. */
   baseDir?: string
   onIndexProgress?: (msg: string) => void
 }): Promise<PreparedSkill> {
@@ -214,12 +197,10 @@ export async function prepareSkillReferences(opts: {
   return { hasChangelog, shippedDocs, pkgFiles, relatedSkills }
 }
 
-export { resolveLocalDep } from '../sources/local-dep.ts'
+export { resolveLocalDep } from '../../sources/local-dep.ts'
 
 export interface BuildSkillContextOpts {
-  /** Display/frontmatter identity (e.g. `@scope/pkg`) */
   packageName: string
-  /** Storage key for cache lookups; defaults to `packageName` */
   cachePackageName?: string
   version: string
   skillDir: string
@@ -227,16 +208,11 @@ export interface BuildSkillContextOpts {
   resources: FetchResult
   prepared: PreparedSkill
   resolved: ResolvedPackage
-  /** Multi-package merge list (only carried when length > 1) */
   packages?: Array<{ name: string }>
   features: FeaturesConfig
   overheadLines?: number
 }
 
-/**
- * Assemble a `SkillContext` from the pipeline outputs. Single seam so the
- * SkillContext shape isn't reconstructed inline in every sync orchestrator.
- */
 export function buildSkillContext(opts: BuildSkillContextOpts): SkillContext {
   const { packages, cachePackageName, packageName } = opts
   return {

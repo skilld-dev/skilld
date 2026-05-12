@@ -7,19 +7,18 @@
 // Cache management
 export {
   CACHE_DIR,
-  clearAllCache,
-  clearCache,
+  clearAllCachedPackages,
+  clearCachedPackage,
+  createReferenceCache,
+  createRepoCache,
   ensureCacheDir,
   getCacheDir,
   getCacheKey,
   getVersionKey,
-  isCached,
-  listCached,
-  readCachedDocs,
+  listCachedPackages,
   REFERENCES_DIR,
-  writeToCache,
 } from './cache/index.ts'
-export type { CacheConfig, CachedDoc, CachedPackage } from './cache/index.ts'
+export type { CacheConfig, CachedDoc, CachedPackage, ReferenceCache, RepoCache } from './cache/index.ts'
 
 // Search
 export {

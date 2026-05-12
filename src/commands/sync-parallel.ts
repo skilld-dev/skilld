@@ -1,16 +1,15 @@
 /**
  * Parallel sync orchestrator. Two phased waves:
  *   1. base sync per pkg (pLimited) — fetch, cache, write base SKILL.md
- *   2. LLM enhancement per pkg (pLimited) — single combined `selectLlmConfig`
- *      prompt drives all pkgs in this wave
+ *   2. LLM enhancement per pkg (pLimited)
  *
- * Both waves use `runBaseSync` / `runEnhancePhase` from sync-runner; the
- * frontend just supplies a parallel `SyncUi` and orchestrates the pLimit.
+ * Both waves use `createSyncRun()` with a parallel UI binder. State map is
+ * keyed by raw spec to match hook payloads.
  */
 
 import type { AgentType, OptimizeModel } from '../agent/index.ts'
-import type { ReadyState, RunBaseConfig } from './sync-runner.ts'
-import type { PackageState, ParallelRender } from './sync-ui-parallel.ts'
+import type { ReadyState } from './sync/phases.ts'
+import type { PackageState, ParallelRender } from './sync/ui/parallel.ts'
 import * as p from '@clack/prompts'
 import logUpdate from 'log-update'
 import pLimit from 'p-limit'
@@ -19,12 +18,13 @@ import { ensureProjectFiles } from '../agent/skill-installer.ts'
 import { ensureCacheDir, getVersionKey } from '../cache/index.ts'
 import { readConfig } from '../core/config.ts'
 import { semverDiff } from '../core/semver.ts'
+import { parsePackageSpec } from '../core/url.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
-import { parsePackageSpec, searchNpmPackages } from '../sources/index.ts'
+import { searchNpmPackages } from '../sources/index.ts'
 import { DEFAULT_SECTIONS, resolveAutoModel, selectLlmConfig } from './llm-prompts.ts'
-import { npmResolver } from './sync-resolvers.ts'
-import { runBaseSync, runEnhancePhase } from './sync-runner.ts'
-import { createParallelUi, renderParallel } from './sync-ui-parallel.ts'
+import { npmResolver } from './sync/resolvers.ts'
+import { createSyncRun } from './sync/run.ts'
+import { bindParallelUi, renderParallel } from './sync/ui/parallel.ts'
 
 export interface ParallelSyncConfig {
   packages: string[]
@@ -38,7 +38,6 @@ export interface ParallelSyncConfig {
   mode?: 'add' | 'update'
 }
 
-/** Bump-type ordering for combining update contexts across packages. */
 const DIFF_RANK: Record<string, number> = {
   major: 5,
   premajor: 4,
@@ -53,9 +52,15 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
   const { packages, concurrency = 5 } = config
   const cwd = process.cwd()
 
+  // State map keyed by display name (matches the original behavior where
+  // parsePackageSpec(spec).name was used as the slot key).
   const states = new Map<string, PackageState>()
-  for (const spec of packages)
-    states.set(spec, { name: spec, status: 'pending', message: 'Waiting...' })
+  const specToName = new Map<string, string>()
+  for (const spec of packages) {
+    const { name } = parsePackageSpec(spec)
+    specToName.set(spec, name)
+    states.set(spec, { name, status: 'pending', message: 'Waiting...' })
+  }
 
   const render: ParallelRender = {
     states,
@@ -66,23 +71,22 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
   ensureCacheDir()
   renderParallel(render)
 
-  const limit = pLimit(concurrency)
-  const baseConfig: RunBaseConfig = {
+  const run = createSyncRun({
+    cwd,
+    resolver: npmResolver,
     agent: config.agent,
     global: config.global,
     mode: config.mode,
     force: config.force,
-  }
+    debug: config.debug,
+    defaultSections: DEFAULT_SECTIONS,
+  })
+  bindParallelUi(run.hooks, render)
 
   // ── Wave 1: base sync per pkg ──
+  const limit = pLimit(concurrency)
   const baseResults = await Promise.allSettled(
-    packages.map(spec =>
-      limit(async () => {
-        const { name } = parsePackageSpec(spec)
-        const ui = createParallelUi(name, render)
-        return runBaseSync(spec, baseConfig, ui, npmResolver, cwd, DEFAULT_SECTIONS)
-      }),
-    ),
+    packages.map(spec => limit(() => run.runBase(spec))),
   )
 
   logUpdate.done()
@@ -110,15 +114,15 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
       continue
     }
     if (result.kind === 'unresolved') {
-      const npmAttempt = result.unresolved.attempts.find(a => a.source === 'npm')
+      const npmAttempt = result.attempts.find(a => a.source === 'npm')
       let reason: string
       if (npmAttempt?.status === 'not-found') {
-        const suggestions = await searchNpmPackages(result.unresolved.identityName, 3)
+        const suggestions = await searchNpmPackages(result.identityName, 3)
         const hint = suggestions.length > 0 ? ` (try: ${suggestions.map(s => s.name).join(', ')})` : ''
         reason = (npmAttempt.message || 'Not on npm') + hint
       }
       else {
-        const failed = result.unresolved.attempts.filter(a => a.status !== 'success')
+        const failed = result.attempts.filter(a => a.status !== 'success')
         reason = failed.map(a => a.message || a.source).join('; ') || 'No docs found'
       }
       const slot = states.get(spec)
@@ -129,12 +133,12 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
       errors.push({ spec, reason })
       continue
     }
-    if (result.kind === 'merge-needed') {
-      // Merge requires interactive context; surface and skip.
-      errors.push({ spec, reason: `Skill dir already holds ${result.state.existingLock.packageName} — run sequentially to merge` })
+    if (result.kind === 'error') {
+      errors.push({ spec, reason: result.reason })
       continue
     }
-    ready.push({ spec, state: result.state })
+    if (result.kind === 'ready')
+      ready.push({ spec, state: result.state })
   }
 
   renderParallel(render)
@@ -148,8 +152,6 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
   for (const { spec, reason } of errors)
     p.log.error(`  ${spec}: ${reason}`)
 
-  // Pre-cached pkgs skip the LLM ask. `runBaseSync` already wrote the cached
-  // SKILL.md and surfaced `allSectionsCached` on the ReadyState.
   const cachedPkgs: string[] = []
   const uncached: typeof ready = []
   for (const r of ready) {
@@ -171,7 +173,6 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
     const llmConfig = await selectLlmConfig(resolvedModel, undefined, updateCtx)
 
     if (llmConfig?.promptOnly) {
-      // Reset slots so the prompt-only path renders cleanly per pkg.
       for (const r of uncached) {
         const slot = states.get(r.spec)
         if (slot) {
@@ -180,39 +181,19 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
         }
       }
       renderParallel(render)
-      // Phase 2 in promptOnly mode is a synchronous file-writes loop — no
-      // need for parallelism. Reuse the same enhance phase via runEnhancePhase
-      // (which dispatches to writePromptFiles when promptOnly is set).
-      for (const r of uncached) {
-        const ui = createParallelUi(r.spec, render, getVersionKey(r.state.version))
-        await runEnhancePhase(r.state, llmConfig, {
-          agent: config.agent,
-          global: config.global,
-          force: config.force,
-          debug: config.debug,
-        }, ui, cwd)
-      }
+      for (const r of uncached)
+        await run.runEnhance(r.state, llmConfig)
     }
     else if (llmConfig) {
       p.log.step(getModelLabel(llmConfig.model))
-      // Reset slots for the LLM phase so progress restarts visually.
       for (const r of uncached) {
-        states.set(r.spec, { name: r.spec, status: 'pending', message: 'Waiting...', version: getVersionKey(r.state.version) })
+        const displayName = specToName.get(r.spec) ?? r.spec
+        states.set(r.spec, { name: displayName, status: 'pending', message: 'Waiting...', version: getVersionKey(r.state.version) })
       }
       renderParallel(render)
 
       const llmResults = await Promise.allSettled(
-        uncached.map(r =>
-          limit(async () => {
-            const ui = createParallelUi(r.spec, render, getVersionKey(r.state.version))
-            await runEnhancePhase(r.state, llmConfig, {
-              agent: config.agent,
-              global: config.global,
-              force: config.force,
-              debug: config.debug,
-            }, ui, cwd)
-          }),
-        ),
+        uncached.map(r => limit(() => run.runEnhance(r.state, llmConfig))),
       )
 
       logUpdate.done()
@@ -221,17 +202,8 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
     }
   }
   else {
-    // No LLM ask but we still need to link agents + ensure project files for
-    // each ready pkg. `runEnhancePhase(state, null, ...)` does exactly that.
-    for (const r of ready) {
-      const ui = createParallelUi(r.spec, render, getVersionKey(r.state.version))
-      await runEnhancePhase(r.state, null, {
-        agent: config.agent,
-        global: config.global,
-        force: config.force,
-        debug: config.debug,
-      }, ui, cwd)
-    }
+    for (const r of ready)
+      await run.runEnhance(r.state, null)
   }
 
   await ensureProjectFiles({ cwd, agent: config.agent, global: config.global })
@@ -249,11 +221,6 @@ export async function syncPackagesParallel(config: ParallelSyncConfig): Promise<
   }
 }
 
-/**
- * Combine per-package update contexts into a single aggregate for the LLM
- * config prompt. Picks the highest-rank bump, the earliest syncedAt, and
- * `allEnhanced` only when every pkg was previously LLM-enhanced.
- */
 function aggregateUpdateCtx(ready: Array<{ state: ReadyState }>): import('./llm-prompts.ts').UpdateContext {
   let maxDiff = ''
   let allEnhanced = true

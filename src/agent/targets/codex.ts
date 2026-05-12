@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex')
+const codexHome = () => process.env.CODEX_HOME || join(homedir(), '.codex')
 
 /**
  * OpenAI Codex CLI
@@ -21,7 +21,7 @@ const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex')
 export const codex = defineTarget({
   agent: 'codex',
   displayName: 'Codex',
-  detectInstalled: () => existsSync(codexHome),
+  detectInstalled: () => existsSync(codexHome()),
   // CODEX_HOME is a config dir override, not a session indicator.
   // Codex doesn't currently set a reliable "running inside codex" env var,
   // so env detection is disabled - we rely on project dir detection instead.
@@ -35,7 +35,7 @@ export const codex = defineTarget({
   instructionFile: 'AGENTS.md',
 
   skillsDir: '.agents/skills',
-  globalSkillsDir: join(homedir(), '.agents/skills'),
+  globalSkillsDir: () => join(homedir(), '.agents/skills'),
   additionalSkillsDirs: [
     '~/.codex/skills',
     '/etc/codex/skills',

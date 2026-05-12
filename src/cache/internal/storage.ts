@@ -2,13 +2,12 @@
  * Cache storage operations
  */
 
-import type { CachedDoc, CachedPackage } from './types.ts'
+import type { CachedDoc, CachedPackage } from '../types.ts'
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'pathe'
-import { readPackageJsonSafe } from '../core/package-json.ts'
-import { getRepoCacheDir, REFERENCES_DIR, REPOS_DIR, skillInternalDir } from '../core/paths.ts'
-import { resolvePkgDir } from '../core/prepare.ts'
-import { sanitizeMarkdown } from '../core/sanitize.ts'
+import { join, resolve } from 'pathe'
+import { getRepoCacheDir, REFERENCES_DIR, REPOS_DIR, skillInternalDir } from '../../core/paths.ts'
+import { resolvePkgDir } from '../../core/prepare.ts'
+import { sanitizeMarkdown } from '../../core/sanitize.ts'
 import { getCacheDir } from './version.ts'
 
 /** Safely create a symlink, validating target is under REFERENCES_DIR or REPOS_DIR */
@@ -138,14 +137,6 @@ export function linkCachedDir(skillDir: string, name: string, version: string, s
 }
 
 /**
- * Resolve the package directory: node_modules first, then cached dist fallback.
- * Returns the path if found, null otherwise.
- */
-export { resolvePkgDir } from '../core/prepare.ts'
-export { getShippedSkills, linkShippedSkill } from '../core/prepare.ts'
-export type { ShippedSkill } from '../core/prepare.ts'
-
-/**
  * Create symlink from .skilld dir to package directory
  *
  * Structure:
@@ -196,43 +187,6 @@ export function linkPkgNamed(skillDir: string, name: string, cwd: string, versio
 }
 
 /**
- * Get key files from a package directory for display
- * Returns entry points + docs files
- */
-export function getPkgKeyFiles(name: string, cwd: string, version?: string): string[] {
-  const pkgPath = resolvePkgDir(name, cwd, version)
-  if (!pkgPath)
-    return []
-
-  const files: string[] = []
-  const pkgJsonPath = join(pkgPath, 'package.json')
-
-  const pkgJsonResult = readPackageJsonSafe(pkgJsonPath)
-  if (pkgJsonResult) {
-    const pkg = pkgJsonResult.parsed as Record<string, any>
-
-    // Entry points
-    if (pkg.main)
-      files.push(basename(pkg.main))
-    if (pkg.module && pkg.module !== pkg.main)
-      files.push(basename(pkg.module))
-
-    // Type definitions (relative path preserved for LLM tool hints)
-    const typesPath = pkg.types || pkg.typings
-    if (typesPath && existsSync(join(pkgPath, typesPath)))
-      files.push(typesPath)
-  }
-
-  // Check for common doc files (case-insensitive readme match)
-  const entries = readdirSync(pkgPath).filter(f =>
-    /^readme\.md$/i.test(f) || /^changelog\.md$/i.test(f),
-  )
-  files.push(...entries)
-
-  return [...new Set(files)]
-}
-
-/**
  * Write LLM-generated section outputs to global cache for cross-project reuse
  *
  * Structure:
@@ -255,20 +209,6 @@ export function readCachedSection(name: string, version: string, file: string): 
   if (!existsSync(path))
     return null
   return readFileSync(path, 'utf-8')
-}
-
-export function hasShippedDocs(name: string, cwd: string, version?: string): boolean {
-  const pkgPath = resolvePkgDir(name, cwd, version)
-  if (!pkgPath)
-    return false
-
-  const docsCandidates = ['docs', 'documentation', 'doc']
-  for (const candidate of docsCandidates) {
-    const docsPath = join(pkgPath, candidate)
-    if (existsSync(docsPath))
-      return true
-  }
-  return false
 }
 
 /**
@@ -327,20 +267,6 @@ export function clearCache(name: string, version: string): boolean {
 
   rmSync(cacheDir, { recursive: true })
   return true
-}
-
-/**
- * Clear all cache
- */
-export function clearAllCache(): number {
-  const packages = listCached()
-  for (const pkg of packages) {
-    clearCache(pkg.name, pkg.version)
-  }
-  // Also clear repo-level cache
-  if (existsSync(REPOS_DIR))
-    rmSync(REPOS_DIR, { recursive: true })
-  return packages.length
 }
 
 /**

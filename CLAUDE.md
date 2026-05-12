@@ -115,7 +115,7 @@ References are global/static; SKILL.md is per-project (different conventions). C
 - **Package registry** — `src/sources/package-registry.ts` unified registry keyed by `owner/repo`, consolidates doc overrides, blog presets, and file patterns for packages with broken/missing npm metadata
 - **Version comparison** — `isOutdated()` compares exact versions
 - **Tests** — vitest projects (unit + e2e), `globals: true`, tests in `test/unit/` and `test/e2e/`, fs mocked via `vi.mock('node:fs')`. E2E tests include preset workflows (nuxt, vue, react, svelte, etc.) in `test/e2e/preset-*.test.ts`
-- **Build** — `obuild` bundles multiple entry points (cli, index, types, cache, retriv, agent, sources) as subpath exports
+- **Build** — `obuild` bundles entry points: `index`, `cli`, `cli-entry`, `prepare`, `types`, and `retriv/worker` (worker spawned by `retriv/pool.ts` at runtime). Package `exports` declares only `.`; nothing else is a published subpath.
 - **CLI modes** — `skilld update -b` for pnpm prepare hooks (background, non-interactive, auto-uses configured model). `skilld eject` exports portable skills with references as real files. `--debug` saves raw LLM output to `logs/`
 - **First-run wizard** — `src/commands/wizard.ts` handles agent/model config and package selection on first run
 - **E2E agent tests** — `test/e2e-agents/` validates skill generation across multiple agents via `generate-matrix.ts` and `generate-pipeline.ts`

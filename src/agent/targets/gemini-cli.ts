@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Google Gemini CLI
@@ -20,17 +20,17 @@ const home = homedir()
 export const geminiCli = defineTarget({
   agent: 'gemini-cli',
   displayName: 'Gemini CLI',
-  detectInstalled: () => existsSync(join(home, '.gemini')),
+  detectInstalled: () => existsSync(join(home(), '.gemini')),
   detectEnv: () => !!process.env.GEMINI_CLI,
   detectProject: cwd => existsSync(join(cwd, '.gemini')),
   cli: 'gemini',
   instructionFile: 'GEMINI.md',
 
   skillsDir: '.gemini/skills',
-  globalSkillsDir: join(home, '.gemini/skills'),
-  additionalSkillsDirs: [
+  globalSkillsDir: () => join(home(), '.gemini/skills'),
+  additionalSkillsDirs: () => [
     '.agents/skills',
-    join(home, '.agents/skills'),
+    join(home(), '.agents/skills'),
   ],
 
   frontmatter: [

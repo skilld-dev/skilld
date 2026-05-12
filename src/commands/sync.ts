@@ -1,7 +1,6 @@
 import type { AgentType, OptimizeModel } from '../agent/index.ts'
 import type { ProjectState } from '../core/skills.ts'
 import type { ResolveAttempt } from '../sources/index.ts'
-import type { RunBaseConfig } from './sync-runner.ts'
 import * as p from '@clack/prompts'
 import { relative } from 'pathe'
 import { detectImportedPackages } from '../agent/index.ts'
@@ -12,11 +11,11 @@ import { isCrateSpec } from '../core/prefix.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
 import { searchNpmPackages } from '../sources/index.ts'
 import { DEFAULT_SECTIONS, resolveAutoModel, selectLlmConfig } from './llm-prompts.ts'
-import { handleMerge } from './sync-merge.ts'
 import { syncPackagesParallel } from './sync-parallel.ts'
-import { npmResolver } from './sync-resolvers.ts'
-import { runBaseSync, runEnhancePhase } from './sync-runner.ts'
-import { createClackUi } from './sync-ui-clack.ts'
+import { handleMerge } from './sync/merge.ts'
+import { npmResolver } from './sync/resolvers.ts'
+import { createSyncRun } from './sync/run.ts'
+import { bindClackUi } from './sync/ui/clack.ts'
 
 const RESOLVE_SOURCE_LABELS: Record<string, string> = {
   'npm': 'npm registry',
@@ -52,23 +51,17 @@ export interface SyncOptions {
   force?: boolean
   debug?: boolean
   mode?: 'add' | 'update'
-  /** Eject mode: copy references as real files instead of symlinking */
   eject?: boolean | string
-  /** Override the computed skill directory name */
   name?: string
-  /** Lower-bound date for release/issue/discussion collection (ISO date, e.g. "2025-07-01") */
   from?: string
-  /** Skip search index / embeddings generation */
   noSearch?: boolean
 }
 
 export async function syncCommand(state: ProjectState, opts: SyncOptions): Promise<void> {
-  // If packages specified, sync those
   if (opts.packages && opts.packages.length > 0) {
     const crateSpecs = opts.packages.filter(isCrateSpec)
     const npmSpecs = opts.packages.filter(p => !isCrateSpec(p))
 
-    // npm packages: parallel if >1, serial if 1
     if (npmSpecs.length > 1) {
       await syncPackagesParallel({
         packages: npmSpecs,
@@ -85,21 +78,18 @@ export async function syncCommand(state: ProjectState, opts: SyncOptions): Promi
       await syncSinglePackage(npmSpecs[0]!, opts)
     }
 
-    // Crates: serialize (respect crates.io rate limits)
     for (const spec of crateSpecs)
       await syncSinglePackage(spec, opts)
 
     return
   }
 
-  // Otherwise show picker, pre-selecting missing/outdated
   const packages = await interactivePicker(state)
   if (!packages || packages.length === 0) {
     p.outro('No packages selected')
     return
   }
 
-  // Use parallel sync for multiple packages
   if (packages.length > 1) {
     return syncPackagesParallel({
       packages,
@@ -113,7 +103,6 @@ export async function syncCommand(state: ProjectState, opts: SyncOptions): Promi
     })
   }
 
-  // Single package - use original flow
   await syncSinglePackage(packages[0]!, opts)
 }
 
@@ -131,7 +120,6 @@ async function interactivePicker(state: ProjectState): Promise<string[] | null> 
       p.log.warn('No dependencies found')
       return null
     }
-    // Fallback to package.json
     return pickFromList(Array.from(declaredMap.entries(), ([name, version]) => ({
       name,
       version: maskPatch(version),
@@ -167,7 +155,6 @@ async function pickFromList(
   packages: Array<{ name: string, version?: string, count: number, inPkgJson: boolean }>,
   state: ProjectState,
 ): Promise<string[] | null> {
-  // Pre-select missing and outdated
   const missingSet = new Set(state.missing)
   const outdatedSet = new Set(state.outdated.map(s => s.name))
 
@@ -213,16 +200,13 @@ interface SyncConfig {
   noSearch?: boolean
 }
 
-/**
- * Sequential sync via the unified runner. Handles npm/crate, add/update mode,
- * eject mode, merge, shipped skills, and "did-you-mean" suggestions.
- */
 async function runSimpleSync(packageSpec: string, config: SyncConfig): Promise<void> {
   const cwd = process.cwd()
-  const ui = createClackUi({ cwd })
   const isEject = !!config.eject
 
-  const baseConfig: RunBaseConfig = {
+  const run = createSyncRun({
+    cwd,
+    resolver: npmResolver,
     agent: config.agent,
     global: config.global,
     mode: config.mode,
@@ -230,23 +214,25 @@ async function runSimpleSync(packageSpec: string, config: SyncConfig): Promise<v
     noSearch: config.noSearch,
     name: config.name,
     from: config.from,
+    debug: config.debug,
     eject: config.eject,
-  }
+    defaultSections: DEFAULT_SECTIONS,
+    onMergeNeeded: state => handleMerge(state, { agent: config.agent, global: config.global }, cwd),
+  })
+  bindClackUi(run.hooks, { cwd })
 
-  const result = await runBaseSync(packageSpec, baseConfig, ui, npmResolver, cwd, DEFAULT_SECTIONS)
+  const base = await run.runBase(packageSpec)
 
-  if (result.kind === 'shipped') {
+  if (base.kind === 'shipped') {
     p.outro(`Synced ${packageSpec}`)
     return
   }
 
-  if (result.kind === 'unresolved') {
-    const { unresolved } = result
-    // Suggestion picker: only meaningful for npm specs (not crates).
+  if (base.kind === 'unresolved') {
     if (!isCrateSpec(packageSpec)) {
-      const suggestions = await searchNpmPackages(unresolved.identityName)
+      const suggestions = await searchNpmPackages(base.identityName)
       if (suggestions.length > 0) {
-        showResolveAttempts(unresolved.attempts)
+        showResolveAttempts(base.attempts)
         const selected = await p.select({
           message: 'Did you mean one of these?',
           options: [
@@ -259,17 +245,15 @@ async function runSimpleSync(packageSpec: string, config: SyncConfig): Promise<v
         return
       }
     }
-    showResolveAttempts(unresolved.attempts)
+    showResolveAttempts(base.attempts)
     return
   }
 
-  if (result.kind === 'merge-needed') {
-    await handleMerge(result.state, { agent: config.agent, global: config.global }, cwd)
+  if (base.kind === 'merged' || base.kind === 'error')
     return
-  }
 
-  // result.kind === 'ready'
-  const { state } = result
+  // base.kind === 'ready'
+  const { state } = base
   const globalConfig = readConfig()
   const resolvedModel = await resolveAutoModel(config.model, config.yes)
 
@@ -277,13 +261,7 @@ async function runSimpleSync(packageSpec: string, config: SyncConfig): Promise<v
   if (!state.allSectionsCached && !globalConfig.skipLlm && !(config.yes && !resolvedModel))
     llmConfig = await selectLlmConfig(resolvedModel, undefined, state.updateCtx)
 
-  await runEnhancePhase(
-    state,
-    llmConfig,
-    { agent: config.agent, global: config.global, force: config.force, debug: config.debug, eject: config.eject },
-    ui,
-    cwd,
-  )
+  await run.runEnhance(state, llmConfig)
 
   await shutdownWorker()
   const ejectMsg = isEject ? ' (ejected)' : ''

@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Windsurf (Codeium editor)
@@ -20,13 +20,13 @@ const home = homedir()
 export const windsurf = defineTarget({
   agent: 'windsurf',
   displayName: 'Windsurf',
-  detectInstalled: () => existsSync(join(home, '.codeium/windsurf')),
+  detectInstalled: () => existsSync(join(home(), '.codeium/windsurf')),
   detectEnv: () => !!process.env.WINDSURF_SESSION,
   detectProject: cwd => existsSync(join(cwd, '.windsurf')) || existsSync(join(cwd, '.windsurfrules')),
   instructionFile: '.windsurfrules',
 
   skillsDir: '.windsurf/skills',
-  globalSkillsDir: join(home, '.codeium/windsurf/skills'),
+  globalSkillsDir: () => join(home(), '.codeium/windsurf/skills'),
 
   frontmatter: [
     { ...SPEC_FRONTMATTER.name!, description: 'Skill identifier.', constraints: 'Lowercase, numbers, hyphens only' },

@@ -8,8 +8,9 @@
 
 import type { SkillInfo } from './lockfile.ts'
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync, unlinkSync } from 'node:fs'
-import { join } from 'pathe'
-import { getCacheDir } from '../cache/version.ts'
+import { basename, join } from 'pathe'
+import { getCacheDir } from '../cache/internal/version.ts'
+import { readPackageJsonSafe } from './package-json.ts'
 
 /** Map lockfile identity name to storage-safe cache key (crate:X → @skilld-crate/X) */
 function toStorageName(name: string): string {
@@ -98,4 +99,53 @@ export function linkShippedSkill(baseDir: string, skillName: string, targetDir: 
     else rmSync(linkPath, { recursive: true, force: true })
   }
   symlinkSync(targetDir, linkPath)
+}
+
+/** Check if a package ships a docs/, documentation/, or doc/ directory */
+export function hasShippedDocs(name: string, cwd: string, version?: string): boolean {
+  const pkgPath = resolvePkgDir(name, cwd, version)
+  if (!pkgPath)
+    return false
+
+  const docsCandidates = ['docs', 'documentation', 'doc']
+  for (const candidate of docsCandidates) {
+    const docsPath = join(pkgPath, candidate)
+    if (existsSync(docsPath))
+      return true
+  }
+  return false
+}
+
+/**
+ * Get key files from a package directory for display.
+ * Returns entry points + docs files.
+ */
+export function getPkgKeyFiles(name: string, cwd: string, version?: string): string[] {
+  const pkgPath = resolvePkgDir(name, cwd, version)
+  if (!pkgPath)
+    return []
+
+  const files: string[] = []
+  const pkgJsonPath = join(pkgPath, 'package.json')
+
+  const pkgJsonResult = readPackageJsonSafe(pkgJsonPath)
+  if (pkgJsonResult) {
+    const pkg = pkgJsonResult.parsed as Record<string, any>
+
+    if (pkg.main)
+      files.push(basename(pkg.main))
+    if (pkg.module && pkg.module !== pkg.main)
+      files.push(basename(pkg.module))
+
+    const typesPath = pkg.types || pkg.typings
+    if (typesPath && existsSync(join(pkgPath, typesPath)))
+      files.push(typesPath)
+  }
+
+  const entries = readdirSync(pkgPath).filter(f =>
+    /^readme\.md$/i.test(f) || /^changelog\.md$/i.test(f),
+  )
+  files.push(...entries)
+
+  return [...new Set(files)]
 }

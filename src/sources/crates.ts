@@ -1,7 +1,8 @@
 import type { ResolveAttempt, ResolvedPackage, ResolveResult } from './types.ts'
+import { isLikelyCodeHostUrl, isUselessDocsUrl, normalizeRepoUrl, parseGitHubUrl } from '../core/url.ts'
 import { resolveGitHubRepo } from './github.ts'
 import { fetchLlmsUrl } from './llms.ts'
-import { $fetch, createRateLimitedRunner, isLikelyCodeHostUrl, isUselessDocsUrl, normalizeRepoUrl, parseGitHubUrl } from './utils.ts'
+import { $fetch, createRateLimitedRunner } from './utils.ts'
 
 const VALID_CRATE_NAME = /^[a-z0-9][\w-]*$/
 const runCratesApiRateLimited = createRateLimitedRunner(1000)

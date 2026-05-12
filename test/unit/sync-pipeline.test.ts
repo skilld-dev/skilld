@@ -14,8 +14,43 @@ vi.mock('node:fs', async () => {
   }
 })
 
+// Shared mocks so callers that import internals (e.g. sources/timeline-resolver,
+// cache/internal/references) hit fakes instead of touching disk.
+const sharedWriteToCache = vi.fn()
+const sharedWriteToRepoCache = vi.fn()
+const sharedClearCache = vi.fn()
+const sharedLinkRepoCachedDir = vi.fn()
+const sharedLinkCachedDir = vi.fn()
+const sharedLinkPkg = vi.fn()
+const sharedLinkPkgNamed = vi.fn()
+
+vi.mock('../../src/cache/internal/storage', () => ({
+  writeToCache: sharedWriteToCache,
+  writeToRepoCache: sharedWriteToRepoCache,
+  clearCache: sharedClearCache,
+  linkRepoCachedDir: sharedLinkRepoCachedDir,
+  linkCachedDir: sharedLinkCachedDir,
+  linkPkg: sharedLinkPkg,
+  linkPkgNamed: sharedLinkPkgNamed,
+  ensureCacheDir: vi.fn(),
+  inferDocsTypeFromCache: vi.fn(() => 'readme'),
+  isCached: vi.fn(() => false),
+  isReadmeOnlyCache: vi.fn(() => false),
+  readCachedDocs: vi.fn(() => []),
+  readCachedSection: vi.fn(() => null),
+  writeSections: vi.fn(),
+  listCached: vi.fn(() => []),
+  listReferenceFiles: vi.fn(() => []),
+}))
+
+vi.mock('../../src/cache/internal/version', () => ({
+  getCacheDir: vi.fn(() => '/mock-cache/references/test-pkg@1.0.0'),
+  getCacheKey: vi.fn((name: string, version: string) => `${name}@${version}`),
+  getVersionKey: vi.fn((v: string) => v),
+}))
+
 vi.mock('../../src/cache', () => {
-  const writeToCache = vi.fn()
+  const writeToCache = sharedWriteToCache
   const readCachedDocs = vi.fn(() => [] as Array<{ path: string, content: string }>)
   const loadCachedReferences = vi.fn(() => ({ docsToIndex: [] as any[], docSource: 'readme', docsType: 'readme' as const }))
   const detectDocsType = vi.fn(() => ({ docsType: 'readme' as const }))
@@ -33,10 +68,8 @@ vi.mock('../../src/cache', () => {
     getRepoCacheDir: vi.fn((owner: string, repo: string) => `/mock-cache/repos/${owner}/${repo}`),
     readCachedDocs,
     writeToCache,
-    writeToRepoCache: vi.fn(),
-    clearCache: vi.fn(),
-    getShippedSkills: vi.fn(() => []),
-    hasShippedDocs: vi.fn(() => false),
+    writeToRepoCache: sharedWriteToRepoCache,
+    clearCache: sharedClearCache,
     linkCachedDir: vi.fn(),
     linkDiscussions: vi.fn(),
     linkIssues: vi.fn(),
@@ -45,8 +78,6 @@ vi.mock('../../src/cache', () => {
     linkReferences: vi.fn(),
     linkReleases: vi.fn(),
     linkRepoCachedDir: vi.fn(),
-    linkShippedSkill: vi.fn(),
-    resolvePkgDir: vi.fn(),
     loadCachedReferences,
     detectDocsType,
     linkAllReferences,
@@ -108,6 +139,15 @@ vi.mock('../../src/sources', () => ({
   toCrawlPattern: vi.fn((url: string) => `${url.replace(/\/+$/, '')}/**`),
 }))
 
+vi.mock('../../src/core/prepare', () => ({
+  getShippedSkills: vi.fn(() => []),
+  hasShippedDocs: vi.fn(() => false),
+  linkShippedSkill: vi.fn(),
+  resolvePkgDir: vi.fn(),
+  restorePkgSymlink: vi.fn(),
+  getPkgKeyFiles: vi.fn(() => []),
+}))
+
 vi.mock('../../src/core/config', () => ({
   readConfig: vi.fn(() => ({ features: { search: true, issues: false, discussions: false, releases: true } })),
   defaultFeatures: { search: true, issues: false, discussions: false, releases: true },
@@ -135,24 +175,24 @@ vi.mock('../../src/agent', () => ({
 }))
 
 const { existsSync, readFileSync, rmSync, mkdirSync, copyFileSync, readdirSync } = await import('node:fs')
-const { getCacheDir, getPackageDbPath, readCachedDocs, writeToCache, writeToRepoCache, clearCache } = await import('../../src/cache')
+const { getCacheDir, getPackageDbPath, readCachedDocs, writeToCache, writeToRepoCache, clearCache } = await import('../../src/cache') as any /* mock surface */
 const { fetchCrawledDocs, fetchGitDocs, fetchGitHubIssues, fetchGitHubDiscussions, fetchGitHubRaw, fetchLlmsTxt, fetchReadmeContent, fetchReleaseNotes, downloadLlmsDocs, isGhAvailable, isShallowGitDocs, resolveEntryFiles, resolveLocalPackageDocs } = await import('../../src/sources')
 const { registerProject } = await import('../../src/core/config')
 const { writeLock } = await import('../../src/core/lockfile')
 const { createIndex, listIndexIds } = await import('../../src/retriv')
-const { getShippedSkills, linkShippedSkill, resolvePkgDir } = await import('../../src/cache')
+const { getShippedSkills, linkShippedSkill, resolvePkgDir } = await import('../../src/core/prepare')
 
 const {
-  classifyCachedDoc,
   detectDocsType,
   forceClearCache,
   ejectReferences,
-} = await import('../../src/cache/references')
+} = await import('../../src/cache/internal/references')
+const { classifyCachedDoc } = await import('../../src/cache/internal/classify')
 const {
   detectChangelog,
   resolveLocalDep,
   fetchAndCacheResources,
-} = await import('../../src/commands/sync-pipeline')
+} = await import('../../src/commands/sync/pipeline')
 const { indexResources } = await import('../../src/retriv/index-pipeline')
 const { handleShippedSkills, resolveBaseDir } = await import('../../src/agent/skill-installer')
 const { clearPackageJsonCache } = await import('../../src/core/package-json')
@@ -590,7 +630,7 @@ describe('sync-shared', () => {
       vi.mocked(readCachedDocs).mockReturnValue([
         { path: 'docs/guide.md', content: 'cached guide' },
       ])
-      const { loadCachedReferences } = await import('../../src/cache')
+      const { loadCachedReferences } = await import('../../src/cache') as any
       vi.mocked(loadCachedReferences).mockReturnValue({
         docsToIndex: [
           { id: 'docs/guide.md', content: 'cached guide', metadata: { package: 'test-pkg', source: 'docs/guide.md', type: 'doc' } },

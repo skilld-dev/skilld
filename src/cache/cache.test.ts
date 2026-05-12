@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { getCacheDir, getCacheKey, getVersionKey } from './version.ts'
+import { getCacheDir, getCacheKey, getVersionKey } from './internal/version.ts'
 
 describe('getVersionKey', () => {
-  it('extracts major.minor from semver', () => {
-    expect(getVersionKey('1.2.3')).toBe('1.2')
-    expect(getVersionKey('10.20.30')).toBe('10.20')
+  it('returns exact semver', () => {
+    expect(getVersionKey('1.2.3')).toBe('1.2.3')
+    expect(getVersionKey('10.20.30')).toBe('10.20.30')
   })
 
   it('handles prerelease versions', () => {
-    expect(getVersionKey('1.2.3-beta.1')).toBe('1.2')
+    expect(getVersionKey('1.2.3-beta.1')).toBe('1.2.3-beta.1')
   })
 
   it('returns original if no match', () => {
@@ -19,8 +19,8 @@ describe('getVersionKey', () => {
 
 describe('getCacheKey', () => {
   it('combines name and version key', () => {
-    expect(getCacheKey('vue', '3.4.5')).toBe('vue@3.4')
-    expect(getCacheKey('@nuxt/kit', '1.2.3')).toBe('@nuxt/kit@1.2')
+    expect(getCacheKey('vue', '3.4.5')).toBe('vue@3.4.5')
+    expect(getCacheKey('@nuxt/kit', '1.2.3')).toBe('@nuxt/kit@1.2.3')
   })
 })
 
@@ -29,6 +29,6 @@ describe('getCacheDir', () => {
     const dir = getCacheDir('vue', '3.4.5')
     expect(dir).toContain('.skilld')
     expect(dir).toContain('references')
-    expect(dir).toContain('vue@3.4')
+    expect(dir).toContain('vue@3.4.5')
   })
 })

@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Roo Code (VS Code extension)
@@ -20,13 +20,13 @@ const home = homedir()
 export const roo = defineTarget({
   agent: 'roo',
   displayName: 'Roo Code',
-  detectInstalled: () => existsSync(join(home, '.roo')),
+  detectInstalled: () => existsSync(join(home(), '.roo')),
   detectEnv: () => !!process.env.ROO_SESSION,
   detectProject: cwd => existsSync(join(cwd, '.roo')),
   instructionFile: '.roorules',
 
   skillsDir: '.roo/skills',
-  globalSkillsDir: join(home, '.roo/skills'),
+  globalSkillsDir: () => join(home(), '.roo/skills'),
 
   frontmatter: [
     { ...SPEC_FRONTMATTER.name!, description: 'Must exactly match the directory name.' },

@@ -14,16 +14,16 @@ import { createReferenceCache, listReferenceFiles } from '../../cache/index.ts'
 import { getActiveFeatures } from '../../core/config.ts'
 import { timedSpinner, todayIsoDate } from '../../core/formatting.ts'
 import { writeLock } from '../../core/lockfile.ts'
+import { parseGitHubRepoSlug } from '../../core/url.ts'
 import {
   fetchPkgDist,
-  parseGitHubRepoSlug,
   resolvePackageOrCrate,
 } from '../../sources/index.ts'
 import { DEFAULT_SECTIONS } from '../llm-prompts.ts'
 import {
   fetchAndCacheResources,
   prepareSkillReferences,
-} from '../sync-pipeline.ts'
+} from './pipeline.ts'
 
 export async function exportPortablePrompts(packageSpec: string, opts: {
   out?: string

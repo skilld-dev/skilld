@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const home = homedir()
+const home = () => homedir()
 
 /**
  * Cursor (AI code editor)
@@ -21,13 +21,13 @@ const home = homedir()
 export const cursor = defineTarget({
   agent: 'cursor',
   displayName: 'Cursor',
-  detectInstalled: () => existsSync(join(home, '.cursor')),
+  detectInstalled: () => existsSync(join(home(), '.cursor')),
   detectEnv: () => !!(process.env.CURSOR_SESSION || process.env.CURSOR_TRACE_ID),
   detectProject: cwd => existsSync(join(cwd, '.cursor')) || existsSync(join(cwd, '.cursorrules')),
   instructionFile: '.cursor/rules/skilld-activation.mdc',
 
   skillsDir: '.cursor/skills',
-  globalSkillsDir: join(home, '.cursor/skills'),
+  globalSkillsDir: () => join(home(), '.cursor/skills'),
   additionalSkillsDirs: [
     '.claude/skills',
     '.codex/skills',

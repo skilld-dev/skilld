@@ -113,8 +113,26 @@ export { resolvePackageOrCrate } from './resolve-package.ts'
 
 // ─ Pre-authored skills from git repos (separate flow) ────────────────────
 
+export type {
+  ContentResolver,
+  ResolveCtx,
+  Resolver,
+  ResolverOutcome,
+} from './resolver-registry.ts'
+export { createContentResolver, defineResolver } from './resolver-registry.ts'
+
 export type { ResolveOptions, ResolveStep } from './resolver.ts'
 export { resolvePackageDocs, resolvePackageDocsWithAttempts } from './resolver.ts'
+
+export { crawlUrlResolver } from './resolvers/crawl-url.ts'
+export { defaultResolvers } from './resolvers/default.ts'
+export { gitTagResolver } from './resolvers/git-tag.ts'
+export { githubMetaResolver } from './resolvers/github-meta.ts'
+export { githubReadmeResolver } from './resolvers/github-readme.ts'
+export { githubSearchResolver } from './resolvers/github-search.ts'
+export { llmsTxtResolver } from './resolvers/llms-txt.ts'
+export { localReadmeResolver } from './resolvers/local-readme.ts'
+export { npmResolver } from './resolvers/npm.ts'
 
 // ─ Shared types and utilities ────────────────────────────────────────────
 
@@ -131,13 +149,7 @@ export type {
 
 export {
   $fetch,
-  extractBranchHint,
   fetchGitHubRaw,
   fetchText,
-  isGitHubRepoUrl,
-  normalizeRepoUrl,
-  parseGitHubRepoSlug,
-  parseGitHubUrl,
-  parsePackageSpec,
   verifyUrl,
 } from './utils.ts'

@@ -17,13 +17,11 @@ import { agents } from '../../src/agent/registry'
 import {
   ensureCacheDir,
   getCacheDir,
-  getPkgKeyFiles,
-  hasShippedDocs,
   listReferenceFiles,
-  resolvePkgDir,
 } from '../../src/cache'
-import { linkAllReferences } from '../../src/cache/references'
-import { detectChangelog } from '../../src/commands/sync-pipeline'
+import { linkAllReferences } from '../../src/cache/internal/references'
+import { detectChangelog } from '../../src/commands/sync/pipeline'
+import { getPkgKeyFiles, hasShippedDocs, resolvePkgDir } from '../../src/core/prepare'
 import { runPipeline } from '../e2e/pipeline'
 import { GENERATE_SECTIONS } from './generate-matrix'
 

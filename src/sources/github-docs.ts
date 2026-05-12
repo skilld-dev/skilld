@@ -9,9 +9,9 @@
 
 import type { LlmsLink } from './types.ts'
 import { mapInsert } from '../core/map.ts'
+import { extractBranchHint } from '../core/url.ts'
 import { findGitTag, listFilesAtRef } from './github-tags.ts'
 import { getDocOverride } from './package-registry.ts'
-import { extractBranchHint } from './utils.ts'
 
 /** Minimum git-doc file count to prefer over llms.txt */
 export const MIN_GIT_DOCS = 5

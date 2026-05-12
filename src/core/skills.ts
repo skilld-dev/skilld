@@ -1,13 +1,13 @@
 import type { AgentType } from '../agent/index.ts'
-import type { ShippedSkill } from '../cache/storage.ts'
 import type { SkillInfo } from './lockfile.ts'
+import type { ShippedSkill } from './prepare.ts'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'pathe'
 import { agents } from '../agent/index.ts'
-import { getShippedSkills } from '../cache/storage.ts'
 import { readLocalDependencies } from '../sources/index.ts'
 import { parsePackages, parseSkillFrontmatter, readLock } from './lockfile.ts'
 import { getSharedSkillsDir, LOCK_FILENAME, skillInternalFile } from './paths.ts'
+import { getShippedSkills } from './prepare.ts'
 import { semverGt, semverValid } from './semver.ts'
 
 export interface SkillEntry {

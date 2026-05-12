@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'pathe'
 import { defineTarget, SPEC_FRONTMATTER } from './base.ts'
 
-const claudeHome = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+const claudeHome = () => process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 
 /**
  * Claude Code (Anthropic CLI)
@@ -20,7 +20,7 @@ const claudeHome = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 export const claudeCode = defineTarget({
   agent: 'claude-code',
   displayName: 'Claude Code',
-  detectInstalled: () => existsSync(claudeHome),
+  detectInstalled: () => existsSync(claudeHome()),
   detectEnv: () => !!(process.env.CLAUDE_CODE || process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT || process.env.CLAUDE_CONFIG_DIR),
   detectProject: (cwd) => {
     // Strong signals: actual Claude Code user config or skills usage
@@ -38,7 +38,7 @@ export const claudeCode = defineTarget({
   instructionFile: 'CLAUDE.md',
 
   skillsDir: '.claude/skills',
-  globalSkillsDir: join(claudeHome, 'skills'),
+  globalSkillsDir: () => join(claudeHome(), 'skills'),
 
   frontmatter: [
     { ...SPEC_FRONTMATTER.name!, required: false, description: 'Skill identifier, becomes /slash-command. Defaults to directory name if omitted.', constraints: '1-64 chars, ^[a-z0-9]+(-[a-z0-9]+)*$' },

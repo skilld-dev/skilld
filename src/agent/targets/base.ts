@@ -28,9 +28,32 @@ const BASE_DEFAULTS = {
 
 type DefaultedFields = 'skillFilename' | 'nameMatchesDir' | 'namePattern' | 'additionalSkillsDirs' | 'extensions' | 'notes'
 
-/** Define an agent target with shared defaults applied */
+/**
+ * Define an agent target with shared defaults applied.
+ *
+ * `globalSkillsDir` and `additionalSkillsDirs` may be provided as thunks
+ * so env vars and `homedir()` are evaluated lazily (at access time, not
+ * module load). Exposed as plain `string` / `string[]` via getters.
+ */
 export function defineTarget(
-  target: Omit<AgentTarget, DefaultedFields> & Partial<Pick<AgentTarget, DefaultedFields>>,
+  target:
+    & Omit<AgentTarget, DefaultedFields | 'globalSkillsDir'>
+    & Partial<Pick<AgentTarget, Exclude<DefaultedFields, 'additionalSkillsDirs'>>>
+    & {
+      globalSkillsDir: () => string
+      additionalSkillsDirs?: string[] | (() => string[])
+    },
 ): AgentTarget {
-  return { ...BASE_DEFAULTS, ...target }
+  const { globalSkillsDir, additionalSkillsDirs, ...rest } = target
+  const additional = additionalSkillsDirs ?? BASE_DEFAULTS.additionalSkillsDirs
+  return {
+    ...BASE_DEFAULTS,
+    ...rest,
+    get globalSkillsDir() {
+      return globalSkillsDir()
+    },
+    get additionalSkillsDirs() {
+      return typeof additional === 'function' ? additional() : additional
+    },
+  }
 }

@@ -12,24 +12,24 @@
  * helpers instead of touching cache primitives directly.
  */
 
-import type { FeaturesConfig } from '../core/config.ts'
-import type { IndexDoc } from '../sources/content-resolver.ts'
+import type { FeaturesConfig } from '../../core/config.ts'
+import type { IndexDoc } from '../../sources/content-resolver.ts'
+import type { CachedReferencesResult, LoadCachedReferencesOptions } from '../types.ts'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, join } from 'pathe'
-import { defaultFeatures, readConfig } from '../core/config.ts'
-import { skillInternalDir } from '../core/paths.ts'
+import { defaultFeatures, readConfig } from '../../core/config.ts'
+import { getPackageDbPath, getRepoCacheDir, skillInternalDir } from '../../core/paths.ts'
+import { hasShippedDocs } from '../../core/prepare.ts'
+import { classifyCachedDoc } from './classify.ts'
 import {
   clearCache,
-  getCacheDir,
-  getPackageDbPath,
-  getRepoCacheDir,
-  hasShippedDocs,
   linkCachedDir,
   linkPkg,
   linkPkgNamed,
   linkRepoCachedDir,
   readCachedDocs,
-} from './index.ts'
+} from './storage.ts'
+import { getCacheDir } from './version.ts'
 
 /**
  * Resolve every symlink under `<skillDir>/.skilld/` to its real path, plus
@@ -63,19 +63,6 @@ export function clearSkillInternalDir(skillDir: string): void {
   const refsDir = skillInternalDir(skillDir)
   if (existsSync(refsDir))
     rmSync(refsDir, { recursive: true, force: true })
-}
-
-/** Classify a cached doc path into the right metadata type */
-export function classifyCachedDoc(path: string): { type: string, number?: number } {
-  const issueMatch = path.match(/^issues\/issue-(\d+)\.md$/)
-  if (issueMatch)
-    return { type: 'issue', number: Number(issueMatch[1]) }
-  const discussionMatch = path.match(/^discussions\/discussion-(\d+)\.md$/)
-  if (discussionMatch)
-    return { type: 'discussion', number: Number(discussionMatch[1]) }
-  if (path.startsWith('releases/'))
-    return { type: 'release' }
-  return { type: 'doc' }
 }
 
 /** Clear cache + db for --force flag */
@@ -199,28 +186,6 @@ function copyCachedSubdir(cacheDir: string, refsDir: string, subdir: string): vo
   }
 
   walk(srcDir, '')
-}
-
-export interface CachedReferencesResult {
-  /** Docs to feed the embedding index (empty if db already exists) */
-  docsToIndex: IndexDoc[]
-  /** Resolved doc-source label (URL or git path) */
-  docSource: string
-  /** Detected docs type from cache layout */
-  docsType: 'docs' | 'llms.txt' | 'readme'
-  /** _INDEX.md to write if missing (backfill for older caches) */
-  backfillIndex?: { path: string, content: string }
-}
-
-export interface LoadCachedReferencesOptions {
-  packageName: string
-  version: string
-  repoUrl?: string
-  llmsUrl?: string
-  readmeUrl?: string
-  onProgress: (message: string) => void
-  /** Caller supplies index generator to avoid the cache module pulling sources */
-  generateDocsIndex: (docs: Array<{ path: string, content: string }>) => string | null
 }
 
 /**

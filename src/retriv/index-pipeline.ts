@@ -10,8 +10,9 @@
 import type { FeaturesConfig } from '../core/config.ts'
 import type { IndexDoc } from '../sources/content-resolver.ts'
 import { existsSync } from 'node:fs'
-import { getPackageDbPath, resolvePkgDir } from '../cache/index.ts'
+import { getPackageDbPath } from '../cache/index.ts'
 import { defaultFeatures, readConfig } from '../core/config.ts'
+import { resolvePkgDir } from '../core/prepare.ts'
 import { resolveEntryFiles } from '../sources/index.ts'
 import { createIndex, listIndexIds, SearchDepsUnavailableError } from './index.ts'
 
