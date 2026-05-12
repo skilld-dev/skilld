@@ -44,16 +44,9 @@ import { sanitizeMarkdown } from '../core/sanitize.ts'
 import { indexResources } from '../retriv/index-pipeline.ts'
 import { createIndex, SearchDepsUnavailableError } from '../retriv/index.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
+import { resolveContentDocs } from '../sources/content-resolver.ts'
 import { fetchGitSkills } from '../sources/git-skills.ts'
 import {
-  downloadLlmsDocs,
-  fetchGitDocs,
-  fetchGitHubRaw,
-  fetchLlmsTxt,
-  fetchReadmeContent,
-  filterFrameworkDocs,
-  isShallowGitDocs,
-  normalizeLlmsLinks,
   parseGitHubUrl,
   resolveEntryFiles,
   resolvePackageDocs,
@@ -226,98 +219,21 @@ export async function installCommand(opts: InstallOptions): Promise<void> {
       continue
     }
 
-    const cachedDocs: Array<{ path: string, content: string }> = []
-    const docsToIndex: Array<{ id: string, content: string, metadata: Record<string, any> }> = []
-    const isFrameworkDoc = (path: string) => filterFrameworkDocs([path], pkgName).length > 0
+    const content = await resolveContentDocs({
+      packageName: pkgName,
+      resolved,
+      version,
+      onProgress: msg => spin.message(msg),
+    })
 
-    // Try git docs first
-    if (resolved.gitDocsUrl && resolved.repoUrl) {
-      const gh = parseGitHubUrl(resolved.repoUrl)
-      if (gh) {
-        const gitDocs = await fetchGitDocs(gh.owner, gh.repo, version, pkgName)
-        if (gitDocs?.files.length) {
-          const BATCH_SIZE = 20
-          for (let i = 0; i < gitDocs.files.length; i += BATCH_SIZE) {
-            const batch = gitDocs.files.slice(i, i + BATCH_SIZE)
-            const results = await Promise.all(
-              batch.map(async (file) => {
-                const url = `${gitDocs.baseUrl}/${file}`
-                const content = await fetchGitHubRaw(url)
-                if (!content)
-                  return null
-                return { file, content }
-              }),
-            )
-            for (const r of results) {
-              if (r) {
-                const stripped = gitDocs.docsPrefix ? r.file.replace(gitDocs.docsPrefix, '') : r.file
-                const cachePath = stripped.startsWith('docs/') ? stripped : `docs/${stripped}`
-                cachedDocs.push({ path: cachePath, content: r.content })
-                docsToIndex.push({ id: cachePath, content: r.content, metadata: { package: pkgName, source: cachePath, type: 'doc' } })
-              }
-            }
-          }
+    for (const warning of content.warnings)
+      p.log.warn(`${name}: ${warning}`)
 
-          // Shallow git-docs: if < threshold and llms.txt exists, discard and fall through
-          if (isShallowGitDocs(cachedDocs.length) && resolved.llmsUrl) {
-            cachedDocs.length = 0
-            docsToIndex.length = 0
-          }
-          else if (cachedDocs.length > 0 && resolved.llmsUrl) {
-            // Always cache llms.txt alongside good git-docs as supplementary reference
-            const llmsContent = await fetchLlmsTxt(resolved.llmsUrl)
-            if (llmsContent) {
-              const baseUrl = resolved.docsUrl || new URL(resolved.llmsUrl).origin
-              cachedDocs.push({ path: 'llms.txt', content: normalizeLlmsLinks(llmsContent.raw) })
-              if (llmsContent.links.length > 0) {
-                const docs = await downloadLlmsDocs(llmsContent, baseUrl)
-                for (const doc of docs) {
-                  if (!isFrameworkDoc(doc.url))
-                    continue
-                  const localPath = doc.url.startsWith('/') ? doc.url.slice(1) : doc.url
-                  cachedDocs.push({ path: join('llms-docs', ...localPath.split('/')), content: doc.content })
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Try llms.txt
-    if (resolved.llmsUrl && cachedDocs.length === 0) {
-      const llmsContent = await fetchLlmsTxt(resolved.llmsUrl)
-      if (llmsContent) {
-        cachedDocs.push({ path: 'llms.txt', content: normalizeLlmsLinks(llmsContent.raw) })
-        if (llmsContent.links.length > 0) {
-          const baseUrl = resolved.docsUrl || new URL(resolved.llmsUrl).origin
-          const docs = await downloadLlmsDocs(llmsContent, baseUrl)
-          for (const doc of docs) {
-            if (!isFrameworkDoc(doc.url))
-              continue
-            const localPath = doc.url.startsWith('/') ? doc.url.slice(1) : doc.url
-            const cachePath = join('docs', ...localPath.split('/'))
-            cachedDocs.push({ path: cachePath, content: doc.content })
-            docsToIndex.push({ id: doc.url, content: doc.content, metadata: { package: pkgName, source: cachePath, type: 'doc' } })
-          }
-        }
-      }
-    }
-
-    // Fallback to README
-    if (resolved.readmeUrl && cachedDocs.length === 0) {
-      const content = await fetchReadmeContent(resolved.readmeUrl)
-      if (content) {
-        cachedDocs.push({ path: 'docs/README.md', content })
-        docsToIndex.push({ id: 'README.md', content, metadata: { package: pkgName, source: 'docs/README.md', type: 'doc' } })
-      }
-    }
-
-    if (cachedDocs.length > 0) {
-      cache.write(cachedDocs)
+    if (content.docs.length > 0) {
+      cache.write(content.docs)
 
       const repoGh = info.repo ? parseGitHubUrl(`https://github.com/${info.repo}`) : null
-      const docsType = inferDocsTypeFromCache(cache.dir, info.source)
+      const docsType = content.docsType
       cache.linkInto(skillDir, cwd, docsType, {
         extraPackages: parsePackages(info.packages),
         features,
@@ -326,8 +242,8 @@ export async function installCommand(opts: InstallOptions): Promise<void> {
 
       if (features.search) {
         try {
-          if (docsToIndex.length > 0) {
-            await createIndex(docsToIndex, { dbPath: getPackageDbPath(pkgName, version) })
+          if (content.docsToIndex.length > 0) {
+            await createIndex(content.docsToIndex, { dbPath: getPackageDbPath(pkgName, version) })
           }
 
           // Index package entry files (.d.ts / .js)
