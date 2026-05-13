@@ -1,6 +1,7 @@
 import type { AgentType, OptimizeModel } from '../../agent/index.ts'
+import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
-import { promptForAgent, resolveAgent } from '../../cli/agent-prompt.ts'
+import { autoResolveAgent } from '../../cli/agent-prompt.ts'
 import { sharedArgs } from '../../cli/args.ts'
 import { hasCompletedWizard } from '../../core/config.ts'
 import { parseSkillInput } from '../../core/prefix.ts'
@@ -30,23 +31,24 @@ export const addCommandDef = defineCommand({
     ...sharedArgs,
   },
   async run({ args }) {
-    let agent: AgentType | 'none' | null = resolveAgent(args.agent)
-    if (!agent) {
-      agent = await promptForAgent()
-      if (!agent)
-        return
-    }
-
     const rawInputs = [...new Set(
       [args.package, ...((args as any)._ || [])]
         .map((s: string) => s.trim())
         .filter(Boolean),
     )]
 
-    if (agent === 'none') {
+    // --agent none → portable export (no installed-agent target needed).
+    if (args.agent === 'none') {
       const packages = [...new Set(rawInputs.flatMap(s => s.split(COMMA_OR_WHITESPACE_RE)).map(s => s.trim()).filter(Boolean))]
       for (const pkg of packages)
         await exportPortablePrompts(pkg, { force: args.force, agent: 'none' })
+      return
+    }
+
+    const agent: AgentType | null = autoResolveAgent(args.agent)
+    if (!agent) {
+      p.log.error('No target agent detected.\n  Pass --agent <name> (claude-code, cursor, codex, …) or run `skilld config` to set a default.\n  Use --agent none for portable export.')
+      process.exitCode = 1
       return
     }
 

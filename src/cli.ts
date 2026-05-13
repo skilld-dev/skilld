@@ -59,7 +59,7 @@ function deprecatedForwarder(
 
 // ── Subcommands (lazy-loaded) ──
 
-const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload']
+const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
 
 // ── Main command ──
 

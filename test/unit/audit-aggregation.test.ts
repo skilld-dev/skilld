@@ -13,25 +13,25 @@ describe('aggregateAuditStatus', () => {
   it('returns pass when all entries pass', async () => {
     const { aggregateAuditStatus } = await import('../../src/registry/client')
     expect(aggregateAuditStatus([
-      { category: 'static', status: 'pass' },
-      { category: 'deps', status: 'pass' },
+      { provider: 'skills.sh', slug: 'static', status: 'pass' },
+      { provider: 'skills.sh', slug: 'deps', status: 'pass' },
     ])).toBe('pass')
   })
 
   it('returns warn when any warn but no fail', async () => {
     const { aggregateAuditStatus } = await import('../../src/registry/client')
     expect(aggregateAuditStatus([
-      { category: 'static', status: 'pass' },
-      { category: 'deps', status: 'warn' },
+      { provider: 'skills.sh', slug: 'static', status: 'pass' },
+      { provider: 'skills.sh', slug: 'deps', status: 'warn' },
     ])).toBe('warn')
   })
 
   it('returns fail when any fail, regardless of warns', async () => {
     const { aggregateAuditStatus } = await import('../../src/registry/client')
     expect(aggregateAuditStatus([
-      { category: 'static', status: 'fail' },
-      { category: 'deps', status: 'warn' },
-      { category: 'license', status: 'pass' },
+      { provider: 'skills.sh', slug: 'static', status: 'fail' },
+      { provider: 'skills.sh', slug: 'deps', status: 'warn' },
+      { provider: 'skills.sh', slug: 'license', status: 'pass' },
     ])).toBe('fail')
   })
 })
@@ -52,8 +52,8 @@ describe('createRegistryClient.audit', () => {
       riskLevel: 'medium',
       summary: 'large asset tree',
       audits: [
-        { category: 'static', status: 'pass' },
-        { category: 'deps', status: 'warn', summary: 'wildcard import' },
+        { provider: 'skills.sh', slug: 'static', status: 'pass' },
+        { provider: 'skills.sh', slug: 'deps', status: 'warn', summary: 'wildcard import' },
       ],
     })
     const { createRegistryClient } = await import('../../src/registry/client')

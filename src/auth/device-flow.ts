@@ -3,16 +3,10 @@
  * or PKCE bind fails.
  */
 
-import type { TokenResponse } from './types.ts'
+import type { DevicePollResponse, DeviceStartResponse, TokenResponse } from 'skilld-protocol/wire'
 import { ofetch } from 'ofetch'
 
-export interface DeviceStartResponse {
-  device_code: string
-  user_code: string
-  verification_uri: string
-  interval: number
-  expires_in: number
-}
+export type { DeviceStartResponse }
 
 export interface DeviceFlowOptions {
   registryBase: string
@@ -22,11 +16,6 @@ export interface DeviceFlowOptions {
   onUserCode: (info: { userCode: string, verificationUri: string }) => void
   /** Override polling interval for tests. */
   intervalMs?: number
-}
-
-interface PollResponse {
-  status: 'pending' | 'authorized' | 'expired' | 'denied'
-  tokens?: TokenResponse
 }
 
 export async function runDeviceFlow(opts: DeviceFlowOptions): Promise<TokenResponse> {
@@ -42,7 +31,7 @@ export async function runDeviceFlow(opts: DeviceFlowOptions): Promise<TokenRespo
 
   while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, interval))
-    const poll = await ofetch<PollResponse>(`${opts.registryBase}/cli/device/poll`, {
+    const poll = await ofetch<DevicePollResponse>(`${opts.registryBase}/cli/device/poll`, {
       method: 'POST',
       body: { device_code: start.device_code },
     }).catch(() => null)

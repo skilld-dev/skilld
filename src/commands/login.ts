@@ -48,7 +48,7 @@ export const loginCommandDef = defineCommand({
         tokens: { accessToken: tokens.accessToken },
       })
       track({ event: 'auth-flow', surface: 'cli:auth', flow: 'oidc' })
-      return
+      process.exit(0)
     }
 
     if (shouldUseDevice(!!args.device)) {
@@ -68,7 +68,7 @@ export const loginCommandDef = defineCommand({
       })
       track({ event: 'auth-flow', surface: 'cli:auth', flow: 'device' })
       p.log.success(`Logged in as @${tokens.login}`)
-      return
+      process.exit(0)
     }
 
     p.log.info('Opening browser to authenticate…')
@@ -82,5 +82,8 @@ export const loginCommandDef = defineCommand({
     })
     track({ event: 'auth-flow', surface: 'cli:auth', flow: 'pkce' })
     p.log.success(`Logged in as @${tokens.login}`)
+    // Node's global fetch keep-alive pool + telemetry fire-and-forget leave
+    // sockets ref'd; force exit so we don't wait for the 4s idle timeout.
+    process.exit(0)
   },
 })

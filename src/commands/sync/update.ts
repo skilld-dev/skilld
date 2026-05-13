@@ -1,9 +1,9 @@
-import type { OptimizeModel } from '../../agent/index.ts'
+import type { AgentType, OptimizeModel } from '../../agent/index.ts'
 import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { loadSession, peekMarker, updateMarker } from '../../auth/store.ts'
-import { promptForAgent, resolveAgent } from '../../cli/agent-prompt.ts'
+import { autoResolveAgent } from '../../cli/agent-prompt.ts'
 import { sharedArgs } from '../../cli/args.ts'
 import { renderDigest } from '../../cli/digest-render.ts'
 import { isInteractive } from '../../cli/env.ts'
@@ -22,11 +22,13 @@ async function renderChangesDigest(): Promise<void> {
     return
   const marker = peekMarker()
   const client = createRegistryClient({ session })
-  const changes = await client.my.changes({ since: marker?.lastDigestAt }).catch(() => [])
-  if (changes.length === 0)
+  const digest = await client.my.changes({ since: marker?.lastDigestAt }).catch(() => null)
+  if (!digest || digest.entries.length === 0)
     return
-  renderDigest(changes)
-  updateMarker({ lastDigestAt: new Date().toISOString() })
+  renderDigest(digest.entries)
+  // Use the server's windowEnd as the canonical watermark — round-trippable
+  // and aligns with skilld.dev's email digest cron.
+  updateMarker({ lastDigestAt: digest.windowEnd })
 }
 
 export const updateCommandDef = defineCommand({
@@ -62,11 +64,18 @@ export const updateCommandDef = defineCommand({
 
     const silent = !isInteractive()
 
-    let agent = resolveAgent(args.agent)
-    if (!agent) {
-      agent = await promptForAgent()
-      if (!agent)
+    // `update --agent none` exports portable prompts; otherwise auto-detect or error.
+    let agent: AgentType | 'none' | null
+    if (args.agent === 'none') {
+      agent = 'none'
+    }
+    else {
+      agent = autoResolveAgent(args.agent)
+      if (!agent) {
+        p.log.error('No target agent detected.\n  Pass --agent <name> (claude-code, cursor, codex, …) or run `skilld config` to set a default.')
+        process.exitCode = 1
         return
+      }
     }
 
     if (agent === 'none') {

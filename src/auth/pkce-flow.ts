@@ -118,6 +118,10 @@ async function bindLoopback(expectedState: string): Promise<LoopbackBinding> {
   })
 
   const close = (): void => {
+    // closeAllConnections() forces still-open keep-alive sockets shut so the
+    // process can exit promptly after the browser hits the success page.
+    v4.closeAllConnections()
+    v6.closeAllConnections()
     v4.close()
     v6.close()
   }

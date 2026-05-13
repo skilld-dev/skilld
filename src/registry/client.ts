@@ -11,8 +11,26 @@
  * doc-generation pipeline.
  */
 
+import type { AuditStatus } from 'skilld-protocol/constants'
+import type {
+  AuditEntry,
+  AuthSession,
+  ChangeEntry,
+  CollectionManifest,
+  CollectionManifestItem,
+  CollectionSummary,
+  CuratorPayload,
+  DigestResponse,
+  InstallEventPayload,
+  SkillDetailResponse,
+  SkillsResolveEntry,
+  SkillsResolveResponse,
+  SubscriptionSummary,
+} from 'skilld-protocol/wire'
 import { ofetch } from 'ofetch'
 import { TRAILING_SLASH_RE } from '../core/regex.ts'
+
+export type { AuditEntry, AuditStatus, AuthSession, ChangeEntry, CollectionManifest, CollectionManifestItem, CollectionSummary, CuratorPayload, DigestResponse, InstallEventPayload, SkillDetailResponse, SkillsResolveResponse, SubscriptionSummary }
 
 const DEFAULT_REGISTRY_URL = 'https://skilld.dev/api'
 
@@ -34,36 +52,14 @@ export interface RegistrySkill {
   updatedAt?: string
 }
 
-interface ResolveResponseEntry {
-  owner: string
-  repo: string
-  official: boolean
-}
-
-interface SkillDetailResponse {
-  owner: string
-  repo: string
-  name: string
-  displayName: string
-  installs: number
-  branch?: string
-  skillPath?: string | null
-  raw?: string | null
-  pushedAt?: string | null
-}
-
 export interface FetchRegistrySkillOptions {
   owner?: string
 }
 
-export type AuditStatus = 'pass' | 'warn' | 'fail' | 'unaudited'
-
-export interface AuditEntry {
-  category: string
-  status: 'pass' | 'warn' | 'fail'
-  summary?: string
-}
-
+/**
+ * CLI-internal computed shape. Built locally after fetching the wire
+ * `SkillLiveResponse`; `status` is computed by `aggregateAuditStatus`.
+ */
 export interface AuditResult {
   status: AuditStatus
   riskLevel?: 'low' | 'medium' | 'high'
@@ -77,14 +73,6 @@ interface AuditApiResponse {
   audits?: AuditEntry[]
 }
 
-export interface AuthSession {
-  accessToken: string
-  refreshToken?: string
-  login: string
-  expiresAt?: number
-  host?: string
-}
-
 export interface RegistryClient {
   resolveSkill: (packageName: string, opts?: FetchRegistrySkillOptions) => Promise<RegistrySkill | null>
   fetchSkillDetail: (owner: string, repo: string, name: string) => Promise<SkillDetailResponse | null>
@@ -94,53 +82,9 @@ export interface RegistryClient {
   my: {
     collections: () => Promise<CollectionSummary[]>
     subscriptions: () => Promise<SubscriptionSummary[]>
-    changes: (params: { since?: string }) => Promise<ChangeEntry[]>
+    changes: (params: { since?: number }) => Promise<DigestResponse | null>
     installs: (payload: InstallEventPayload) => Promise<void>
   }
-}
-
-export interface CollectionManifestItem {
-  kind: 'npm' | 'gh' | 'crate'
-  /** For kind='npm': the package name. For kind='gh': owner/repo. For kind='crate': crate name. */
-  package?: string
-  owner?: string
-  repo?: string
-}
-
-export interface CollectionManifest {
-  name: string
-  preamble?: string
-  items: CollectionManifestItem[]
-}
-
-export interface CollectionSummary {
-  slug: string
-  name: string
-  itemCount: number
-}
-
-export interface CuratorPayload {
-  login: string
-  collections: CollectionSummary[]
-}
-
-export interface SubscriptionSummary {
-  login: string
-  slug: string
-}
-
-export interface ChangeEntry {
-  repo: string
-  skill: string
-  at: string
-  summary?: string
-}
-
-export interface InstallEventPayload {
-  slug: string
-  sourceKind: 'npm' | 'gh' | 'crate' | 'collection'
-  surface: string
-  agent?: string
 }
 
 export type GateDecision = 'install' | 'skip' | 'prompt'
@@ -200,7 +144,7 @@ export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: st
 
   return {
     async resolveSkill(packageName, fetchOpts = {}) {
-      const resolved = await fetcher<Record<string, ResolveResponseEntry>>(`${base}/skills/resolve`, {
+      const resolved = await fetcher<Record<string, SkillsResolveEntry>>(`${base}/skills/resolve`, {
         method: 'POST',
         body: { items: [{ packageName, owner: fetchOpts.owner }] },
       }).catch(() => null)
@@ -264,8 +208,8 @@ export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: st
       },
       async changes({ since }) {
         requireSession()
-        const qs = since ? `?since=${encodeURIComponent(since)}` : ''
-        return fetcher<ChangeEntry[]>(`${base}/cli/changes${qs}`).catch(() => [])
+        const qs = since != null ? `?since=${since}` : ''
+        return fetcher<DigestResponse>(`${base}/cli/changes${qs}`).catch(() => null)
       },
       async installs(payload) {
         requireSession()

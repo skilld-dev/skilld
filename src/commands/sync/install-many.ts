@@ -64,13 +64,13 @@ function logAuditWarn(slug: string, result: AuditResult): void {
   const parts = [
     result.riskLevel && `risk: ${result.riskLevel}`,
     result.summary,
-    result.audits.filter(a => a.status === 'warn').map(a => a.category).join(','),
+    result.audits.filter(a => a.status === 'warn').map(a => a.slug).join(','),
   ].filter(Boolean).join(' · ')
   p.log.warn(`${styleText('yellow', '⚠')} ${slug} ${styleText('gray', parts)}`)
 }
 
 function logAuditFail(slug: string, result: AuditResult, owner: string, repo: string, name: string): void {
-  const detail = result.audits.filter(a => a.status === 'fail').map(a => a.summary || a.category).join('; ')
+  const detail = result.audits.filter(a => a.status === 'fail').map(a => a.summary || a.slug).join('; ')
   p.log.error(`${styleText('red', '✗')} ${slug} blocked: ${detail || 'audit failed'}\n  Receipts: ${RECEIPTS_URL}/${owner}/${repo}/${name}`)
 }
 
@@ -80,7 +80,7 @@ export async function installSkills(items: SkillSource[], opts: InstallOpts): Pr
   const client = createRegistryClient()
   const auditCache = opts.auditCache ?? new Map<string, AuditResult>()
 
-  const gitSources: GitSkillSource[] = []
+  const gitSources: Array<{ source: GitSkillSource, skillFilter?: string }> = []
   const npmEntries: Array<{ name: string, spec: string }> = []
   const crateSpecs: string[] = []
   const unsupported: string[] = []
@@ -88,7 +88,7 @@ export async function installSkills(items: SkillSource[], opts: InstallOpts): Pr
   for (const source of items) {
     switch (source.type) {
       case 'git':
-        gitSources.push(source.source)
+        gitSources.push({ source: source.source, skillFilter: source.skillFilter })
         break
       case 'npm':
         npmEntries.push({ name: source.package, spec: source.tag ? `${source.package}@${source.tag}` : source.package })
@@ -121,9 +121,11 @@ export async function installSkills(items: SkillSource[], opts: InstallOpts): Pr
       return summary
   }
 
-  for (const source of gitSources) {
-    const skillFilter = opts.skillFilter
-      ? opts.skillFilter.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean)
+  for (const { source, skillFilter: perSourceFilter } of gitSources) {
+    // Per-source filter (from a pull manifest) wins over the global flag.
+    const filterRaw = perSourceFilter ?? opts.skillFilter
+    const skillFilter = filterRaw
+      ? filterRaw.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean)
       : undefined
     await syncGitSkills({
       source,

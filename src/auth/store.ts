@@ -29,7 +29,8 @@ export interface AuthMarker {
   /** Present only when scheme = 'file' */
   tokens?: StoredTokens
   /** ISO timestamp of the last in-terminal digest the user saw. */
-  lastDigestAt?: string
+  /** Unix seconds, matches the server's `windowEnd` in the digest envelope. */
+  lastDigestAt?: number
 }
 
 export interface StoredSession extends AuthSession {

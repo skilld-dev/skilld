@@ -71,6 +71,7 @@
     "pathe": "catalog:",
     "retriv": "catalog:",
     "semver": "catalog:",
+    "skilld-protocol": "workspace:*",
     "sqlite-vec": "catalog:deps",
     "std-env": "catalog:",
     "typebox": "catalog:",

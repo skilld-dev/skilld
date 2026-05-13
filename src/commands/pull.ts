@@ -13,26 +13,56 @@ import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { loadSession } from '../auth/store.ts'
-import { promptForAgent, resolveAgent } from '../cli/agent-prompt.ts'
+import { autoResolveAgent } from '../cli/agent-prompt.ts'
 import { sharedArgs } from '../cli/args.ts'
 import { createRegistryClient } from '../registry/client.ts'
 import { track } from '../telemetry.ts'
 import { installSkills } from './sync/install-many.ts'
 
-function manifestToSource(item: CollectionManifestItem): SkillSource | null {
-  if (item.kind === 'npm' && item.package)
-    return { type: 'npm', package: item.package }
-  if (item.kind === 'crate' && item.package)
-    return { type: 'crate', package: item.package }
-  if (item.kind === 'gh' && item.owner && item.repo)
-    return { type: 'git', source: { type: 'github', owner: item.owner, repo: item.repo } }
-  return null
-}
-
 function manifestItemKey(item: CollectionManifestItem): string {
   if (item.kind === 'gh')
-    return `${item.owner}/${item.repo}`
+    return item.name ? `${item.owner}/${item.repo}/${item.name}` : `${item.owner}/${item.repo}`
   return item.package ?? `${item.kind}:unknown`
+}
+
+/**
+ * Convert selected manifest items into `installSkills` inputs. Multiple gh
+ * items in the same repo collapse to one `git` source carrying the union of
+ * picked skill names as `skillFilter`, so a repo with N skills installs in
+ * one `syncGitSkills` call instead of N redundant ones.
+ */
+function manifestToSources(items: CollectionManifestItem[]): Array<{ source: SkillSource, skillFilter?: string }> {
+  const npm: Array<{ source: SkillSource, skillFilter?: string }> = []
+  const crate: Array<{ source: SkillSource, skillFilter?: string }> = []
+  const ghByRepo = new Map<string, { owner: string, repo: string, names: string[] }>()
+
+  for (const item of items) {
+    if (item.kind === 'npm' && item.package) {
+      npm.push({ source: { type: 'npm', package: item.package } })
+      continue
+    }
+    if (item.kind === 'crate' && item.package) {
+      crate.push({ source: { type: 'crate', package: item.package } })
+      continue
+    }
+    if (item.kind === 'gh' && item.owner && item.repo) {
+      const key = `${item.owner}/${item.repo}`
+      const group = ghByRepo.get(key) ?? { owner: item.owner, repo: item.repo, names: [] }
+      if (item.name && !group.names.includes(item.name))
+        group.names.push(item.name)
+      ghByRepo.set(key, group)
+    }
+  }
+
+  const gh: Array<{ source: SkillSource, skillFilter?: string }> = []
+  for (const group of ghByRepo.values()) {
+    gh.push({
+      source: { type: 'git', source: { type: 'github', owner: group.owner, repo: group.repo } },
+      skillFilter: group.names.length ? group.names.join(',') : undefined,
+    })
+  }
+
+  return [...gh, ...npm, ...crate]
 }
 
 function badgeFor(status: AuditStatus, result: AuditResult): string {
@@ -82,11 +112,10 @@ export const pullCommandDef = defineCommand({
     ...sharedArgs,
   },
   async run({ args }) {
-    let agent = resolveAgent(args.agent)
-    if (!agent)
-      agent = await promptForAgent()
-    if (!agent || agent === 'none') {
-      p.log.error('`skilld pull` requires an agent target.')
+    const agent = autoResolveAgent(args.agent)
+    if (!agent) {
+      p.log.error('No target agent detected.\n  Pass --agent <name> (claude-code, cursor, codex, …), or run `skilld config` to set a default.')
+      process.exitCode = 1
       return
     }
 
@@ -120,19 +149,15 @@ export const pullCommandDef = defineCommand({
     const spin = p.spinner()
     spin.start(`Auditing ${manifest.items.length} items`)
     await Promise.all(manifest.items.map(async (item) => {
-      if (item.kind === 'crate') {
+      // Audit needs the full (owner, repo, name) tuple. gh manifest items
+      // carry `name` directly; npm/crate items don't, so they're unaudited
+      // here and re-evaluated inside `installSkills` after resolve.
+      if (item.kind !== 'gh' || !item.owner || !item.repo || !item.name) {
         auditByKey.set(manifestItemKey(item), { status: 'unaudited', audits: [] })
         return
       }
-      const owner = item.owner ?? (item.package?.split('/')[0])
-      const repo = item.repo ?? (item.package?.split('/')[1] ?? item.package ?? '')
-      const name = item.package ?? `${item.owner}/${item.repo}`
-      if (!owner || !repo || !name) {
-        auditByKey.set(manifestItemKey(item), { status: 'unaudited', audits: [] })
-        return
-      }
-      const result = await client.audit({ owner, repo, name })
-      auditCache.set(`${owner}/${repo}/${name}`, result)
+      const result = await client.audit({ owner: item.owner, repo: item.repo, name: item.name })
+      auditCache.set(`${item.owner}/${item.repo}/${item.name}`, result)
       auditByKey.set(manifestItemKey(item), result)
     }))
     spin.stop(`Audited ${manifest.items.length} items`)
@@ -175,11 +200,16 @@ export const pullCommandDef = defineCommand({
       selected = manifest.items.filter(item => chosen.has(manifestItemKey(item)))
     }
 
-    const items = selected.map(manifestToSource).filter((s): s is SkillSource => s !== null)
-    if (items.length === 0) {
+    const sources = manifestToSources(selected)
+    if (sources.length === 0) {
       p.log.info('Nothing to install.')
       return
     }
+    // Carry per-source `skillFilter` on the git variant of SkillSource so
+    // multiple skills under one repo collapse into a single syncGitSkills call.
+    const items: SkillSource[] = sources.map(({ source, skillFilter }) =>
+      source.type === 'git' ? { ...source, skillFilter } : source,
+    )
 
     const summary = await installSkills(items, {
       agent,

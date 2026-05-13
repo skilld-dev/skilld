@@ -4,41 +4,21 @@
  *
  * Opt-out: `SKILLD_TELEMETRY=0`, `DISABLE_TELEMETRY=1`, or `DO_NOT_TRACK=1`.
  * Auto-disabled in CI.
+ *
+ * Wire shape: `CliEventInput` from `skilld-protocol/wire`. CLI-level callers
+ * use the `TelemetryPayload` alias (which omits `cliVersion` — `track` fills
+ * it from the bundled CLI version).
  */
 
+import type { TelemetryEvent, TelemetrySurface } from 'skilld-protocol/constants'
+import type { CliEventInput } from 'skilld-protocol/wire'
 import { isCI } from 'std-env'
 import { getRegistryBase } from './registry/client.ts'
 import { version } from './version.ts'
 
-export type TelemetryEvent
-  = | 'install'
-    | 'install-failed'
-    | 'update'
-    | 'audit-warn'
-    | 'audit-fail'
-    | 'audit-blocked'
-    | 'auth-flow'
-    | 'pull-checklist'
+export type { TelemetryEvent, TelemetrySurface }
 
-export type TelemetrySurface
-  = | 'cli:add'
-    | 'cli:pull'
-    | 'cli:prepare'
-    | 'cli:update'
-    | 'cli:wizard'
-    | 'cli:auth'
-
-export interface TelemetryPayload {
-  event: TelemetryEvent
-  surface: TelemetrySurface
-  sourceKind?: 'npm' | 'gh' | 'crate' | 'collection' | 'curator'
-  slug?: string
-  agent?: string
-  durationMs?: number
-  userId?: number
-  /** auth-flow only */
-  flow?: 'pkce' | 'device' | 'oidc'
-}
+export type TelemetryPayload = Omit<CliEventInput, 'cliVersion'>
 
 function isEnabled(): boolean {
   if (process.env.SKILLD_TELEMETRY === '0')
@@ -52,15 +32,14 @@ export function track(payload: TelemetryPayload): void {
   if (!isEnabled())
     return
 
-  const body = {
+  const body: CliEventInput = {
     ...payload,
     cliVersion: version,
-    ...(isCI && { ci: true }),
   }
 
   fetch(`${getRegistryBase()}/events/cli`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, ...(isCI && { ci: true }) }),
   }).catch(() => {})
 }

@@ -14,6 +14,42 @@ export function resolveAgent(agentFlag?: string): AgentType | 'none' | null {
     ?? null
 }
 
+/**
+ * Auto-resolve target agent without prompting. Consults, in order:
+ *   1. Explicit `--agent` flag.
+ *   2. Env-detected target (`CLAUDE_CODE`, `CURSOR_SESSION`, etc).
+ *   3. Saved config default.
+ *   4. Project marker dirs (`.claude/skills`, `.cursor/`, …) when exactly one
+ *      agent matches the cwd.
+ *   5. Installed agents on the machine when exactly one is found.
+ *
+ * Returns `null` when nothing is determined. Callers should error with a clear
+ * "pass --agent <name>" hint rather than prompting — keeps commands
+ * scriptable.
+ */
+export function autoResolveAgent(agentFlag?: string): AgentType | null {
+  const resolved = resolveAgent(agentFlag)
+  if (resolved && resolved !== 'none')
+    return resolved
+
+  if (process.env.SKILLD_NO_AGENT)
+    return null
+
+  const projectMatches = detectProjectAgents()
+  if (projectMatches.length === 1)
+    return projectMatches[0]!
+
+  const installed = detectInstalledAgents()
+  if (installed.length === 1)
+    return installed[0]!
+
+  return null
+}
+
+export function listKnownAgents(): AgentType[] {
+  return Object.keys(agents) as AgentType[]
+}
+
 let _warnedNoAgent = false
 function warnNoAgent(): void {
   if (_warnedNoAgent)
