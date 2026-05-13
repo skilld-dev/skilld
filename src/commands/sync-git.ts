@@ -137,11 +137,10 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
   if (source.type !== 'local' && source.owner && source.repo) {
     track({
       event: 'install',
-      source: `${source.owner}/${source.repo}`,
-      skills: selected.map(s => s.name).join(','),
-      agents: agent,
-      ...(isGlobal && { global: '1' as const }),
-      sourceType: source.type,
+      surface: 'cli:add',
+      sourceKind: 'gh',
+      slug: `${source.owner}/${source.repo}`,
+      agent,
     })
   }
 
@@ -190,11 +189,10 @@ async function syncGitHubRepo(opts: GitSyncOptions): Promise<void> {
 
   track({
     event: 'install',
-    source: spec,
-    skills: state.skillDirName,
-    agents: agent,
-    ...(isGlobal && { global: '1' as const }),
-    sourceType: 'github-generated',
+    surface: 'cli:add',
+    sourceKind: 'gh',
+    slug: spec,
+    agent,
   })
 
   p.outro(`Synced ${spec} to ${relative(cwd, state.skillDir)}`)

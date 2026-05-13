@@ -5,12 +5,14 @@ export default defineBuildConfig({
     {
       type: 'bundle',
       input: [
-        './src/index.ts',
         './src/cli-entry.ts',
         './src/cli.ts',
         './src/prepare.ts',
         './src/retriv/worker.ts',
       ],
+      rolldown: {
+        external: ['@napi-rs/keyring', /@napi-rs\/keyring-/],
+      },
     },
   ],
 })

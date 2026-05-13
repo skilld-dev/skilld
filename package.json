@@ -31,14 +31,6 @@
     "cursor",
     "codex"
   ],
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
-    }
-  },
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
   "bin": {
     "skilld": "./dist/cli-entry.mjs"
   },
@@ -84,6 +76,9 @@
     "typebox": "catalog:",
     "typescript": "catalog:",
     "unagent": "catalog:"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.1.6"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",

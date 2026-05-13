@@ -21,27 +21,16 @@ export function getRegistryBase(): string {
 }
 
 export interface RegistrySkill {
-  /** Skill directory name (matches what lands in .claude/skills/<name>/) */
   name: string
-  /** npm package name used to look up this skill */
   packageName: string
-  /** Raw SKILL.md content (frontmatter + body) */
   content: string
-  /** Source repo owner */
   owner: string
-  /** Full "owner/repo" identifier */
   repo: string
-  /** Human-readable display name from the registry */
   displayName?: string
-  /** Install count reported by the registry */
   installs?: number
-  /** True when the source repo is on the official owners list */
   official?: boolean
-  /** Default branch the SKILL.md was fetched from */
   branch?: string
-  /** Path to SKILL.md within the source repo */
   skillPath?: string
-  /** ISO timestamp of the source repo's last push — used for staleness */
   updatedAt?: string
 }
 
@@ -64,46 +53,237 @@ interface SkillDetailResponse {
 }
 
 export interface FetchRegistrySkillOptions {
-  /** Narrow the resolve to a specific owner when multiple skills share a name */
   owner?: string
+}
+
+export type AuditStatus = 'pass' | 'warn' | 'fail' | 'unaudited'
+
+export interface AuditEntry {
+  category: string
+  status: 'pass' | 'warn' | 'fail'
+  summary?: string
+}
+
+export interface AuditResult {
+  status: AuditStatus
+  riskLevel?: 'low' | 'medium' | 'high'
+  summary?: string
+  audits: AuditEntry[]
+}
+
+interface AuditApiResponse {
+  riskLevel?: 'low' | 'medium' | 'high'
+  summary?: string
+  audits?: AuditEntry[]
+}
+
+export interface AuthSession {
+  accessToken: string
+  refreshToken?: string
+  login: string
+  expiresAt?: number
+  host?: string
+}
+
+export interface RegistryClient {
+  resolveSkill: (packageName: string, opts?: FetchRegistrySkillOptions) => Promise<RegistrySkill | null>
+  fetchSkillDetail: (owner: string, repo: string, name: string) => Promise<SkillDetailResponse | null>
+  audit: (params: { owner: string, repo: string, name: string }) => Promise<AuditResult>
+  fetchCollection: (login: string, slug: string) => Promise<CollectionManifest | null>
+  fetchCurator: (login: string) => Promise<CuratorPayload | null>
+  my: {
+    collections: () => Promise<CollectionSummary[]>
+    subscriptions: () => Promise<SubscriptionSummary[]>
+    changes: (params: { since?: string }) => Promise<ChangeEntry[]>
+    installs: (payload: InstallEventPayload) => Promise<void>
+  }
+}
+
+export interface CollectionManifestItem {
+  kind: 'npm' | 'gh' | 'crate'
+  /** For kind='npm': the package name. For kind='gh': owner/repo. For kind='crate': crate name. */
+  package?: string
+  owner?: string
+  repo?: string
+}
+
+export interface CollectionManifest {
+  name: string
+  preamble?: string
+  items: CollectionManifestItem[]
+}
+
+export interface CollectionSummary {
+  slug: string
+  name: string
+  itemCount: number
+}
+
+export interface CuratorPayload {
+  login: string
+  collections: CollectionSummary[]
+}
+
+export interface SubscriptionSummary {
+  login: string
+  slug: string
+}
+
+export interface ChangeEntry {
+  repo: string
+  skill: string
+  at: string
+  summary?: string
+}
+
+export interface InstallEventPayload {
+  slug: string
+  sourceKind: 'npm' | 'gh' | 'crate' | 'collection'
+  surface: string
+  agent?: string
+}
+
+export type GateDecision = 'install' | 'skip' | 'prompt'
+
+export interface GateOptions {
+  allowUnsafe?: boolean
+  yes?: boolean
+  /** Source kind drives unaudited behaviour: gh → prompt, npm/crate → silent install */
+  sourceKind: 'npm' | 'gh' | 'crate' | 'collection'
+}
+
+/**
+ * Pure gating rule from an audit result. Caller is responsible for the prompt
+ * itself when the decision is `'prompt'`.
+ */
+export function gateInstall(result: AuditResult, opts: GateOptions): GateDecision {
+  switch (result.status) {
+    case 'pass':
+      return 'install'
+    case 'warn':
+      return 'install'
+    case 'fail':
+      return opts.allowUnsafe ? 'install' : 'skip'
+    case 'unaudited':
+      if (opts.sourceKind !== 'gh')
+        return 'install'
+      return opts.yes ? 'install' : 'prompt'
+  }
+}
+
+export function aggregateAuditStatus(audits: AuditEntry[]): AuditStatus {
+  if (audits.length === 0)
+    return 'unaudited'
+  if (audits.some(a => a.status === 'fail'))
+    return 'fail'
+  if (audits.some(a => a.status === 'warn'))
+    return 'warn'
+  return 'pass'
+}
+
+export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: string } = {}): RegistryClient {
+  const base = (opts.baseUrl ?? getRegistryBase()).replace(TRAILING_SLASH_RE, '')
+  const headers = opts.session ? { Authorization: `Bearer ${opts.session.accessToken}` } : undefined
+
+  const fetcher = <T>(url: string, init?: Parameters<typeof ofetch<T>>[1]): Promise<T> => {
+    if (!headers && !init)
+      return ofetch<T>(url)
+    if (!headers)
+      return ofetch<T>(url, init)
+    return ofetch<T>(url, { ...init, headers: { ...headers, ...(init?.headers as any) } })
+  }
+
+  const requireSession = (): void => {
+    if (!opts.session)
+      throw new Error('auth required')
+  }
+
+  return {
+    async resolveSkill(packageName, fetchOpts = {}) {
+      const resolved = await fetcher<Record<string, ResolveResponseEntry>>(`${base}/skills/resolve`, {
+        method: 'POST',
+        body: { items: [{ packageName, owner: fetchOpts.owner }] },
+      }).catch(() => null)
+
+      const hit = resolved?.[packageName]
+      if (!hit)
+        return null
+
+      const detail = await fetcher<SkillDetailResponse>(`${base}/skills/${hit.owner}/${hit.repo}/${packageName}`).catch(() => null)
+      if (!detail?.raw)
+        return null
+
+      return {
+        name: detail.name,
+        packageName,
+        content: detail.raw,
+        owner: detail.owner,
+        repo: `${detail.owner}/${detail.repo}`,
+        displayName: detail.displayName,
+        installs: detail.installs,
+        official: hit.official,
+        branch: detail.branch,
+        skillPath: detail.skillPath ?? undefined,
+        updatedAt: detail.pushedAt ?? undefined,
+      }
+    },
+
+    async fetchSkillDetail(owner, repo, name) {
+      return fetcher<SkillDetailResponse>(`${base}/skills/${owner}/${repo}/${name}`).catch(() => null)
+    },
+
+    async audit({ owner, repo, name }) {
+      const res = await fetcher<AuditApiResponse>(`${base}/skill-live/${owner}/${repo}/${name}`).catch(() => null)
+      if (!res)
+        return { status: 'unaudited', audits: [] }
+      const audits = res.audits ?? []
+      return {
+        status: aggregateAuditStatus(audits),
+        riskLevel: res.riskLevel,
+        summary: res.summary,
+        audits,
+      }
+    },
+
+    async fetchCollection(login, slug) {
+      return fetcher<CollectionManifest>(`${base}/collections/by-author/${login}/${slug}/manifest`).catch(() => null)
+    },
+
+    async fetchCurator(login) {
+      return fetcher<CuratorPayload>(`${base}/curators/${login}`).catch(() => null)
+    },
+
+    my: {
+      async collections() {
+        requireSession()
+        return fetcher<CollectionSummary[]>(`${base}/me/collections`).catch(() => [])
+      },
+      async subscriptions() {
+        requireSession()
+        return fetcher<SubscriptionSummary[]>(`${base}/me/subscriptions`).catch(() => [])
+      },
+      async changes({ since }) {
+        requireSession()
+        const qs = since ? `?since=${encodeURIComponent(since)}` : ''
+        return fetcher<ChangeEntry[]>(`${base}/cli/changes${qs}`).catch(() => [])
+      },
+      async installs(payload) {
+        requireSession()
+        await fetcher<void>(`${base}/me/installs`, { method: 'POST', body: payload }).catch(() => {})
+      },
+    },
+  }
 }
 
 /**
  * Fetch a curated package skill from the registry.
  * Returns null if no curated skill exists, the SKILL.md can't be loaded, or the API is unreachable.
+ *
+ * Thin wrapper over `createRegistryClient().resolveSkill` for back-compat.
  */
 export async function fetchRegistrySkill(
   packageName: string,
   opts: FetchRegistrySkillOptions = {},
 ): Promise<RegistrySkill | null> {
-  const base = getRegistryBase()
-
-  const resolved = await ofetch<Record<string, ResolveResponseEntry>>(`${base}/skills/resolve`, {
-    method: 'POST',
-    body: { items: [{ packageName, owner: opts.owner }] },
-  }).catch(() => null)
-
-  const hit = resolved?.[packageName]
-  if (!hit)
-    return null
-
-  const slug = `${hit.owner}/${hit.repo}/${packageName}`
-  const detail = await ofetch<SkillDetailResponse>(`${base}/skills/${slug}`).catch(() => null)
-
-  if (!detail?.raw)
-    return null
-
-  return {
-    name: detail.name,
-    packageName,
-    content: detail.raw,
-    owner: detail.owner,
-    repo: `${detail.owner}/${detail.repo}`,
-    displayName: detail.displayName,
-    installs: detail.installs,
-    official: hit.official,
-    branch: detail.branch,
-    skillPath: detail.skillPath ?? undefined,
-    updatedAt: detail.pushedAt ?? undefined,
-  }
+  return createRegistryClient().resolveSkill(packageName, opts)
 }
