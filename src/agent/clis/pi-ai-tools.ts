@@ -6,7 +6,7 @@
  * `resolveSandboxedPath` which blocks traversal outside `skilldDir`.
  */
 
-import type { ToolCall } from '@mariozechner/pi-ai'
+import type { ToolCall } from '@earendil-works/pi-ai'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'

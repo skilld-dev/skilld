@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { getEnvApiKey, getProviders } from '@mariozechner/pi-ai'
-import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from '@mariozechner/pi-ai/oauth'
+import { getEnvApiKey, getProviders } from '@earendil-works/pi-ai'
+import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from '@earendil-works/pi-ai/oauth'
 import { join } from 'pathe'
 import { CACHE_DIR, PI_AI_AUTH_PATH } from '../../core/paths.ts'
 

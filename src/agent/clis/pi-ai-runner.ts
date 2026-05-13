@@ -3,10 +3,10 @@
  * section. Streams reasoning + text to onProgress; tools are sandboxed to .skilld/.
  */
 
-import type { AssistantMessage, Message, ToolCall } from '@mariozechner/pi-ai'
+import type { AssistantMessage, Message, ToolCall } from '@earendil-works/pi-ai'
 import type { SkillSection } from '../prompts/index.ts'
 import type { StreamProgress } from './types.ts'
-import { getModel, streamSimple } from '@mariozechner/pi-ai'
+import { getModel, streamSimple } from '@earendil-works/pi-ai'
 import { skillInternalDir } from '../../core/paths.ts'
 import { resolveApiKey } from './pi-ai-auth.ts'
 import { parsePiAiModelId } from './pi-ai-models.ts'

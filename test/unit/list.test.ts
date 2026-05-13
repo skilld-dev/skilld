@@ -27,7 +27,7 @@ const mockOutdated = [
   },
 ]
 
-// Mock the agent layer to avoid @mariozechner/pi-ai import chain
+// Mock the agent layer to avoid @earendil-works/pi-ai import chain
 vi.mock('../../src/agent/index.ts', () => ({
   agents: {},
   detectCurrentAgent: () => null,

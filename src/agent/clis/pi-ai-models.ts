@@ -6,7 +6,7 @@
  * per provider for ergonomic defaults.
  */
 
-import { getEnvApiKey, getModels, getProviders } from '@mariozechner/pi-ai'
+import { getEnvApiKey, getModels, getProviders } from '@earendil-works/pi-ai'
 import { loadAuth, resolveOAuthProviderId } from './pi-ai-auth.ts'
 
 export function isPiAiModel(model: string): boolean {

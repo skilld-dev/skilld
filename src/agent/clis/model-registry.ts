@@ -1,14 +1,14 @@
 /**
- * Model registry: sources display names from @mariozechner/pi-ai's auto-generated
+ * Model registry: sources display names from @earendil-works/pi-ai's auto-generated
  * model list, so CLI adapters don't have to hand-maintain "Opus 4.6" / "GPT-5.3" labels.
  *
  * Each adapter declares the CLI flag value it passes (e.g. `opus`, `gpt-5.3-codex`)
  * plus an id pattern; we resolve the latest matching pi-ai entry for the human label.
  */
 
-import type { KnownProvider, Model } from '@mariozechner/pi-ai'
+import type { KnownProvider, Model } from '@earendil-works/pi-ai'
 import type { CliModelEntry } from './types.ts'
-import { getModels } from '@mariozechner/pi-ai'
+import { getModels } from '@earendil-works/pi-ai'
 
 const STATIC_REGEX_1 = /-\d{8}$/
 const STATIC_REGEX_2 = /-\d{4}-\d{2}-\d{2}$/

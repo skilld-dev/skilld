@@ -1,5 +1,5 @@
 /**
- * pi-ai adapter — direct LLM API calls via @mariozechner/pi-ai.
+ * pi-ai adapter, direct LLM API calls via @earendil-works/pi-ai.
  *
  * Optional alternative to CLI spawning. Supports env-var API keys
  * (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, etc.).
