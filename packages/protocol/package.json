@@ -1,7 +1,7 @@
 {
   "name": "skilld-protocol",
   "type": "module",
-  "version": "0.2.2",
+  "version": "2.0.0",
   "description": "Wire shapes and constants shared between the skilld CLI and skilld.dev",
   "author": {
     "name": "Harlan Wilton",
