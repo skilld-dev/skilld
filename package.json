@@ -31,14 +31,6 @@
     "cursor",
     "codex"
   ],
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "import": "./dist/index.mjs"
-    }
-  },
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
   "bin": {
     "skilld": "./dist/cli-entry.mjs"
   },
@@ -57,7 +49,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
-    "release": "pnpm build && bumpp -x \"npx changelogen --output=CHANGELOG.md\"",
+    "release": "pnpm -r build && bumpp -r -x \"npx changelogen --output=CHANGELOG.md\"",
     "prepack": "pnpm run build",
     "prepare": "test -z \"$CI\" && skilld prepare || true"
   },
@@ -79,11 +71,15 @@
     "pathe": "catalog:",
     "retriv": "catalog:",
     "semver": "catalog:",
+    "skilld-protocol": "workspace:*",
     "sqlite-vec": "catalog:deps",
     "std-env": "catalog:",
     "typebox": "catalog:",
     "typescript": "catalog:",
     "unagent": "catalog:"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.1.6"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
@@ -91,6 +87,7 @@
     "@types/semver": "catalog:",
     "@vitest/coverage-v8": "catalog:dev-test",
     "bumpp": "catalog:",
+    "eslint": "catalog:dev-lint",
     "obuild": "catalog:dev-build",
     "tsx": "catalog:",
     "vitest": "catalog:dev-test"

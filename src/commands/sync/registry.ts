@@ -5,24 +5,29 @@
 
 import type { AgentType } from '../../agent/index.ts'
 import type { RegistrySkill } from '../../registry/client.ts'
+import type { TelemetrySurface } from '../../telemetry.ts'
 import { mkdirSync } from 'node:fs'
 import { join } from 'pathe'
 import { writeSkillMd } from '../../agent/prompts/skill.ts'
 import { installSkill, resolveBaseDir } from '../../agent/skill-installer.ts'
 import { SHARED_SKILLS_DIR } from '../../core/paths.ts'
 import { fetchRegistrySkill } from '../../registry/client.ts'
+import { track } from '../../telemetry.ts'
 
 export interface SyncRegistryOptions {
   packageName: string
   agent: AgentType
   global?: boolean
   cwd?: string
+  /** Skip resolve when caller has already fetched the skill (e.g. after audit gate). */
+  prefetched?: RegistrySkill
+  surface?: TelemetrySurface
 }
 
 export async function syncRegistrySkill(opts: SyncRegistryOptions): Promise<RegistrySkill | null> {
   const { packageName, agent, cwd = process.cwd() } = opts
 
-  const skill = await fetchRegistrySkill(packageName)
+  const skill = opts.prefetched ?? await fetchRegistrySkill(packageName)
   if (!skill)
     return null
 
@@ -47,6 +52,14 @@ export async function syncRegistrySkill(opts: SyncRegistryOptions): Promise<Regi
       syncedAt: new Date().toISOString().slice(0, 10),
       generator: 'curator',
     },
+  })
+
+  track({
+    event: 'install',
+    surface: opts.surface ?? 'cli:add',
+    sourceKind: 'npm',
+    slug: packageName,
+    agent,
   })
 
   return skill

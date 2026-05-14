@@ -59,7 +59,7 @@ function deprecatedForwarder(
 
 // ── Subcommands (lazy-loaded) ──
 
-const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload']
+const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
 
 // ── Main command ──
 
@@ -85,6 +85,10 @@ const main = defineCommand({
     search: () => import('./commands/search.ts').then(m => m.searchCommandDef),
     cache: () => import('./commands/cache.ts').then(m => m.cacheCommandDef),
     setup: () => import('./commands/wizard.ts').then(m => m.setupCommandDef),
+    login: () => import('./commands/login.ts').then(m => m.loginCommandDef),
+    logout: () => import('./commands/logout.ts').then(m => m.logoutCommandDef),
+    whoami: () => import('./commands/whoami.ts').then(m => m.whoamiCommandDef),
+    pull: () => import('./commands/pull.ts').then(m => m.pullCommandDef),
     // Author group (nested subcommands)
     author: () => import('./commands/author.ts').then(m => m.authorGroupDef),
     // Deprecated forwarders (old top-level commands → skilld author <subcommand>)

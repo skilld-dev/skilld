@@ -25,6 +25,7 @@ jobs:
           node-version: lts/*
           cache: pnpm
       - run: pnpm i
+      - run: pnpm --filter skilld-protocol build
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build

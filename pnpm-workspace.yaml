@@ -4,9 +4,11 @@ shellEmulator: true
 trustPolicy: no-downgrade
 packages:
   - playground
+  - packages/*
 overrides:
   global-agent: ^4.1.3
 catalog:
+  '@arethetypeswrong/cli': ^0.18.2
   '@earendil-works/pi-ai': ^0.74.0
   '@mdream/crawl': ^1.1.0
   '@types/semver': ^7.7.1
@@ -17,6 +19,7 @@ catalog:
   mdream: ^1.1.0
   ofetch: ^1.5.1
   pathe: ^2.0.3
+  publint: ^0.3.0
   retriv: ^0.13.2
   semver: ^7.8.0
   std-env: ^4.1.0
@@ -24,6 +27,7 @@ catalog:
   typebox: ^1.1.38
   typescript: 6.0.3
   unagent: ^0.0.8
+  zod: ^4.4.3
 catalogs:
   deps:
     '@clack/prompts': ^1.4.0
@@ -39,6 +43,7 @@ catalogs:
     obuild: ^0.4.35
   dev-lint:
     '@antfu/eslint-config': ^9.0.0
+    eslint: ^9.39.2
   dev-test:
     '@vitest/coverage-v8': ^4.1.6
     vitest: ^4.1.6

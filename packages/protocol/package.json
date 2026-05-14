@@ -1,0 +1,61 @@
+{
+  "name": "skilld-protocol",
+  "type": "module",
+  "version": "0.2.2",
+  "description": "Wire shapes and constants shared between the skilld CLI and skilld.dev",
+  "author": {
+    "name": "Harlan Wilton",
+    "email": "harlan@harlanzw.com",
+    "url": "https://harlanzw.com/"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skilld-dev/skilld.git",
+    "directory": "packages/protocol"
+  },
+  "keywords": ["skilld", "protocol", "zod", "schema"],
+  "sideEffects": false,
+  "exports": {
+    "./wire": {
+      "types": "./dist/wire.d.mts",
+      "import": "./dist/wire.mjs"
+    },
+    "./constants": {
+      "types": "./dist/constants.d.mts",
+      "import": "./dist/constants.mjs"
+    },
+    "./test-fixtures": {
+      "types": "./dist/test-fixtures.d.mts",
+      "import": "./dist/test-fixtures.mjs"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "obuild",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "publint": "publint",
+    "attw": "pnpm pack && attw skilld-protocol-*.tgz --ignore-rules no-resolution cjs-resolves-to-esm && rm skilld-protocol-*.tgz",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "catalog:dev-lint",
+    "@arethetypeswrong/cli": "catalog:",
+    "@types/node": "catalog:dev-build",
+    "eslint": "catalog:dev-lint",
+    "obuild": "catalog:dev-build",
+    "publint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:dev-test"
+  }
+}

@@ -1,17 +1,35 @@
-import type { OptimizeModel } from '../../agent/index.ts'
+import type { AgentType, OptimizeModel } from '../../agent/index.ts'
 import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
-import { promptForAgent, resolveAgent } from '../../cli/agent-prompt.ts'
+import { loadSession, peekMarker, updateMarker } from '../../auth/store.ts'
+import { autoResolveAgent } from '../../cli/agent-prompt.ts'
 import { sharedArgs } from '../../cli/args.ts'
+import { renderDigest } from '../../cli/digest-render.ts'
 import { isInteractive } from '../../cli/env.ts'
 import { getInstalledGenerators, introLine } from '../../cli/intro.ts'
 import { readConfig } from '../../core/config.ts'
 import { resolveSkillName } from '../../core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE } from '../../core/regex.ts'
 import { getProjectState } from '../../core/skills.ts'
+import { createRegistryClient } from '../../registry/client.ts'
 import { syncCommand } from '../sync.ts'
 import { exportPortablePrompts } from './portable.ts'
+
+async function renderChangesDigest(): Promise<void> {
+  const session = await loadSession()
+  if (!session || session.scheme === 'env')
+    return
+  const marker = peekMarker()
+  const client = createRegistryClient({ session })
+  const digest = await client.my.changes({ since: marker?.lastDigestAt }).catch(() => null)
+  if (!digest || digest.entries.length === 0)
+    return
+  renderDigest(digest.entries)
+  // Use the server's windowEnd as the canonical watermark — round-trippable
+  // and aligns with skilld.dev's email digest cron.
+  updateMarker({ lastDigestAt: digest.windowEnd })
+}
 
 export const updateCommandDef = defineCommand({
   meta: { name: 'update', description: 'Update outdated skills' },
@@ -46,11 +64,18 @@ export const updateCommandDef = defineCommand({
 
     const silent = !isInteractive()
 
-    let agent = resolveAgent(args.agent)
-    if (!agent) {
-      agent = await promptForAgent()
-      if (!agent)
+    // `update --agent none` exports portable prompts; otherwise auto-detect or error.
+    let agent: AgentType | 'none' | null
+    if (args.agent === 'none') {
+      agent = 'none'
+    }
+    else {
+      agent = autoResolveAgent(args.agent)
+      if (!agent) {
+        p.log.error('No target agent detected.\n  Pass --agent <name> (claude-code, cursor, codex, …) or run `skilld config` to set a default.')
+        process.exitCode = 1
         return
+      }
     }
 
     if (agent === 'none') {
@@ -116,7 +141,7 @@ export const updateCommandDef = defineCommand({
       ...state.outdated.map(s => s.packageName || s.name),
       ...crateSpecs,
     ]
-    return syncCommand(state, {
+    await syncCommand(state, {
       packages,
       global: args.global,
       agent,
@@ -126,5 +151,8 @@ export const updateCommandDef = defineCommand({
       debug: args.debug,
       mode: 'update',
     })
+
+    if (!silent)
+      await renderChangesDigest()
   },
 })

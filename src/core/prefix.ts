@@ -20,7 +20,7 @@ const STATIC_REGEX_1 = /^[\w.-]+\/[\w.-]+/
 export type SkillSource
   = | { type: 'npm', package: string, tag?: string }
     | { type: 'crate', package: string, version?: string }
-    | { type: 'git', source: GitSkillSource }
+    | { type: 'git', source: GitSkillSource, skillFilter?: string }
     | { type: 'curator', handle: string }
     | { type: 'collection', handle: string, name: string }
     | { type: 'bare', package: string, tag?: string }

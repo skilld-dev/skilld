@@ -53,6 +53,9 @@ export const CONFIG_PATH: string = join(CACHE_DIR, CONFIG_FILENAME)
 /** pi-ai auth credentials */
 export const PI_AI_AUTH_PATH: string = join(CACHE_DIR, 'pi-ai-auth.json')
 
+/** CLI auth marker (`~/.skilld/auth.json`, 0600). Stores tokens directly only when keychain unavailable. */
+export const AUTH_PATH: string = join(CACHE_DIR, 'auth.json')
+
 // ── Helpers ──
 
 /** Returns the shared skills directory path if `.skills/` exists at project root, else null */
