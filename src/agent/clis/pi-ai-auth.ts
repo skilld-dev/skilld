@@ -110,6 +110,8 @@ export interface LoginCallbacks {
   onAuth: (url: string, instructions?: string) => void
   onPrompt: (message: string, placeholder?: string) => Promise<string>
   onProgress?: (message: string) => void
+  onDeviceCode?: (userCode: string, verificationUri: string) => void
+  onSelect?: (message: string, options: Array<{ id: string, label: string }>) => Promise<string | undefined>
 }
 
 export function getOAuthProviderList(): Array<{ id: string, name: string, loggedIn: boolean }> {
@@ -126,9 +128,14 @@ export async function loginOAuthProvider(providerId: string, callbacks: LoginCal
     return false
 
   const credentials = await provider.login({
-    onAuth: (info: any) => callbacks.onAuth(info.url, info.instructions),
-    onPrompt: async (prompt: any) => callbacks.onPrompt(prompt.message, prompt.placeholder),
-    onProgress: (msg: string) => callbacks.onProgress?.(msg),
+    onAuth: info => callbacks.onAuth(info.url, info.instructions),
+    onDeviceCode: info => callbacks.onDeviceCode?.(info.userCode, info.verificationUri),
+    onPrompt: async prompt => callbacks.onPrompt(prompt.message, prompt.placeholder),
+    onProgress: msg => callbacks.onProgress?.(msg),
+    onSelect: async (prompt) => {
+      const selected = await callbacks.onSelect?.(prompt.message, prompt.options)
+      return selected ?? prompt.options[0]?.id
+    },
   })
 
   const auth = loadAuth()

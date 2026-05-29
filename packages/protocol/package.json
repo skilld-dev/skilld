@@ -14,7 +14,12 @@
     "url": "git+https://github.com/skilld-dev/skilld.git",
     "directory": "packages/protocol"
   },
-  "keywords": ["skilld", "protocol", "zod", "schema"],
+  "keywords": [
+    "skilld",
+    "protocol",
+    "zod",
+    "schema"
+  ],
   "sideEffects": false,
   "exports": {
     "./wire": {
@@ -30,7 +35,9 @@
       "import": "./dist/test-fixtures.mjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=18"
   },
