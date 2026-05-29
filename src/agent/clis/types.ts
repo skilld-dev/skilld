@@ -64,6 +64,8 @@ export type OptimizeModel
     | 'gpt-5.2-codex'
     // pi-ai direct API models — dynamic from pi-ai's model registry
     | `pi:${string}`
+    // Local Ollama models, one-shot completions — e.g. `ollama:qwen2.5:14b-instruct`
+    | `ollama:${string}`
 
 export interface ModelInfo {
   id: OptimizeModel

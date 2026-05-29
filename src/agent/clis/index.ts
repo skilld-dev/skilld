@@ -13,6 +13,7 @@ import { agents } from '../targets/index.ts'
 import { adapter as claudeAdapter } from './claude.ts'
 import { adapter as codexAdapter } from './codex.ts'
 import { adapter as geminiAdapter } from './gemini.ts'
+import { getAvailableOllamaModels, isOllamaModel, parseOllamaModelId } from './ollama.ts'
 import { getAvailablePiAiModels, isPiAiModel, parsePiAiModelId } from './pi-ai.ts'
 
 export { buildAllSectionPrompts, buildSectionPrompt, SECTION_MERGE_ORDER, SECTION_OUTPUT_FILES } from '../prompts/index.ts'
@@ -62,6 +63,8 @@ export const CLI_MODELS: Partial<Record<OptimizeModel, CliModelConfig>> = Object
 // ── Model helpers ────────────────────────────────────────────────────
 
 export function getModelName(id: OptimizeModel): string {
+  if (isOllamaModel(id))
+    return parseOllamaModelId(id) ?? id
   if (isPiAiModel(id)) {
     const parsed = parsePiAiModelId(id)
     return parsed?.modelId ?? id
@@ -70,6 +73,8 @@ export function getModelName(id: OptimizeModel): string {
 }
 
 export function getModelLabel(id: OptimizeModel): string {
+  if (isOllamaModel(id))
+    return `Ollama · ${parseOllamaModelId(id) ?? id}`
   if (isPiAiModel(id)) {
     const parsed = parsePiAiModelId(id)
     return parsed ? `${PI_PROVIDER_NAMES[parsed.provider] ?? parsed.provider} · ${parsed.modelId}` : id
@@ -84,6 +89,10 @@ export function getModelLabel(id: OptimizeModel): string {
 export async function getAvailableModels(): Promise<import('./types.ts').ModelInfo[]> {
   const execAsync = promisify(exec)
   const lookupCmd = isWindows ? 'where' : 'which'
+
+  // Kick off Ollama discovery concurrently with the CLI lookups below; it has
+  // its own short timeout and resolves to [] when the daemon is unreachable.
+  const ollamaModelsPromise = getAvailableOllamaModels()
 
   const installedAgents = detectInstalledAgents()
   const agentsWithCli = installedAgents.filter(id => agents[id].cli)
@@ -137,5 +146,18 @@ export async function getAvailableModels(): Promise<import('./types.ts').ModelIn
     }
   })
 
-  return [...cliModels, ...piAiEntries]
+  // Append locally-pulled Ollama models (one-shot, no auth, free).
+  const ollamaModels = await ollamaModelsPromise
+  const ollamaEntries = ollamaModels.map(m => ({
+    id: m.id,
+    name: m.name,
+    hint: m.hint,
+    agentId: 'ollama',
+    agentName: 'Ollama (local)',
+    provider: 'ollama',
+    providerName: 'Ollama (local)',
+    vendorGroup: 'Ollama',
+  }))
+
+  return [...cliModels, ...piAiEntries, ...ollamaEntries]
 }
