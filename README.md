@@ -222,6 +222,23 @@ skilld author assemble
 
 `skilld author assemble` auto-discovers skills with pending output files. `skilld update` re-exports prompts for outdated packages.
 
+### Local Models (Ollama)
+
+If [Ollama](https://ollama.com) is running, skilld auto-detects your locally-pulled text models and lists them in `skilld config` (and `-m ollama:<name>`):
+
+```bash
+skilld add npm:vue -m ollama:qwen2.5:14b-instruct
+```
+
+Generation runs locally: free, offline, no API key. Unlike the CLI and API backends, the Ollama path is one-shot (it does not explore reference files with tools), so all source material is inlined into a single prompt. Best paired with a capable instruct model.
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama daemon address |
+| `OLLAMA_NUM_CTX` | `32768` | Context window; sized to fit the full prompt + output |
+
+The large default context can exceed memory for big models on constrained hardware (Ollama returns a 500). Lower `OLLAMA_NUM_CTX` or pick a smaller model if generation fails to load.
+
 ### Eject
 
 Export a skill as a portable, self-contained directory for sharing via git repos:

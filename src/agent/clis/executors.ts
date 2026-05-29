@@ -13,6 +13,7 @@ import type { SectionExecutor } from './runner.ts'
 import type { OptimizeModel } from './types.ts'
 import { getSkillReferenceDirs } from '../../cache/index.ts'
 import { CLI_ADAPTERS, CLI_MODELS } from './index.ts'
+import { isOllamaModel, ollamaExecutor } from './ollama.ts'
 import { getAvailablePiAiModels, isPiAiModel, optimizeSectionPiAi } from './pi-ai.ts'
 import { spawnCliAndStream } from './runner.ts'
 
@@ -64,5 +65,7 @@ function piAiExecutor(model: OptimizeModel): SectionExecutor | { error: string }
 
 /** Resolve `model` to an executor, or an error if the model is unavailable/unmapped. */
 export function selectExecutor(model: OptimizeModel): SectionExecutor | { error: string } {
+  if (isOllamaModel(model))
+    return ollamaExecutor(model)
   return isPiAiModel(model) ? piAiExecutor(model) : cliExecutor(model)
 }
