@@ -101,6 +101,8 @@ const V_PREFIX_RE = /^v/
 // First semver-looking token anywhere in a filename — recovers the version from
 // monorepo/scoped release tags like `vquasar-v2.18.0` or `@scope/pkg@2.6.0`.
 const SEMVER_IN_NAME_RE = /(\d+\.\d+\.\d+(?:-[0-9A-Z.-]+)?)/i
+// Two-part `major.minor` with optional prerelease (e.g. TypeScript `6.0-beta`).
+const SEMVER_2PART_RE = /\b(\d+)\.(\d+)(-[0-9A-Z.-]+)?\b/i
 
 /**
  * Honest stub for a release with no actionable changes (no breaking changes or
@@ -142,7 +144,17 @@ function versionFromReleaseFile(file: string): string | null {
     return direct
   // Monorepo/scoped tag (`vquasar-v2.18.0`, `@scope/pkg@2.6.0`): pull the semver out.
   const m = base.match(SEMVER_IN_NAME_RE)
-  return m && semverValid(m[1]!) ? m[1]! : null
+  if (m && semverValid(m[1]!))
+    return m[1]!
+  // Two-part major.minor tags, optionally prereleased (TypeScript's `v6.0-beta`,
+  // `v6.0-rc`): pad the patch so they're valid semver and land in the right major.
+  const two = base.match(SEMVER_2PART_RE)
+  if (two) {
+    const padded = `${two[1]}.${two[2]}.0${two[3] ?? ''}`
+    if (semverValid(padded))
+      return padded
+  }
+  return null
 }
 
 /**
