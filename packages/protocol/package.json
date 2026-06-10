@@ -14,6 +14,10 @@
     "url": "git+https://github.com/skilld-dev/skilld.git",
     "directory": "packages/protocol"
   },
+  "homepage": "https://github.com/skilld-dev/skilld/tree/main/packages/protocol#readme",
+  "bugs": {
+    "url": "https://github.com/skilld-dev/skilld/issues"
+  },
   "keywords": [
     "skilld",
     "protocol",
