@@ -20,6 +20,10 @@
     "type": "git",
     "url": "https://github.com/skilld-dev/skilld"
   },
+  "homepage": "https://github.com/skilld-dev/skilld#readme",
+  "bugs": {
+    "url": "https://github.com/skilld-dev/skilld/issues"
+  },
   "keywords": [
     "ai",
     "agent",
