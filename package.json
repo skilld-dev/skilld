@@ -70,13 +70,13 @@
     "p-limit": "catalog:deps",
     "pathe": "catalog:",
     "retriv": "catalog:",
-    "semver": "catalog:",
     "skilld-protocol": "workspace:*",
     "sqlite-vec": "catalog:deps",
     "std-env": "catalog:",
     "typebox": "catalog:",
     "typescript": "catalog:",
-    "unagent": "catalog:"
+    "unagent": "catalog:",
+    "verkit": "catalog:"
   },
   "optionalDependencies": {
     "@napi-rs/keyring": "^1.3.0"
@@ -84,7 +84,6 @@
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
     "@types/node": "catalog:dev-build",
-    "@types/semver": "catalog:",
     "@vitest/coverage-v8": "catalog:dev-test",
     "bumpp": "catalog:",
     "eslint": "catalog:dev-lint",

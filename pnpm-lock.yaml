@@ -15,9 +15,6 @@ catalogs:
     '@mdream/crawl':
       specifier: ^1.2.2
       version: 1.2.2
-    '@types/semver':
-      specifier: ^7.7.1
-      version: 7.7.1
     bumpp:
       specifier: ^11.1.0
       version: 11.1.0
@@ -45,9 +42,6 @@ catalogs:
     retriv:
       specifier: ^0.14.7
       version: 0.14.7
-    semver:
-      specifier: ^7.8.1
-      version: 7.8.1
     std-env:
       specifier: ^4.1.0
       version: 4.1.0
@@ -63,6 +57,9 @@ catalogs:
     unagent:
       specifier: ^0.0.8
       version: 0.0.8
+    verkit:
+      specifier: ^0.2.0
+      version: 0.2.0
     zod:
       specifier: ^4.4.3
       version: 4.4.3
@@ -168,9 +165,6 @@ importers:
       retriv:
         specifier: 'catalog:'
         version: 0.14.7(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)(typescript@6.0.3)
-      semver:
-        specifier: 'catalog:'
-        version: 7.8.1
       skilld-protocol:
         specifier: workspace:*
         version: link:packages/protocol
@@ -189,6 +183,9 @@ importers:
       unagent:
         specifier: 'catalog:'
         version: 0.0.8(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)
+      verkit:
+        specifier: 'catalog:'
+        version: 0.2.0
     devDependencies:
       '@antfu/eslint-config':
         specifier: catalog:dev-lint
@@ -196,9 +193,6 @@ importers:
       '@types/node':
         specifier: catalog:dev-build
         version: 25.9.1
-      '@types/semver':
-        specifier: 'catalog:'
-        version: 7.7.1
       '@vitest/coverage-v8':
         specifier: catalog:dev-test
         version: 4.1.7(vitest@4.1.7)
@@ -1861,9 +1855,6 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
-
-  '@types/semver@7.7.1':
-    resolution: {integrity: sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -3861,6 +3852,10 @@ packages:
     resolution: {integrity: sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ==}
     engines: {node: ^14.17.0 || ^16.13.0 || >=18.0.0}
 
+  verkit@0.2.0:
+    resolution: {integrity: sha512-6M8R2xSKplkQ+0mAm07IMh548GLLPUnRQZJCCe/W4rfk/SXW2bs8ZJSWa5kjdIdsx3hLG5oLWROJ4+N5hpX08g==}
+    engines: {node: '>=18.12.0'}
+
   vite@7.3.1:
     resolution: {integrity: sha512-w+N7Hifpc3gRjZ63vYBXA56dvvRlNWRczTdmCBBa+CotUzAPf5b7YMdMR/8CQoeYE5LX3W4wj6RYTgonm1b9DA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -5354,8 +5349,6 @@ snapshots:
 
   '@types/retry@0.12.0': {}
 
-  '@types/semver@7.7.1': {}
-
   '@types/unist@3.0.3': {}
 
   '@typescript-eslint/eslint-plugin@8.59.2(@typescript-eslint/parser@8.59.2(eslint@10.4.0(jiti@2.6.1))(typescript@6.0.3))(eslint@10.4.0(jiti@2.6.1))(typescript@6.0.3)':
@@ -5434,7 +5427,7 @@ snapshots:
       eslint: 10.4.0(jiti@2.6.1)
       json-stable-stringify-without-jsonify: 1.0.1
       lodash.merge: 4.6.2
-      semver: 7.8.0
+      semver: 7.8.1
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -5492,7 +5485,7 @@ snapshots:
       '@typescript-eslint/visitor-keys': 8.56.1
       debug: 4.4.3
       minimatch: 10.2.5
-      semver: 7.8.0
+      semver: 7.8.1
       tinyglobby: 0.2.16
       ts-api-utils: 2.5.0(typescript@6.0.3)
       typescript: 6.0.3
@@ -7689,6 +7682,8 @@ snapshots:
   util-deprecate@1.0.2: {}
 
   validate-npm-package-name@5.0.1: {}
+
+  verkit@0.2.0: {}
 
   vite@7.3.1(@types/node@25.9.1)(jiti@2.6.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
