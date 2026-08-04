@@ -1,4 +1,6 @@
 catalogMode: prefer
+minimumReleaseAgeExclude:
+  - verkit@0.2.0
 shellEmulator: true
 
 trustPolicy: no-downgrade
@@ -11,7 +13,6 @@ catalog:
   '@arethetypeswrong/cli': ^0.18.2
   '@earendil-works/pi-ai': ^0.76.0
   '@mdream/crawl': ^1.2.2
-  '@types/semver': ^7.7.1
   bumpp: ^11.1.0
   giget: ^3.2.0
   hookable: ^6.1.1
@@ -21,12 +22,12 @@ catalog:
   pathe: ^2.0.3
   publint: ^0.3.21
   retriv: ^0.14.7
-  semver: ^7.8.1
   std-env: ^4.1.0
   tsx: ^4.22.3
   typebox: ^1.1.38
   typescript: 6.0.3
   unagent: ^0.0.8
+  verkit: ^0.2.0
   zod: ^4.4.3
 catalogs:
   deps:

@@ -3,7 +3,7 @@
  * Centralized so the loose flag stays consistent across the project.
  */
 
-import { diff as _diff, gt as _gt, major as _major, prerelease as _prerelease, valid as _valid } from 'semver'
+import { difference, getMajor, getPrerelease, isGreater, normalize } from 'verkit'
 
 export interface DistTagVersion {
   version: string
@@ -21,28 +21,29 @@ export interface PickedTag {
 
 /** Returns the cleaned version if valid semver, null otherwise. */
 export function semverValid(v: string): string | null {
-  return _valid(v, true)
+  return normalize(v, { loose: true })
 }
 
 /** Compare two semver strings: returns true if a > b. Handles prereleases. */
 export function semverGt(a: string, b: string): boolean {
-  return _gt(a, b, true)
+  return isGreater(a, b, { loose: true })
 }
 
 /** Returns the semver diff type between two versions, or null if equal/invalid. */
 export function semverDiff(a: string, b: string): string | null {
-  return _diff(a, b)
+  return difference(a, b)
 }
 
 /** Major version number (e.g. `9.2.2` → 9, `1.0.0-rc.3` → 1), or null if invalid. */
 export function semverMajor(v: string): number | null {
-  const clean = _valid(v, true)
-  return clean ? _major(clean) : null
+  const clean = semverValid(v)
+  return clean ? getMajor(clean) : null
 }
 
 /** True if `v` carries a prerelease component (e.g. 1.0.0-beta.8). */
 export function semverIsPrerelease(v: string): boolean {
-  return !!_prerelease(v, true)
+  const clean = semverValid(v)
+  return clean ? (getPrerelease(clean)?.length ?? 0) > 0 : false
 }
 
 /** Trailing git short-hash, optionally `g`-prefixed: `-5d5b77c`, `-gabc1234`. */
