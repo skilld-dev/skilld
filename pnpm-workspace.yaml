@@ -17,6 +17,7 @@ catalog:
   giget: ^3.2.0
   hookable: ^6.1.1
   jsonc-parser: ^3.3.1
+  md4x: ^0.0.25
   mdream: ^1.2.2
   ofetch: ^1.5.1
   pathe: ^2.0.3

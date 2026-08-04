@@ -64,6 +64,7 @@
     "hookable": "catalog:",
     "jsonc-parser": "catalog:",
     "log-update": "catalog:deps",
+    "md4x": "catalog:",
     "mdream": "catalog:",
     "ofetch": "catalog:",
     "oxc-parser": "catalog:deps",
