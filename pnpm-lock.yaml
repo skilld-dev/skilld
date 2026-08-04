@@ -27,6 +27,9 @@ catalogs:
     jsonc-parser:
       specifier: ^3.3.1
       version: 3.3.1
+    md4x:
+      specifier: ^0.0.25
+      version: 0.0.25
     mdream:
       specifier: ^1.2.2
       version: 1.2.2
@@ -147,6 +150,9 @@ importers:
       log-update:
         specifier: catalog:deps
         version: 8.0.0
+      md4x:
+        specifier: 'catalog:'
+        version: 0.0.25
       mdream:
         specifier: 'catalog:'
         version: 1.2.2
@@ -3018,6 +3024,10 @@ packages:
   matcher@4.0.0:
     resolution: {integrity: sha512-S6x5wmcDmsDRRU/c2dkccDwQPXoFczc5+HpQ2lON8pnvHlnvHAHj5WlLVvw6n6vNyHuVugYrFohYxbS+pvFpKQ==}
     engines: {node: '>=10'}
+
+  md4x@0.0.25:
+    resolution: {integrity: sha512-GrexawUhrKcwl7o2hkgs7Ut0PqI/meOCevmaRB1ueKo2y1Fh2nIl8e6KKawYGm9eXJP3u6BzVs4rzZOc2+w3hA==}
+    hasBin: true
 
   mdast-util-find-and-replace@3.0.2:
     resolution: {integrity: sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==}
@@ -6647,6 +6657,8 @@ snapshots:
   matcher@4.0.0:
     dependencies:
       escape-string-regexp: 4.0.0
+
+  md4x@0.0.25: {}
 
   mdast-util-find-and-replace@3.0.2:
     dependencies:
