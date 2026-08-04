@@ -1,6 +1,8 @@
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { describe, expect, it } from 'vitest'
-import { fetchGitSkills, parseGitSkillInput, parseSkillFrontmatterName } from '../../src/sources/git-skills'
+import { fetchGitSkills, parseGitSkillInput, parseSkillFrontmatterName, prepareGitSkillDir } from '../../src/sources/git-skills'
 
 describe('git-skills', () => {
   describe('parseGitSkillInput', () => {
@@ -204,6 +206,37 @@ author: someone
       expect(skills.map(s => s.name).sort()).toEqual(['improve-codebase-architecture', 'zoom-out'])
       const arch = skills.find(s => s.name === 'improve-codebase-architecture')
       expect(arch?.path).toBe('skills/engineering/improve-codebase-architecture')
+    })
+
+    it('discovers skills from agent-specific skill directories', async () => {
+      const fixture = join(__dirname, '../fixtures/mock-skills-repo-agent-dirs')
+      const { skills } = await fetchGitSkills({ type: 'local', localPath: fixture })
+
+      expect(skills.map(s => s.name).sort()).toEqual([
+        'agents-skill',
+        'claude-skill',
+        'github-skill',
+      ])
+      expect(skills.map(s => s.path).sort()).toEqual([
+        '.agents/skills/agents-skill',
+        '.claude/skills/claude-skill',
+        '.github/skills/github-skill',
+      ])
+    })
+  })
+
+  describe('prepareGitSkillDir', () => {
+    it('removes stale files before reinstalling a skill', () => {
+      const root = mkdtempSync(join(tmpdir(), 'skilld-sync-git-'))
+      const skillDir = join(root, 'same-name')
+      const staleReference = join(skillDir, 'references', 'stale.md')
+      mkdirSync(join(skillDir, 'references'), { recursive: true })
+      writeFileSync(staleReference, 'stale')
+
+      prepareGitSkillDir(skillDir)
+
+      expect(existsSync(skillDir)).toBe(true)
+      expect(existsSync(staleReference)).toBe(false)
     })
   })
 })

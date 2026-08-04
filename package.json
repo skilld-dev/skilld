@@ -2,7 +2,7 @@
   "name": "skilld",
   "type": "module",
   "version": "2.0.0",
-  "packageManager": "pnpm@11.4.0",
+  "packageManager": "pnpm@11.19.0",
   "description": "Generate AI agent skills from npm package documentation",
   "author": {
     "name": "Harlan Wilton",

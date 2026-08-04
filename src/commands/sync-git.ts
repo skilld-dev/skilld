@@ -16,7 +16,7 @@ import { readConfig } from '../core/config.ts'
 import { timedSpinner, todayIsoDate } from '../core/formatting.ts'
 import { sanitizeMarkdown } from '../core/sanitize.ts'
 import { shutdownWorker } from '../retriv/pool.ts'
-import { fetchGitSkills } from '../sources/git-skills.ts'
+import { fetchGitSkills, prepareGitSkillDir } from '../sources/git-skills.ts'
 import { track } from '../telemetry.ts'
 import { DEFAULT_SECTIONS, selectLlmConfig } from './llm-prompts.ts'
 import { createGithubResolver } from './sync/resolvers.ts'
@@ -103,7 +103,7 @@ export async function syncGitSkills(opts: GitSyncOptions): Promise<void> {
 
   for (const skill of selected) {
     const skillDir = join(baseDir, skill.name)
-    mkdirSync(skillDir, { recursive: true })
+    prepareGitSkillDir(skillDir)
 
     writeSkillMd(skillDir, sanitizeMarkdown(skill.content))
 

@@ -270,6 +270,14 @@ Share via `skilld add gh:owner/repo` - consumers get fully functional skills wit
 
 Ship skills with your npm package so consumers get them automatically. No LLM needed on their end.
 
+Install the official publication workflow for authoring, validation, packaging, and postpublish verification:
+
+```bash
+npx skilld add gh:skilld-dev/skills --skill publish-skill --yes
+```
+
+The skill orchestrates publication. `skilld author package` remains the deterministic package documentation generator it invokes.
+
 ### Generate a skill
 
 From your package root (or monorepo root):

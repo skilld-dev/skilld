@@ -5,7 +5,7 @@
  * Skills are pre-authored SKILL.md files — no doc resolution or LLM generation needed.
  */
 
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { downloadTemplate } from 'giget'
 import { join, resolve } from 'pathe'
@@ -16,6 +16,12 @@ import { getGitHubToken } from './github-common.ts'
 import { $fetch, fetchGitHubRaw } from './utils.ts'
 
 const STATIC_REGEX_1 = /^[\w.-]+\/[\w.-]+$/
+const SKILL_ROOTS = [
+  'skills',
+  '.agents/skills',
+  '.claude/skills',
+  '.github/skills',
+] as const
 
 export interface GitSkillSource {
   type: 'github' | 'gitlab' | 'git-ssh' | 'local'
@@ -40,6 +46,13 @@ export interface RemoteSkill {
   content: string
   /** Supporting files (scripts/, references/, assets/) */
   files: Array<{ path: string, content: string }>
+}
+
+/** Replace an installed git skill atomically enough to avoid stale bundled files. */
+export function prepareGitSkillDir(skillDir: string): void {
+  if (existsSync(skillDir))
+    rmSync(skillDir, { recursive: true, force: true })
+  mkdirSync(skillDir, { recursive: true })
 }
 
 /**
@@ -190,13 +203,15 @@ function fetchLocalSkills(source: GitSkillSource): { skills: RemoteSkill[] } {
 
   const skills: RemoteSkill[] = []
 
-  // Check for skills/ subdirectory (recursive — repos may nest by category)
-  const skillsDir = resolve(base, 'skills')
-  if (existsSync(skillsDir)) {
-    for (const { dir, repoPath } of findSkillDirs(skillsDir, 'skills')) {
-      const skill = readLocalSkill(dir, repoPath)
-      if (skill)
-        skills.push(skill)
+  // Scan portable and agent-specific skill roots recursively.
+  for (const root of SKILL_ROOTS) {
+    const skillsDir = resolve(base, root)
+    if (existsSync(skillsDir)) {
+      for (const { dir, repoPath } of findSkillDirs(skillsDir, root)) {
+        const skill = readLocalSkill(dir, repoPath)
+        if (skill)
+          skills.push(skill)
+      }
     }
   }
 
@@ -274,27 +289,31 @@ async function downloadGitHubSkills(
       return skill ? [skill] : []
     }
 
-    // Download skills/ subdirectory (single tarball request)
-    onProgress?.(`Downloading ${owner}/${repo}/skills@${ref}`)
-    try {
-      const { dir } = await downloadTemplate(
-        `github:${owner}/${repo}/skills#${ref}`,
-        { dir: tempDir, force: true, auth: getGitHubToken() || undefined },
-      )
+    // Download the first populated portable or agent-specific skill root.
+    for (const root of SKILL_ROOTS) {
+      onProgress?.(`Downloading ${owner}/${repo}/${root}@${ref}`)
+      try {
+        const { dir } = await downloadTemplate(
+          `github:${owner}/${repo}/${root}#${ref}`,
+          { dir: tempDir, force: true, auth: getGitHubToken() || undefined },
+        )
 
-      const skills: RemoteSkill[] = []
-      for (const { dir: skillDir, repoPath } of findSkillDirs(dir, 'skills')) {
-        const skill = readLocalSkill(skillDir, repoPath)
-        if (skill)
-          skills.push(skill)
+        const skills: RemoteSkill[] = []
+        for (const { dir: skillDir, repoPath } of findSkillDirs(dir, root)) {
+          const skill = readLocalSkill(skillDir, repoPath)
+          if (skill)
+            skills.push(skill)
+        }
+
+        if (skills.length > 0) {
+          onProgress?.(`Found ${skills.length} skill(s)`)
+          return skills
+        }
       }
-
-      if (skills.length > 0) {
-        onProgress?.(`Found ${skills.length} skill(s)`)
-        return skills
+      catch {
+        // Missing conventional roots are expected; continue to the next root.
       }
     }
-    catch {}
 
     // Fallback: check root SKILL.md via single HTTP request (auth-aware for private repos)
     const content = await fetchGitHubRaw(

@@ -24,3 +24,5 @@ coverage
 
 # E2E test artifacts
 .artifacts
+
+.guides-out
