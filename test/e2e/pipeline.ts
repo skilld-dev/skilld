@@ -16,7 +16,7 @@ import {
   getPackageDbPath,
 } from '../../src/cache'
 import { parseGitHubUrl } from '../../src/core/url'
-import { createIndexDirect } from '../../src/retriv'
+import { createIndex } from '../../src/retriv'
 import {
   downloadLlmsDocs,
   fetchGitDocs,
@@ -235,7 +235,7 @@ export async function runPipeline(name: string): Promise<PipelineResult> {
       await indexLimit(async () => {
         if (hasValidSearchDb(dbPath))
           return
-        await createIndexDirect(docsToIndex, { dbPath })
+        await createIndex(docsToIndex, { dbPath })
       })
     }
 

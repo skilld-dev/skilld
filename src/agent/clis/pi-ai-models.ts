@@ -6,8 +6,8 @@
  * per provider for ergonomic defaults.
  */
 
-import { getEnvApiKey, getModels, getProviders } from '@earendil-works/pi-ai'
-import { loadAuth, resolveOAuthProviderId } from './pi-ai-auth.ts'
+import type { Models } from '@earendil-works/pi-ai'
+import { createPiAiModels } from './pi-ai-auth.ts'
 
 export function isPiAiModel(model: string): boolean {
   return model.startsWith('pi:')
@@ -62,43 +62,26 @@ export interface PiAiModelInfo {
   id: string
   name: string
   hint: string
-  authSource: 'env' | 'oauth' | 'none'
+  authSource: 'api-key' | 'oauth'
   recommended: boolean
 }
 
-export function getAvailablePiAiModels(): PiAiModelInfo[] {
-  const providers: string[] = getProviders()
-  const auth = loadAuth()
+export async function getAvailablePiAiModels(models: Models = createPiAiModels()): Promise<PiAiModelInfo[]> {
+  const modelsByProvider = Map.groupBy(await models.getAvailable(), model => model.provider)
   const available: PiAiModelInfo[] = []
-  const recommendedPicked = new Set<string>()
 
-  for (const provider of providers) {
-    let authSource: 'env' | 'oauth' | 'none' = 'none'
-    if (getEnvApiKey(provider)) {
-      authSource = 'env'
-    }
-    else {
-      const oauthId = resolveOAuthProviderId(provider)
-      if (oauthId && auth[oauthId])
-        authSource = 'oauth'
-    }
-
-    if (authSource === 'none')
+  for (const [provider, providerModels] of modelsByProvider) {
+    const auth = await models.checkAuth(provider)
+    if (!auth)
       continue
+    const authSource = auth.type === 'oauth' ? 'oauth' : 'api-key'
 
-    const models: any[] = getModels(provider as any)
     const recPattern = RECOMMENDED_MODELS[provider]
-    let recModelId: string | null = null
-    if (recPattern) {
-      for (const model of models) {
-        if (!isLegacyModel(model.id) && recPattern.test(model.id)) {
-          recModelId = model.id
-          break
-        }
-      }
-    }
+    const recModelId = recPattern
+      ? providerModels.find(model => !isLegacyModel(model.id) && recPattern.test(model.id))?.id
+      : undefined
 
-    for (const model of models) {
+    for (const model of providerModels) {
       if (model.contextWindow && model.contextWindow < MIN_CONTEXT_WINDOW)
         continue
       if (isLegacyModel(model.id))
@@ -107,17 +90,13 @@ export function getAvailablePiAiModels(): PiAiModelInfo[] {
       const id = `pi:${provider}/${model.id}`
       const ctx = model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k ctx` : ''
       const cost = model.cost?.input ? ` · $${model.cost.input}/Mtok` : ''
-      const isRecommended = model.id === recModelId && !recommendedPicked.has(provider)
-
-      if (isRecommended)
-        recommendedPicked.add(provider)
 
       available.push({
         id,
         name: model.name || model.id,
         hint: `${authSource === 'oauth' ? 'OAuth' : 'API key'}${ctx}${cost}`,
         authSource,
-        recommended: isRecommended,
+        recommended: model.id === recModelId,
       })
     }
   }

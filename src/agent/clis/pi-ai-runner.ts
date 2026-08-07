@@ -3,12 +3,11 @@
  * section. Streams reasoning + text to onProgress; tools are sandboxed to .skilld/.
  */
 
-import type { AssistantMessage, Message, ToolCall } from '@earendil-works/pi-ai'
+import type { AssistantMessage, Message, Models, ToolCall } from '@earendil-works/pi-ai'
 import type { SkillSection } from '../prompts/index.ts'
 import type { StreamProgress } from './types.ts'
-import { getModel, streamSimple } from '@earendil-works/pi-ai'
 import { skillInternalDir } from '../../core/paths.ts'
-import { resolveApiKey } from './pi-ai-auth.ts'
+import { createPiAiModels } from './pi-ai-auth.ts'
 import { parsePiAiModelId } from './pi-ai-models.ts'
 import { executeTool, MAX_TOOL_TURNS, TOOLS } from './pi-ai-tools.ts'
 
@@ -19,6 +18,7 @@ export interface PiAiSectionOptions {
   model: string
   onProgress?: (progress: StreamProgress) => void
   signal?: AbortSignal
+  models?: Models
 }
 
 export interface PiAiSectionResult {
@@ -37,8 +37,10 @@ export async function optimizeSectionPiAi(opts: PiAiSectionOptions): Promise<PiA
   if (!parsed)
     throw new Error(`Invalid pi-ai model ID: ${opts.model}. Expected format: pi:provider/model-id`)
 
-  const model = getModel(parsed.provider as any, parsed.modelId as any)
-  const apiKey = await resolveApiKey(parsed.provider)
+  const models = opts.models ?? createPiAiModels()
+  const model = models.getModel(parsed.provider, parsed.modelId)
+  if (!model)
+    throw new Error(`Unknown pi-ai model: ${parsed.provider}/${parsed.modelId}`)
   const skilldDir = skillInternalDir(opts.skillDir)
 
   const fullPrompt = opts.prompt
@@ -61,14 +63,14 @@ export async function optimizeSectionPiAi(opts: PiAiSectionOptions): Promise<PiA
     if (opts.signal?.aborted)
       throw new Error('pi-ai request timed out')
 
-    const eventStream = streamSimple(model, {
+    const eventStream = models.streamSimple(model, {
       systemPrompt: SYSTEM_PROMPT,
       messages,
       tools: TOOLS,
     }, {
       reasoning: turn === 0 ? 'medium' : undefined,
       maxTokens: 16_384,
-      ...(apiKey ? { apiKey } : {}),
+      signal: opts.signal,
     })
 
     let assistantMessage: AssistantMessage | undefined

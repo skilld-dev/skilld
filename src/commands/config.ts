@@ -143,7 +143,7 @@ async function configureOAuth(): Promise<void> {
           ],
         }))
         if (action === 'disconnect') {
-          logoutOAuthProvider(providerId as string)
+          await logoutOAuthProvider(providerId as string)
           p.log.success(`Disconnected from ${pr.name}`)
         }
         return

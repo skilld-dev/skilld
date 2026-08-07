@@ -90,7 +90,7 @@ export async function optimizeDocs(opts: OptimizeDocsOptions): Promise<OptimizeR
     return { optimized: '', wasOptimized: false, error: 'No valid sections to generate' }
   }
 
-  const executorOrError = selectExecutor(model)
+  const executorOrError = await selectExecutor(model)
   if ('error' in executorOrError)
     return { optimized: '', wasOptimized: false, error: executorOrError.error }
   const executor = executorOrError

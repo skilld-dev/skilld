@@ -6,9 +6,10 @@
  * plus an id pattern; we resolve the latest matching pi-ai entry for the human label.
  */
 
-import type { KnownProvider, Model } from '@earendil-works/pi-ai'
+import type { Model } from '@earendil-works/pi-ai'
+import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type { CliModelEntry } from './types.ts'
-import { getModels } from '@earendil-works/pi-ai'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 
 const STATIC_REGEX_1 = /-\d{8}$/
 const STATIC_REGEX_2 = /-\d{4}-\d{2}-\d{2}$/
@@ -46,7 +47,7 @@ function compareVersions(a: string, b: string): number {
 }
 
 interface ResolveOpts {
-  provider: KnownProvider
+  provider: BuiltinProvider
   /** Prefix the id must start with (e.g. `claude-opus-`, `gpt-5.`, `gemini-`). */
   prefix: string
   /** Optional substring filter (e.g. `codex`, `flash`). */
@@ -57,7 +58,7 @@ interface ResolveOpts {
 
 function resolve(opts: ResolveOpts): Model<any> | undefined {
   const { provider, prefix, contains, exclude } = opts
-  const matches = getModels(provider)
+  const matches = getBuiltinModels(provider)
     .filter(m => isStableId(m.id))
     .filter(m => m.id.startsWith(prefix))
     .filter(m => !contains || m.id.includes(contains))

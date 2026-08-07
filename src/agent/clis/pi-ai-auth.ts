@@ -5,10 +5,10 @@
  * API key access (env vars) remains supported for those providers.
  */
 
+import type { AuthEvent, AuthInteraction, AuthPrompt, Credential, CredentialStore, Models } from '@earendil-works/pi-ai'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { getEnvApiKey, getProviders } from '@earendil-works/pi-ai'
-import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from '@earendil-works/pi-ai/oauth'
+import { builtinModels, builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { join } from 'pathe'
 import { CACHE_DIR, PI_AI_AUTH_PATH } from '../../core/paths.ts'
 
@@ -17,8 +17,6 @@ import { CACHE_DIR, PI_AI_AUTH_PATH } from '../../core/paths.ts'
  * API-key access remains supported for these.
  */
 export const BLOCKED_OAUTH_PROVIDERS: ReadonlySet<string> = new Set([
-  'google-antigravity',
-  'google-gemini-cli',
   'github-copilot',
   'anthropic',
   'openai-codex',
@@ -30,80 +28,99 @@ const PI_AGENT_AUTH_PATH = join(
 )
 const SKILLD_AUTH_PATH = PI_AI_AUTH_PATH
 
-/**
- * Overrides for model-provider → OAuth-provider mapping. Most providers share
- * the same id in both systems (auto-matched); list only divergences.
- */
-const OAUTH_PROVIDER_OVERRIDES: Record<string, string> = {
-  google: 'google-gemini-cli',
-  openai: 'openai-codex',
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
 }
 
-interface OAuthCredentials {
-  type: 'oauth'
-  refresh: string
-  access: string
-  expires: number
-  [key: string]: unknown
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isObjectRecord(value)
+    && Object.values(value).every(entry => typeof entry === 'string')
 }
 
-function readAuthFile(path: string): Record<string, OAuthCredentials> {
+function isCredential(value: unknown): value is Credential {
+  if (!isObjectRecord(value) || !('type' in value))
+    return false
+  if (value.type === 'oauth') {
+    return 'refresh' in value
+      && typeof value.refresh === 'string'
+      && 'access' in value
+      && typeof value.access === 'string'
+      && 'expires' in value
+      && typeof value.expires === 'number'
+  }
+  if (value.type !== 'api_key')
+    return false
+  return (!('key' in value) || value.key === undefined || typeof value.key === 'string')
+    && (!('env' in value) || value.env === undefined || isStringRecord(value.env))
+}
+
+function readAuthFile(path: string): Record<string, Credential> {
   if (!existsSync(path))
     return {}
   try {
-    return JSON.parse(readFileSync(path, 'utf-8'))
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+    if (!isObjectRecord(parsed))
+      return {}
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, Credential] => isCredential(entry[1])))
   }
-  catch { return {} }
+  catch {
+    // A malformed optional auth file must not prevent API-key providers from loading.
+    return {}
+  }
 }
 
-/** Load auth from pi coding agent first, then skilld's own. pi agent wins on conflict. */
-export function loadAuth(): Record<string, OAuthCredentials> {
+/** Load shared pi credentials, then apply skilld's locally refreshed values. */
+export function loadAuth(): Record<string, Credential> {
   const piAuth = readAuthFile(PI_AGENT_AUTH_PATH)
   const skilldAuth = readAuthFile(SKILLD_AUTH_PATH)
-  return { ...skilldAuth, ...piAuth }
+  return { ...piAuth, ...skilldAuth }
 }
 
-function saveAuth(auth: Record<string, OAuthCredentials>): void {
+function saveAuth(auth: Record<string, Credential>): void {
   mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 })
   writeFileSync(SKILLD_AUTH_PATH, JSON.stringify(auth, null, 2), { mode: 0o600 })
 }
 
-/** Resolve model provider id → OAuth provider id (returns null for blocked providers). */
-export function resolveOAuthProviderId(modelProvider: string): string | null {
-  const oauthId = OAUTH_PROVIDER_OVERRIDES[modelProvider] ?? modelProvider
-  if (BLOCKED_OAUTH_PROVIDERS.has(oauthId))
-    return null
-  if (OAUTH_PROVIDER_OVERRIDES[modelProvider])
-    return OAUTH_PROVIDER_OVERRIDES[modelProvider]!
-  const oauthIds = new Set((getOAuthProviders() as Array<{ id: string }>).map(p => p.id))
-  if (oauthIds.has(modelProvider))
-    return modelProvider
-  return null
+function createCredentialStore(): CredentialStore {
+  const chains = new Map<string, Promise<void>>()
+
+  return {
+    async read(providerId) {
+      return loadAuth()[providerId]
+    },
+    async list() {
+      return Object.entries(loadAuth()).map(([providerId, credential]) => ({ providerId, type: credential.type }))
+    },
+    async modify(providerId, update) {
+      let result: Credential | undefined
+      const previous = chains.get(providerId) ?? Promise.resolve()
+      const operation = previous.then(async () => {
+        const current = loadAuth()[providerId]
+        const next = await update(current)
+        result = next ?? current
+        if (next) {
+          const localAuth = readAuthFile(SKILLD_AUTH_PATH)
+          localAuth[providerId] = next
+          saveAuth(localAuth)
+        }
+      })
+      // Keep later updates runnable; this operation still rejects to its caller below.
+      chains.set(providerId, operation.then(() => undefined, () => undefined))
+      await operation
+      return result
+    },
+    async delete(providerId) {
+      const localAuth = readAuthFile(SKILLD_AUTH_PATH)
+      delete localAuth[providerId]
+      saveAuth(localAuth)
+    },
+  }
 }
 
-/** Resolve API key for a provider — env vars first, then stored OAuth credentials. */
-export async function resolveApiKey(provider: string): Promise<string | null> {
-  const envKey = getEnvApiKey(provider)
-  if (envKey)
-    return envKey
-
-  const oauthProviderId = resolveOAuthProviderId(provider)
-  if (!oauthProviderId)
-    return null
-
-  const auth = loadAuth()
-  if (!auth[oauthProviderId])
-    return null
-
-  const result = await getOAuthApiKey(oauthProviderId, auth)
-  if (!result)
-    return null
-
-  // Refreshed credentials go to skilld's own file only, never leak pi-agent tokens.
-  const skilldAuth = readAuthFile(SKILLD_AUTH_PATH)
-  skilldAuth[oauthProviderId] = { type: 'oauth', ...result.newCredentials }
-  saveAuth(skilldAuth)
-  return result.apiKey
+export function createPiAiModels(): Models {
+  return builtinModels({ credentials: createCredentialStore() })
 }
 
 export interface LoginCallbacks {
@@ -116,39 +133,45 @@ export interface LoginCallbacks {
 
 export function getOAuthProviderList(): Array<{ id: string, name: string, loggedIn: boolean }> {
   const auth = loadAuth()
-  const providers = getOAuthProviders() as Array<{ id: string, name: string }>
-  return providers
-    .filter(p => !BLOCKED_OAUTH_PROVIDERS.has(p.id))
-    .map(p => ({ id: p.id, name: p.name ?? p.id, loggedIn: !!auth[p.id] }))
+  return builtinProviders()
+    .filter(provider => provider.auth.oauth && !BLOCKED_OAUTH_PROVIDERS.has(provider.id))
+    .map(provider => ({
+      id: provider.id,
+      name: provider.auth.oauth?.name ?? provider.name,
+      loggedIn: auth[provider.id]?.type === 'oauth',
+    }))
 }
 
 export async function loginOAuthProvider(providerId: string, callbacks: LoginCallbacks): Promise<boolean> {
-  const provider = getOAuthProvider(providerId)
-  if (!provider)
+  const models = createPiAiModels()
+  const provider = models.getProvider(providerId)
+  if (!provider?.auth.oauth || BLOCKED_OAUTH_PROVIDERS.has(providerId))
     return false
 
-  const credentials = await provider.login({
-    onAuth: info => callbacks.onAuth(info.url, info.instructions),
-    onDeviceCode: info => callbacks.onDeviceCode?.(info.userCode, info.verificationUri),
-    onPrompt: async prompt => callbacks.onPrompt(prompt.message, prompt.placeholder),
-    onProgress: msg => callbacks.onProgress?.(msg),
-    onSelect: async (prompt) => {
-      const selected = await callbacks.onSelect?.(prompt.message, prompt.options)
-      return selected ?? prompt.options[0]?.id
-    },
-  })
-
-  const auth = loadAuth()
-  auth[providerId] = { type: 'oauth', ...credentials }
-  saveAuth(auth)
+  const notify = (event: AuthEvent): void => {
+    if (event.type === 'auth_url')
+      callbacks.onAuth(event.url, event.instructions)
+    else if (event.type === 'device_code') {
+      if (callbacks.onDeviceCode)
+        callbacks.onDeviceCode(event.userCode, event.verificationUri)
+      else
+        callbacks.onAuth(event.verificationUri, `Enter code ${event.userCode}`)
+    }
+    else
+      callbacks.onProgress?.(event.message)
+  }
+  const prompt = async (input: AuthPrompt): Promise<string> => {
+    if (input.type !== 'select')
+      return callbacks.onPrompt(input.message, input.placeholder)
+    const options = input.options.map(option => ({ id: option.id, label: option.label }))
+    const selected = await callbacks.onSelect?.(input.message, options)
+    return selected ?? options[0]?.id ?? ''
+  }
+  const interaction: AuthInteraction = { notify, prompt }
+  await models.login(providerId, 'oauth', interaction)
   return true
 }
 
-export function logoutOAuthProvider(providerId: string): void {
-  const auth = loadAuth()
-  delete auth[providerId]
-  saveAuth(auth)
+export async function logoutOAuthProvider(providerId: string): Promise<void> {
+  await createPiAiModels().logout(providerId)
 }
-
-/** Re-export for callers that want pi-ai's provider list without importing from pi-ai directly. */
-export { getEnvApiKey, getProviders }

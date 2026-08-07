@@ -2,7 +2,7 @@
   "name": "skilld",
   "type": "module",
   "version": "2.0.0",
-  "packageManager": "pnpm@11.19.0",
+  "packageManager": "pnpm@11.20.0",
   "description": "Generate AI agent skills from npm package documentation",
   "author": {
     "name": "Harlan Wilton",
@@ -79,7 +79,7 @@
     "verkit": "catalog:"
   },
   "optionalDependencies": {
-    "@napi-rs/keyring": "^1.3.0"
+    "@napi-rs/keyring": "catalog:"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",

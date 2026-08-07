@@ -213,17 +213,16 @@ export const PACKAGES: PackageSpec[] = [
   },
 
   // ── motion-v ────────────────────────────────────────────────────────
-  // Motion for Vue — no git docs, no llms.txt. crawlUrl not used by e2e pipeline.
-  // Falls back to README.
+  // Motion for Vue — llms.txt available at motion.dev.
   {
     name: 'motion-v',
     preset: 'vue',
     expectRepoUrl: 'github.com/motiondivision/motion-vue',
     expectDocsUrl: 'https://motion.dev',
-    expectSources: { npm: true, gitDocs: false, llmsTxt: false, readme: true },
-    expectDocsType: 'readme',
+    expectSources: { npm: true, gitDocs: false, llmsTxt: true, readme: true },
+    expectDocsType: 'llms.txt',
     expectCacheFiles: [
-      'docs/README.md',
+      'llms.txt',
     ],
     minCacheDocs: 1,
     expectDescriptionContains: '"motion-v"',
@@ -239,7 +238,7 @@ export const PACKAGES: PackageSpec[] = [
   {
     name: 'react',
     preset: 'react',
-    expectRepoUrl: 'github.com/facebook/react',
+    expectRepoUrl: 'github.com/react/react',
     expectDocsUrl: 'https://react.dev/',
     expectSources: { npm: true, gitDocs: false, llmsTxt: true, readme: true },
     expectDocsType: 'docs',

@@ -127,12 +127,12 @@ export async function getAvailableModels(): Promise<import('./types.ts').ModelIn
     })
 
   // Append pi-ai direct API models (providers with auth configured)
-  const piAiModels = getAvailablePiAiModels()
+  const piAiModels = await getAvailablePiAiModels()
   const piAiEntries = piAiModels.map((m) => {
     const parsed = parsePiAiModelId(m.id)
     const piProvider = parsed?.provider ?? 'pi-ai'
     const displayName = PI_PROVIDER_NAMES[piProvider] ?? piProvider
-    const authLabel = m.authSource === 'env' ? 'API' : 'OAuth'
+    const authLabel = m.authSource === 'api-key' ? 'API key' : 'OAuth'
     return {
       id: m.id as OptimizeModel,
       name: m.name,

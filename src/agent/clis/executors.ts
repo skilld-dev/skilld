@@ -15,6 +15,7 @@ import { getSkillReferenceDirs } from '../../cache/index.ts'
 import { CLI_ADAPTERS, CLI_MODELS } from './index.ts'
 import { isOllamaModel, ollamaExecutor } from './ollama.ts'
 import { getAvailablePiAiModels, isPiAiModel, optimizeSectionPiAi } from './pi-ai.ts'
+import { createPiAiModels } from './pi-ai-auth.ts'
 import { spawnCliAndStream } from './runner.ts'
 
 function cliExecutor(model: OptimizeModel): SectionExecutor | { error: string } {
@@ -39,8 +40,9 @@ function cliExecutor(model: OptimizeModel): SectionExecutor | { error: string } 
   }
 }
 
-function piAiExecutor(model: OptimizeModel): SectionExecutor | { error: string } {
-  const available = new Set(getAvailablePiAiModels().map(m => m.id as OptimizeModel))
+async function piAiExecutor(model: OptimizeModel): Promise<SectionExecutor | { error: string }> {
+  const models = createPiAiModels()
+  const available = new Set((await getAvailablePiAiModels(models)).map(m => m.id as OptimizeModel))
   if (!available.has(model))
     return { error: `Pi model unavailable or not authenticated: ${model}` }
 
@@ -50,7 +52,7 @@ function piAiExecutor(model: OptimizeModel): SectionExecutor | { error: string }
       const ac = new AbortController()
       const timer = setTimeout(() => ac.abort(), timeout)
       try {
-        const result = await optimizeSectionPiAi({ section, prompt, skillDir, model, onProgress, signal: ac.signal })
+        const result = await optimizeSectionPiAi({ section, prompt, skillDir, model, onProgress, signal: ac.signal, models })
         return { text: result.text.trim(), usage: result.usage, cost: result.cost }
       }
       catch (err) {
@@ -64,7 +66,7 @@ function piAiExecutor(model: OptimizeModel): SectionExecutor | { error: string }
 }
 
 /** Resolve `model` to an executor, or an error if the model is unavailable/unmapped. */
-export function selectExecutor(model: OptimizeModel): SectionExecutor | { error: string } {
+export async function selectExecutor(model: OptimizeModel): Promise<SectionExecutor | { error: string }> {
   if (isOllamaModel(model))
     return ollamaExecutor(model)
   return isPiAiModel(model) ? piAiExecutor(model) : cliExecutor(model)
