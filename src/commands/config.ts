@@ -12,6 +12,7 @@ import { NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli/model-picker.ts
 import { defaultFeatures, readConfig, updateConfig } from '../core/config.ts'
 import { getProjectState } from '../core/skills.ts'
 import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, getEmbedModelInfo, resolveEmbedModel } from '../retriv/models.ts'
+import { getAvailableOllamaEmbedModels, isOllamaEmbedModel } from '../retriv/ollama-embeddings.ts'
 
 export async function configCommand(): Promise<void> {
   const initConfig = readConfig()
@@ -259,13 +260,22 @@ async function configureEmbedModel(): Promise<void> {
     p.log.warn(`SKILLD_EMBED_MODEL is set to ${envOverride} and overrides this setting for the current shell.`)
   }
 
+  const builtIn = EMBED_MODELS.map(m => ({
+    label: m.label,
+    value: m.id,
+    hint: `${m.dimensions}d · ${m.hint}`,
+  }))
+  // Locally-pulled Ollama models are additive: an unreachable daemon simply
+  // contributes nothing rather than blocking the picker.
+  const ollama = (await getAvailableOllamaEmbedModels()).map(m => ({
+    label: m.name,
+    value: m.id,
+    hint: m.hint,
+  }))
+
   const choice = guard(await p.select({
     message: 'Embedding model — indexes and queries docs for skilld search',
-    options: EMBED_MODELS.map(m => ({
-      label: m.label,
-      value: m.id,
-      hint: `${m.dimensions}d · ${m.hint}`,
-    })),
+    options: [...builtIn, ...ollama],
     initialValue: current,
   }))
 
@@ -294,6 +304,10 @@ async function configureEmbedModel(): Promise<void> {
 async function configureEmbedDevice(): Promise<void> {
   const config = readConfig()
   const current = config.embedDevice || DEFAULT_EMBED_DEVICE
+
+  if (isOllamaEmbedModel(resolveEmbedModel(config.embedModel))) {
+    p.log.warn('The active embedding model runs inside Ollama, which manages its own device. This setting will have no effect until you switch to a built-in model.')
+  }
   const envOverride = process.env.SKILLD_EMBED_DEVICE?.trim()
 
   if (envOverride)

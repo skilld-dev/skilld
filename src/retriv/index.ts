@@ -2,6 +2,7 @@ import type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, Sea
 import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
 import { resolveEmbedDevice, resolveEmbedModel } from './models.ts'
+import { isOllamaEmbedModel, ollamaEmbeddings } from './ollama-embeddings.ts'
 
 export type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet }
 
@@ -77,13 +78,17 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
   const device = resolveEmbedDevice(userConfig.embedDevice)
   // Cache identity pairs model with device: cached vectors are only valid for
   // the embedder that produced them, and backends can differ numerically.
+  // Ollama runs the model in its own process, so `device` does not apply there.
+  const isOllama = isOllamaEmbedModel(embedModel)
   const embeddings = await cachedEmbeddings(
-    transformersJs({
-      model: embedModel,
-      // Omitted when `auto` so transformers.js keeps its own device resolution.
-      ...(device ? { device } : {}),
-    }),
-    `${embedModel}@${device ?? 'auto'}`,
+    isOllama
+      ? ollamaEmbeddings(embedModel)
+      : transformersJs({
+          model: embedModel,
+          // Omitted when `auto` so transformers.js keeps its own device resolution.
+          ...(device ? { device } : {}),
+        }),
+    isOllama ? embedModel : `${embedModel}@${device ?? 'auto'}`,
   )
   return createRetriv({
     driver: sqliteMod.default({

@@ -249,7 +249,7 @@ The large default context can exceed memory for big models on constrained hardwa
 | `bge-base-en-v1.5` | 768 | Balanced accuracy and speed. |
 | `bge-m3` | 1024 | Multilingual, 8192-token context. |
 
-Larger models retrieve more accurately but cost more time and memory when indexing. Set `SKILLD_EMBED_MODEL` to override the saved setting for a single run:
+Larger models retrieve more accurately but cost more time and memory when indexing. Locally-pulled [Ollama](#ollama-embedding-models) models can be used too. Set `SKILLD_EMBED_MODEL` to override the saved setting for a single run:
 
 ```bash
 SKILLD_EMBED_MODEL=bge-m3 skilld add npm:vue
@@ -260,6 +260,21 @@ Search indexes store fixed-width vectors, so changing to a model with different 
 ```bash
 skilld update --force
 ```
+
+### Ollama Embedding Models
+
+If [Ollama](https://ollama.com) is running, locally-pulled embedding models appear in the **Embedding model** picker alongside the built-in ones. They are addressed as `ollama:<name>`, matching the `-m ollama:<name>` syntax used for enhancement models:
+
+```bash
+ollama pull qwen3-embedding
+SKILLD_EMBED_MODEL=ollama:qwen3-embedding skilld add npm:vue
+```
+
+Only models that advertise the `embedding` capability are listed, so chat models cannot be selected by mistake. Dimensions and context length are read from Ollama, and vectors are normalised before indexing.
+
+This talks to Ollama's HTTP API directly — no additional dependency, and no API key. Set `OLLAMA_HOST` to point at a non-default daemon. If Ollama is not running, the picker simply shows the built-in models.
+
+Ollama manages its own execution device, so **Embedding device** does not apply to `ollama:` models.
 
 ### Embedding Device
 

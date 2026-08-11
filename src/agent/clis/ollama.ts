@@ -17,6 +17,7 @@
 
 import type { SectionExecutor } from './runner.ts'
 import type { OptimizeModel } from './types.ts'
+import { ollamaHost } from '../../core/ollama-host.ts'
 
 const OLLAMA_PREFIX = 'ollama:'
 
@@ -27,15 +28,6 @@ export function isOllamaModel(model: string): boolean {
 /** Parse `ollama:qwen2.5:14b-instruct` → `qwen2.5:14b-instruct`. */
 export function parseOllamaModelId(model: string): string | null {
   return isOllamaModel(model) ? model.slice(OLLAMA_PREFIX.length) : null
-}
-
-const HAS_SCHEME_RE = /^https?:\/\//
-const TRAILING_SLASH_RE = /\/$/
-
-function ollamaHost(): string {
-  const raw = process.env.OLLAMA_HOST || 'http://localhost:11434'
-  const withScheme = HAS_SCHEME_RE.test(raw) ? raw : `http://${raw}`
-  return withScheme.replace(TRAILING_SLASH_RE, '')
 }
 
 interface OllamaChatChunk {
