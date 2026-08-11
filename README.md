@@ -239,6 +239,57 @@ Generation runs locally: free, offline, no API key. Unlike the CLI and API backe
 
 The large default context can exceed memory for big models on constrained hardware (Ollama returns a 500). Lower `OLLAMA_NUM_CTX` or pick a smaller model if generation fails to load.
 
+### Embedding Model
+
+`skilld search` is powered by a local embedding model. It runs offline through transformers.js — no API key, and no network traffic after the first download. Pick one under **Embedding model** in `skilld config`:
+
+| Model | Dimensions | Notes |
+|-------|-----------:|-------|
+| `bge-small-en-v1.5` | 384 | Default. Fastest to index, smallest download. |
+| `bge-base-en-v1.5` | 768 | Balanced accuracy and speed. |
+| `bge-m3` | 1024 | Multilingual, 8192-token context. |
+
+Larger models retrieve more accurately but cost more time and memory when indexing. Set `SKILLD_EMBED_MODEL` to override the saved setting for a single run:
+
+```bash
+SKILLD_EMBED_MODEL=bge-m3 skilld add npm:vue
+```
+
+Search indexes store fixed-width vectors, so changing to a model with different dimensions strands existing indexes. Rebuild them after switching:
+
+```bash
+skilld update --force
+```
+
+### Embedding Device
+
+The embedding model runs on the CPU by default. **Embedding device** in `skilld config` moves it onto a GPU backend, which can be substantially faster:
+
+| Device | Notes |
+|--------|-------|
+| `auto` | Default. Lets transformers.js choose — CPU under Node. |
+| `cpu` | Always available, predictable. |
+| `webgpu` | Fastest on Apple Silicon in testing. |
+| `coreml` | Apple Neural Engine. Measured slower than CPU for these models. |
+
+Measured on an Apple M5 Max, 120 documents, best of 3 after warm-up (docs/sec):
+
+| Model | `cpu` | `coreml` | `webgpu` |
+|-------|------:|---------:|---------:|
+| `bge-small-en-v1.5` | 664 | 198 | **1713** |
+| `bge-base-en-v1.5` | 198 | 68 | **580** |
+| `Xenova/bge-large-en-v1.5` | 71 | 9 | **201** |
+
+WebGPU was 2.6-2.9x faster than CPU at every size, which means `bge-large` on WebGPU indexes faster than `bge-base` does on CPU — better retrieval for less wall-clock. CoreML was consistently slower.
+
+The ranking is hardware-specific, so benchmark before trusting a device on other machines. Override for a single run with `SKILLD_EMBED_DEVICE`:
+
+```bash
+SKILLD_EMBED_DEVICE=cpu skilld update --force
+```
+
+If a backend is unavailable, indexing fails to start — switch back to `auto`.
+
 ### Eject
 
 Export a skill as a portable, self-contained directory for sharing via git repos:

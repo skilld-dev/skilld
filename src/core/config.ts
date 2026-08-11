@@ -32,6 +32,10 @@ export function getActiveFeatures(overrides?: Partial<FeaturesConfig>): Features
 export interface SkilldConfig {
   model?: OptimizeModel
   agent?: string
+  /** Local embedding model used to build and query the search index */
+  embedModel?: string
+  /** Execution device for the embedding model (auto, cpu, webgpu, coreml) */
+  embedDevice?: string
   features?: FeaturesConfig
   projects?: string[]
   skipLlm?: boolean
@@ -102,6 +106,10 @@ export function readConfig(): SkilldConfig {
       config.model = value as OptimizeModel
     if (key === 'agent' && value)
       config.agent = value
+    if (key === 'embedModel' && value)
+      config.embedModel = value
+    if (key === 'embedDevice' && value)
+      config.embedDevice = value
     if (key === 'skipLlm')
       config.skipLlm = value === 'true'
   }
@@ -122,6 +130,10 @@ export function writeConfig(config: SkilldConfig): void {
     yaml += `model: ${config.model}\n`
   if (config.agent)
     yaml += `agent: ${config.agent}\n`
+  if (config.embedModel)
+    yaml += `embedModel: ${config.embedModel}\n`
+  if (config.embedDevice)
+    yaml += `embedDevice: ${config.embedDevice}\n`
   if (config.skipLlm)
     yaml += `skipLlm: true\n`
   if (config.features) {

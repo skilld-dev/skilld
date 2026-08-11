@@ -1,5 +1,7 @@
 import type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet } from './types.ts'
+import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
+import { resolveEmbedDevice, resolveEmbedModel } from './models.ts'
 
 export type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet }
 
@@ -70,7 +72,19 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
       throw new SearchDepsUnavailableError(err)
     throw err
   }
-  const embeddings = await cachedEmbeddings(transformersJs())
+  const userConfig = readConfig()
+  const embedModel = resolveEmbedModel(userConfig.embedModel)
+  const device = resolveEmbedDevice(userConfig.embedDevice)
+  // Cache identity pairs model with device: cached vectors are only valid for
+  // the embedder that produced them, and backends can differ numerically.
+  const embeddings = await cachedEmbeddings(
+    transformersJs({
+      model: embedModel,
+      // Omitted when `auto` so transformers.js keeps its own device resolution.
+      ...(device ? { device } : {}),
+    }),
+    `${embedModel}@${device ?? 'auto'}`,
+  )
   return createRetriv({
     driver: sqliteMod.default({
       path: config.dbPath,
