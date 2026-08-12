@@ -4,11 +4,16 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { dirname, join } from 'pathe'
-import { SearchDepsUnavailableError } from './index.ts'
+import { EmbeddingIndexMismatchError, SearchDepsUnavailableError } from './index.ts'
 
 function reconstructError(message: string, name?: string): Error {
   if (name === 'SearchDepsUnavailableError')
     return new SearchDepsUnavailableError(undefined, message)
+  if (name === 'EmbeddingIndexMismatchError') {
+    const error = new Error(message)
+    error.name = EmbeddingIndexMismatchError.name
+    return error
+  }
   return new Error(message)
 }
 

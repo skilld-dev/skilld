@@ -55,7 +55,7 @@ function createSqliteStorage(db: DatabaseSync) {
  *
  * `model` identifies which embedder produced the cached vectors. Entries are
  * keyed by text hash alone, so vectors from a different model would be served
- * for the same text — two models of equal width (bge-large and
+ * for the same text. Two models of equal width (bge-large and
  * qwen3-embedding:0.6b are both 1024d) would silently mix embedding spaces and
  * destroy ranking. Dimensions alone cannot catch that; the model id can.
  */

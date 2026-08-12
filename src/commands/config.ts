@@ -11,7 +11,7 @@ import { guard, menuLoop } from '../cli/menu.ts'
 import { NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli/model-picker.ts'
 import { defaultFeatures, readConfig, updateConfig } from '../core/config.ts'
 import { getProjectState } from '../core/skills.ts'
-import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, getEmbedModelInfo, resolveEmbedModel } from '../retriv/models.ts'
+import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, resolveEmbedModel } from '../retriv/models.ts'
 
 export async function configCommand(): Promise<void> {
   const initConfig = readConfig()
@@ -248,7 +248,7 @@ async function configureModel(): Promise<void> {
   }
 }
 
-// ── Embedding model selection ────────────────────────────────────────
+// Embedding model selection
 
 async function configureEmbedModel(): Promise<void> {
   const config = readConfig()
@@ -260,7 +260,7 @@ async function configureEmbedModel(): Promise<void> {
   }
 
   const choice = guard(await p.select({
-    message: 'Embedding model — indexes and queries docs for skilld search',
+    message: 'Embedding model for indexing and querying skilld search',
     options: EMBED_MODELS.map(m => ({
       label: m.label,
       value: m.id,
@@ -274,22 +274,12 @@ async function configureEmbedModel(): Promise<void> {
     return
   }
 
-  const previous = getEmbedModelInfo(current)
-  const next = getEmbedModelInfo(choice as string)
   updateConfig({ embedModel: choice === DEFAULT_EMBED_MODEL ? undefined : choice as string })
   p.log.success(`Embedding model set to ${choice}`)
-
-  // sqlite-vec columns are fixed-width, so a dimension change strands existing
-  // indexes: they stay queryable at the old width but new docs cannot join them.
-  if (previous && next && previous.dimensions !== next.dimensions) {
-    p.log.warn(
-      `Vector width changed ${previous.dimensions}d → ${next.dimensions}d. `
-      + 'Existing search indexes must be rebuilt: skilld update --force',
-    )
-  }
+  p.log.warn('Embedding model changed. Rebuild existing search indexes: skilld update --force')
 }
 
-// ── Embedding device selection ───────────────────────────────────────
+// Embedding device selection
 
 async function configureEmbedDevice(): Promise<void> {
   const config = readConfig()
@@ -301,23 +291,28 @@ async function configureEmbedDevice(): Promise<void> {
 
   p.note(
     'The fastest backend depends on your hardware. On an Apple M5 Max, WebGPU\n'
-    + 'ran 2.6-2.9x faster than CPU across every model size, while CoreML ran\n'
-    + '3-8x slower. Benchmark before trusting a device on other machines.',
+    + 'ran 2.6 to 2.9 times faster than CPU. CoreML ran 3 to 8 times slower.\n'
+    + 'Benchmark before trusting a device on other machines.',
     'Choosing a device',
   )
 
   const choice = guard(await p.select({
-    message: 'Embedding device — where the model runs',
+    message: 'Embedding device where the model runs',
     options: EMBED_DEVICES.map(d => ({ label: d.label, value: d.id, hint: d.hint })),
     initialValue: current,
   }))
 
+  if (choice === current) {
+    p.log.info(`Embedding device unchanged (${choice})`)
+    return
+  }
+
   updateConfig({ embedDevice: choice === DEFAULT_EMBED_DEVICE ? undefined : choice as string })
   p.log.success(`Embedding device set to ${choice}`)
+  p.log.warn('Embedding device changed. Rebuild existing search indexes: skilld update --force')
 
-  if (choice !== DEFAULT_EMBED_DEVICE && choice !== 'cpu') {
-    p.log.info('If indexing fails to start, the backend is unavailable on this machine — switch back to Auto.')
-  }
+  if (choice !== DEFAULT_EMBED_DEVICE && choice !== 'cpu')
+    p.log.info('If indexing fails to start, switch back to Auto. The backend may be unavailable on this machine.')
 }
 
 export const configCommandDef = defineCommand({

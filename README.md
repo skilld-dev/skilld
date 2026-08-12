@@ -241,7 +241,7 @@ The large default context can exceed memory for big models on constrained hardwa
 
 ### Embedding Model
 
-`skilld search` is powered by a local embedding model. It runs offline through transformers.js — no API key, and no network traffic after the first download. Pick one under **Embedding model** in `skilld config`:
+`skilld search` uses a local embedding model. It runs offline through transformers.js. It needs no API key or network after the first download. Pick one under **Embedding model** in `skilld config`:
 
 | Model | Dimensions | Notes |
 |-------|-----------:|-------|
@@ -249,13 +249,14 @@ The large default context can exceed memory for big models on constrained hardwa
 | `bge-base-en-v1.5` | 768 | Balanced accuracy and speed. |
 | `bge-m3` | 1024 | Multilingual, 8192-token context. |
 
-Larger models retrieve more accurately but cost more time and memory when indexing. Set `SKILLD_EMBED_MODEL` to override the saved setting for a single run:
+Larger models retrieve more accurately but cost more time and memory when indexing. Set `SKILLD_EMBED_MODEL` to override the saved setting:
 
 ```bash
-SKILLD_EMBED_MODEL=bge-m3 skilld add npm:vue
+export SKILLD_EMBED_MODEL=bge-m3
+skilld update --force
 ```
 
-Search indexes store fixed-width vectors, so changing to a model with different dimensions strands existing indexes. Rebuild them after switching:
+Each search index belongs to one model and device. Keep environment overrides set for both indexing and querying. Rebuild indexes after either setting changes:
 
 ```bash
 skilld update --force
@@ -267,7 +268,7 @@ The embedding model runs on the CPU by default. **Embedding device** in `skilld 
 
 | Device | Notes |
 |--------|-------|
-| `auto` | Default. Lets transformers.js choose — CPU under Node. |
+| `auto` | Default. Lets transformers.js choose, CPU under Node. |
 | `cpu` | Always available, predictable. |
 | `webgpu` | Fastest on Apple Silicon in testing. |
 | `coreml` | Apple Neural Engine. Measured slower than CPU for these models. |
@@ -280,15 +281,16 @@ Measured on an Apple M5 Max, 120 documents, best of 3 after warm-up (docs/sec):
 | `bge-base-en-v1.5` | 198 | 68 | **580** |
 | `Xenova/bge-large-en-v1.5` | 71 | 9 | **201** |
 
-WebGPU was 2.6-2.9x faster than CPU at every size, which means `bge-large` on WebGPU indexes faster than `bge-base` does on CPU — better retrieval for less wall-clock. CoreML was consistently slower.
+WebGPU was 2.6 to 2.9 times faster than CPU at every size. `bge-large` on WebGPU indexed faster than `bge-base` on CPU. CoreML was consistently slower.
 
-The ranking is hardware-specific, so benchmark before trusting a device on other machines. Override for a single run with `SKILLD_EMBED_DEVICE`:
+The ranking is hardware-specific, so benchmark before trusting a device on other machines. Set `SKILLD_EMBED_DEVICE` to override the saved setting:
 
 ```bash
-SKILLD_EMBED_DEVICE=cpu skilld update --force
+export SKILLD_EMBED_DEVICE=cpu
+skilld update --force
 ```
 
-If a backend is unavailable, indexing fails to start — switch back to `auto`.
+If a backend is unavailable, indexing fails to start. Switch back to `auto`.
 
 ### Eject
 
