@@ -84,6 +84,7 @@
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
     "@types/node": "catalog:dev-build",
+    "@typescript/native": "catalog:",
     "@vitest/coverage-v8": "catalog:dev-test",
     "bumpp": "catalog:",
     "eslint": "catalog:dev-lint",

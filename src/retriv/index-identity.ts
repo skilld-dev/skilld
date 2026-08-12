@@ -33,7 +33,7 @@ export function readIndexEmbeddingIdentity(dbPath: string): string | undefined {
 
   const db = new nodeSqlite.DatabaseSync(dbPath, { open: true, readOnly: true })
   try {
-    const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(META_TABLE)
+    const table = db.prepare('SELECT 1 FROM sqlite_schema WHERE type = \'table\' AND name = ?').get(META_TABLE)
     if (!table)
       return undefined
     const row = db.prepare(`SELECT value FROM ${META_TABLE} WHERE key = ?`).get(IDENTITY_KEY) as { value: string } | undefined

@@ -149,16 +149,20 @@ export async function loginOAuthProvider(providerId: string, callbacks: LoginCal
     return false
 
   const notify = (event: AuthEvent): void => {
-    if (event.type === 'auth_url')
+    if (event.type === 'auth_url') {
       callbacks.onAuth(event.url, event.instructions)
-    else if (event.type === 'device_code') {
-      if (callbacks.onDeviceCode)
-        callbacks.onDeviceCode(event.userCode, event.verificationUri)
-      else
-        callbacks.onAuth(event.verificationUri, `Enter code ${event.userCode}`)
     }
-    else
+    else if (event.type === 'device_code') {
+      if (callbacks.onDeviceCode) {
+        callbacks.onDeviceCode(event.userCode, event.verificationUri)
+      }
+      else {
+        callbacks.onAuth(event.verificationUri, `Enter code ${event.userCode}`)
+      }
+    }
+    else {
       callbacks.onProgress?.(event.message)
+    }
   }
   const prompt = async (input: AuthPrompt): Promise<string> => {
     if (input.type !== 'select')

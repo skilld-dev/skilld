@@ -75,4 +75,3 @@ export function pickLatestTag(distTags?: Record<string, DistTagEntry>): PickedTa
 
   return pool[0] ?? null
 }
-
