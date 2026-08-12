@@ -1,5 +1,8 @@
 import type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet } from './types.ts'
+import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
+import { checkIndexEmbeddingIdentity, recordIndexEmbeddingIdentity } from './index-embedding-identity.ts'
+import { getEmbeddingIdentity, resolveEmbedDevice, resolveEmbedModel } from './models.ts'
 
 export type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet }
 
@@ -10,6 +13,14 @@ export class SearchDepsUnavailableError extends Error {
     super(message ?? 'Search dependencies unavailable (sqlite-vec or retriv not installed). Search indexing skipped.')
     this.name = 'SearchDepsUnavailableError'
     this.cause = cause
+  }
+}
+
+export class EmbeddingIndexMismatchError extends Error {
+  constructor(dbPath: string, stored: string, current: string) {
+    super(`Search index uses ${stored}, but embedding settings resolve to ${current}. Rebuild indexes with: skilld update --force`)
+    this.name = 'EmbeddingIndexMismatchError'
+    this.cause = { dbPath, stored, current }
   }
 }
 
@@ -47,6 +58,14 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
   if (!checkFts5())
     throw new SearchDepsUnavailableError(new Error('FTS5 module not available'), 'SQLite FTS5 module not available. Search indexing skipped. On Windows, run from WSL where FTS5 is included.')
 
+  const userConfig = readConfig()
+  const embedModel = resolveEmbedModel(userConfig.embedModel)
+  const device = resolveEmbedDevice(userConfig.embedDevice)
+  const embeddingIdentity = getEmbeddingIdentity(embedModel, device)
+  const identityState = checkIndexEmbeddingIdentity(config.dbPath, embeddingIdentity)
+  if (identityState._tag === 'Mismatch')
+    throw new EmbeddingIndexMismatchError(config.dbPath, identityState.stored, identityState.current)
+
   let createRetriv, autoChunker, sqliteMod, sqliteVec, transformersJs, cachedEmbeddings
   try {
     ;([
@@ -70,8 +89,14 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
       throw new SearchDepsUnavailableError(err)
     throw err
   }
-  const embeddings = await cachedEmbeddings(transformersJs())
-  return createRetriv({
+  const embeddings = await cachedEmbeddings(
+    transformersJs({
+      model: embedModel,
+      ...(device ? { device } : {}),
+    }),
+    embeddingIdentity,
+  )
+  const db = await createRetriv({
     driver: sqliteMod.default({
       path: config.dbPath,
       embeddings,
@@ -79,6 +104,14 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
     }),
     chunking: autoChunker(),
   })
+  try {
+    recordIndexEmbeddingIdentity(config.dbPath, embeddingIdentity)
+  }
+  catch (error) {
+    await db.close?.()
+    throw error
+  }
+  return db
 }
 
 /**

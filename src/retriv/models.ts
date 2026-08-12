@@ -1,0 +1,137 @@
+import { resolveModelForPreset } from 'retriv/embeddings/model-info'
+
+/**
+ * Local embedding models available to the search index.
+ *
+ * Every model here runs offline through transformers.js. It needs no API key or
+ * network after the initial download. Larger models retrieve more accurately
+ * but cost more time and memory to index with.
+ *
+ * Dimensions are fixed per model and sqlite-vec columns are fixed-width, so
+ * switching a model or device invalidates existing indexes. Rebuild with
+ * `skilld update --force`.
+ */
+export interface EmbedModelInfo {
+  /** Model id passed to retriv (resolved to a Hugging Face repo internally) */
+  id: string
+  label: string
+  /** Vector width determines index layout */
+  dimensions: number
+  hint: string
+}
+
+export const DEFAULT_EMBED_MODEL = 'bge-small-en-v1.5'
+
+export const EMBED_MODELS: readonly EmbedModelInfo[] = [
+  {
+    id: 'bge-small-en-v1.5',
+    label: 'BGE small (English)',
+    dimensions: 384,
+    hint: 'fastest to index, smallest download',
+  },
+  {
+    id: 'bge-base-en-v1.5',
+    label: 'BGE base (English)',
+    dimensions: 768,
+    hint: 'balanced accuracy and speed',
+  },
+  {
+    // Pinned to the full repo id on purpose: retriv's `bge-large-en-v1.5`
+    // preset maps to `onnx-community/bge-large-en-v1.5`, which returns 401.
+    // The Xenova repo carries the same weights and resolves correctly.
+    id: 'Xenova/bge-large-en-v1.5',
+    label: 'BGE large (English)',
+    dimensions: 1024,
+    hint: 'most accurate English retrieval, slowest to index',
+  },
+  {
+    id: 'bge-m3',
+    label: 'BGE m3 (multilingual)',
+    dimensions: 1024,
+    hint: 'multilingual, 8192-token context',
+  },
+]
+
+export function getEmbedModelInfo(id: string): EmbedModelInfo | undefined {
+  return EMBED_MODELS.find(m => m.id === id)
+}
+
+/**
+ * Resolve the embedding model to index and query with.
+ *
+ * `SKILLD_EMBED_MODEL` overrides saved config. The configured value overrides
+ * the default.
+ */
+export function resolveEmbedModel(configured?: string): string {
+  const fromEnv = process.env.SKILLD_EMBED_MODEL?.trim()
+  if (fromEnv)
+    return fromEnv
+  return configured || DEFAULT_EMBED_MODEL
+}
+
+/**
+ * Execution device for the embedding model.
+ *
+ * `auto` means "let transformers.js decide", which resolves to CPU under Node.
+ * Everything else is opt-in because the fastest backend is hardware-specific:
+ * on an Apple M5 Max `webgpu` measured 2.6 to 2.9 times faster than CPU.
+ * `coreml` measured 3 to 8 times slower because it falls back to CPU for
+ * unsupported ops and pays for graph partitioning.
+ */
+export interface EmbedDeviceInfo {
+  id: string
+  label: string
+  hint: string
+}
+
+export const DEFAULT_EMBED_DEVICE = 'auto'
+
+export const EMBED_DEVICES = [
+  {
+    id: 'auto',
+    label: 'Auto',
+    hint: 'let transformers.js choose, CPU under Node',
+  },
+  {
+    id: 'cpu',
+    label: 'CPU',
+    hint: 'always available, predictable',
+  },
+  {
+    id: 'webgpu',
+    label: 'GPU (WebGPU)',
+    hint: 'fastest on Apple Silicon in testing, verify on your hardware',
+  },
+  {
+    id: 'coreml',
+    label: 'CoreML',
+    hint: 'Apple Neural Engine, measured slower than CPU for these models',
+  },
+] as const satisfies readonly EmbedDeviceInfo[]
+
+export type EmbedDevice = typeof EMBED_DEVICES[number]['id']
+export type RuntimeEmbedDevice = Exclude<EmbedDevice, typeof DEFAULT_EMBED_DEVICE>
+
+export function getEmbedDeviceInfo(id: string): EmbedDeviceInfo | undefined {
+  return EMBED_DEVICES.find(d => d.id === id)
+}
+
+/**
+ * Resolve the execution device. Returns `undefined` for `auto` so the option
+ * is omitted entirely and transformers.js keeps its own default resolution.
+ */
+export function resolveEmbedDevice(configured?: string): RuntimeEmbedDevice | undefined {
+  const fromEnv = process.env.SKILLD_EMBED_DEVICE?.trim()
+  const value = fromEnv || configured || DEFAULT_EMBED_DEVICE
+  if (value === DEFAULT_EMBED_DEVICE)
+    return undefined
+  if (!getEmbedDeviceInfo(value))
+    throw new Error(`Unsupported embedding device: ${value}`)
+  return value as RuntimeEmbedDevice
+}
+
+export function getEmbeddingIdentity(model: string, device?: string): string {
+  return `${resolveModelForPreset(model, 'transformers.js')}@${device ?? DEFAULT_EMBED_DEVICE}`
+}
+
+export const DEFAULT_EMBEDDING_IDENTITY = getEmbeddingIdentity(DEFAULT_EMBED_MODEL)

@@ -11,6 +11,7 @@ import { guard, menuLoop } from '../cli/menu.ts'
 import { NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli/model-picker.ts'
 import { defaultFeatures, readConfig, updateConfig } from '../core/config.ts'
 import { getProjectState } from '../core/skills.ts'
+import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, resolveEmbedModel } from '../retriv/models.ts'
 
 export async function configCommand(): Promise<void> {
   const initConfig = readConfig()
@@ -46,8 +47,15 @@ export async function configCommand(): Promise<void> {
         const oauthHint = connectedOAuth > 0 ? `${connectedOAuth} connected` : 'none'
         options.push({ label: 'OAuth providers', value: 'oauth', hint: `${oauthHint} · ⚠ may violate provider ToS` })
       }
+      const embedModel = resolveEmbedModel(config.embedModel)
+      const embedHint = features.search
+        ? `${embedModel} · local model powering skilld search`
+        : `${embedModel} · search is disabled in Data sources`
+      const embedDevice = config.embedDevice || DEFAULT_EMBED_DEVICE
       options.push(
         { label: 'Enhancement model', value: 'model', hint: `${modelHint} · rewrites SKILL.md with best practices` },
+        { label: 'Embedding model', value: 'embedModel', hint: embedHint },
+        { label: 'Embedding device', value: 'embedDevice', hint: `${embedDevice} · where the embedding model runs` },
         { label: 'Target agent', value: 'agent', hint: `${config.agent || 'auto-detect'} · where skills are installed` },
       )
       return options
@@ -89,6 +97,16 @@ export async function configCommand(): Promise<void> {
 
         case 'model': {
           await configureModel()
+          break
+        }
+
+        case 'embedModel': {
+          await configureEmbedModel()
+          break
+        }
+
+        case 'embedDevice': {
+          await configureEmbedDevice()
           break
         }
 
@@ -228,6 +246,73 @@ async function configureModel(): Promise<void> {
     }
     return
   }
+}
+
+// Embedding model selection
+
+async function configureEmbedModel(): Promise<void> {
+  const config = readConfig()
+  const current = resolveEmbedModel(config.embedModel)
+  const envOverride = process.env.SKILLD_EMBED_MODEL?.trim()
+
+  if (envOverride) {
+    p.log.warn(`SKILLD_EMBED_MODEL is set to ${envOverride} and overrides this setting for the current shell.`)
+  }
+
+  const choice = guard(await p.select({
+    message: 'Embedding model for indexing and querying skilld search',
+    options: EMBED_MODELS.map(m => ({
+      label: m.label,
+      value: m.id,
+      hint: `${m.dimensions}d · ${m.hint}`,
+    })),
+    initialValue: current,
+  }))
+
+  if (choice === config.embedModel || (choice === DEFAULT_EMBED_MODEL && !config.embedModel)) {
+    p.log.info(`Embedding model unchanged (${choice})`)
+    return
+  }
+
+  updateConfig({ embedModel: choice === DEFAULT_EMBED_MODEL ? undefined : choice as string })
+  p.log.success(`Embedding model set to ${choice}`)
+  p.log.warn('Embedding model changed. Rebuild existing search indexes: skilld update --force')
+}
+
+// Embedding device selection
+
+async function configureEmbedDevice(): Promise<void> {
+  const config = readConfig()
+  const current = config.embedDevice || DEFAULT_EMBED_DEVICE
+  const envOverride = process.env.SKILLD_EMBED_DEVICE?.trim()
+
+  if (envOverride)
+    p.log.warn(`SKILLD_EMBED_DEVICE is set to ${envOverride} and overrides this setting for the current shell.`)
+
+  p.note(
+    'The fastest backend depends on your hardware. On an Apple M5 Max, WebGPU\n'
+    + 'ran 2.6 to 2.9 times faster than CPU. CoreML ran 3 to 8 times slower.\n'
+    + 'Benchmark before trusting a device on other machines.',
+    'Choosing a device',
+  )
+
+  const choice = guard(await p.select({
+    message: 'Embedding device where the model runs',
+    options: EMBED_DEVICES.map(d => ({ label: d.label, value: d.id, hint: d.hint })),
+    initialValue: current,
+  }))
+
+  if (choice === current) {
+    p.log.info(`Embedding device unchanged (${choice})`)
+    return
+  }
+
+  updateConfig({ embedDevice: choice === DEFAULT_EMBED_DEVICE ? undefined : choice as string })
+  p.log.success(`Embedding device set to ${choice}`)
+  p.log.warn('Embedding device changed. Rebuild existing search indexes: skilld update --force')
+
+  if (choice !== DEFAULT_EMBED_DEVICE && choice !== 'cpu')
+    p.log.info('If indexing fails to start, switch back to Auto. The backend may be unavailable on this machine.')
 }
 
 export const configCommandDef = defineCommand({

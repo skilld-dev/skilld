@@ -50,7 +50,16 @@ function createSqliteStorage(db: DatabaseSync) {
   }
 }
 
-export async function cachedEmbeddings(config: EmbeddingConfig): Promise<EmbeddingConfig> {
+/**
+ * Wrap an embedding provider with the on-disk vector cache.
+ *
+ * `model` identifies which embedder produced the cached vectors. Entries are
+ * keyed by text hash alone, so vectors from a different model would be served
+ * for the same text. Two models of equal width (bge-large and
+ * qwen3-embedding:0.6b are both 1024d) would silently mix embedding spaces and
+ * destroy ranking. Dimensions alone cannot catch that; the model id can.
+ */
+export async function cachedEmbeddings(config: EmbeddingConfig, model?: string): Promise<EmbeddingConfig> {
   const { cachedEmbeddings: retrivCached } = await import('retriv/embeddings/cached')
   const db = await openDb()
   const storage = createSqliteStorage(db)
@@ -63,10 +72,18 @@ export async function cachedEmbeddings(config: EmbeddingConfig): Promise<Embeddi
       const setMetaStmt = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
 
       const storedDims = getMetaStmt.get('dimensions') as { value: string } | undefined
-      if (storedDims && Number(storedDims.value) !== resolved.dimensions) {
+      const storedModel = getMetaStmt.get('model') as { value: string } | undefined
+      const dimsChanged = storedDims && Number(storedDims.value) !== resolved.dimensions
+      // A cache written before this key existed has unknown provenance, so
+      // treat a missing stored model as a mismatch once a model is supplied.
+      const modelChanged = model !== undefined && storedModel?.value !== model
+
+      if (dimsChanged || modelChanged)
         db.exec('DELETE FROM embeddings')
-      }
+
       setMetaStmt.run('dimensions', String(resolved.dimensions))
+      if (model !== undefined)
+        setMetaStmt.run('model', model)
 
       return resolved
     },
