@@ -43,8 +43,8 @@ catalogs:
       specifier: ^0.3.23
       version: 0.3.23
     retriv:
-      specifier: ^0.14.7
-      version: 0.14.7
+      specifier: ^0.15.0
+      version: 0.15.0
     std-env:
       specifier: ^4.2.0
       version: 4.2.0
@@ -167,7 +167,7 @@ importers:
         version: 2.0.3
       retriv:
         specifier: 'catalog:'
-        version: 0.14.7(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)(typescript@7.0.2)
+        version: 0.15.0(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)(typescript@7.0.2)
       skilld-protocol:
         specifier: workspace:*
         version: link:packages/protocol
@@ -3553,18 +3553,18 @@ packages:
     resolution: {integrity: sha512-oMA2dcrw6u0YfxJQXm342bFKX/E4sG9rbTzO9ptUcR/e8A33cHuvStiYOwH7fszkZlZ1z/ta9AAoPk2F4qIOHA==}
     engines: {node: '>=18'}
 
-  retriv@0.14.7:
-    resolution: {integrity: sha512-j06MPUvbwLBp5XZHzYdZkBZG/IUmf1NH9M+DDLIVbZls4Q4wcOxQBSpPlCczAUzDDPg27IVo95gEAeaoPJSquw==}
+  retriv@0.15.0:
+    resolution: {integrity: sha512-Ya5hmjM1g8PJ3fCXDyCS44WBqOekMiv4Yr4Dspt29wqWUoY0j6LBPumRbqIOmYw8/u8z25C8KtubcfgBWGNVdg==}
     peerDependencies:
-      '@ai-sdk/cohere': ^3.0.0
-      '@ai-sdk/google': ^3.0.0
-      '@ai-sdk/mistral': ^3.0.0
-      '@ai-sdk/openai': ^3.0.0
-      '@huggingface/transformers': ^3.0.0
+      '@ai-sdk/cohere': ^4.0.0
+      '@ai-sdk/google': ^4.0.0
+      '@ai-sdk/mistral': ^4.0.0
+      '@ai-sdk/openai': ^4.0.0
+      '@huggingface/transformers': ^3.0.0 || ^4.0.0
       '@libsql/client': ^0.14.0 || ^0.15.0 || ^0.16.0 || ^0.17.0
       '@upstash/vector': ^1.0.0
-      ai: ^4.0.0 || ^5.0.0 || ^6.0.0
-      ollama-ai-provider-v2: ^1.0.0 || ^2.0.0 || ^3.0.0
+      ai: ^7.0.0
+      ollama-ai-provider-v2: ^4.0.0
       pg: ^8.0.0
       sqlite-vec: ^0.1.0-alpha.0
       typescript: ^5.0.0 || ^6.0.0-0
@@ -7337,7 +7337,7 @@ snapshots:
       onetime: 7.0.0
       signal-exit: 4.1.0
 
-  retriv@0.14.7(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)(typescript@7.0.2):
+  retriv@0.15.0(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)(typescript@7.0.2):
     optionalDependencies:
       '@huggingface/transformers': 4.2.0
       sqlite-vec: 0.1.9
