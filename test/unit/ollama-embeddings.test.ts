@@ -75,7 +75,10 @@ describe('ollamaEmbeddings', () => {
 
   it('normalizes returned vectors to unit length', async () => {
     globalThis.fetch = mockOllama({
-      '/api/show': () => jsonResponse(SHOW_EMBEDDING),
+      '/api/show': () => jsonResponse({
+        capabilities: ['embedding'],
+        model_info: { 'test.embedding_length': 2 },
+      }),
       // Deliberately unnormalized: the index scores by L2 distance and assumes
       // unit vectors, so magnitude must not leak into ranking.
       '/api/embed': () => jsonResponse({ embeddings: [[3, 4], [0, 10]] }),
@@ -115,6 +118,54 @@ describe('ollamaEmbeddings', () => {
     }) as unknown as typeof fetch
 
     await expect(ollamaEmbeddings('ollama:llama3').resolve()).rejects.toThrow(/does not support embeddings/i)
+  })
+
+  it('rejects a model whose embedding capability is missing', async () => {
+    globalThis.fetch = mockOllama({
+      '/api/show': () => jsonResponse({ model_info: { 'llama.embedding_length': 4096 } }),
+    }) as unknown as typeof fetch
+
+    await expect(ollamaEmbeddings('ollama:llama3').resolve()).rejects.toThrow(/does not support embeddings/i)
+  })
+
+  it('rejects a response with fewer vectors than inputs', async () => {
+    globalThis.fetch = mockOllama({
+      '/api/show': () => jsonResponse({ capabilities: ['embedding'], model_info: { 'test.embedding_length': 2 } }),
+      '/api/embed': () => jsonResponse({ embeddings: [[1, 0]] }),
+    }) as unknown as typeof fetch
+
+    const { embedder } = await ollamaEmbeddings('ollama:x').resolve()
+    await expect(embedder(['one', 'two'])).rejects.toThrow(/returned 1 embeddings for 2 inputs/i)
+  })
+
+  it('rejects a vector with the wrong dimensions', async () => {
+    globalThis.fetch = mockOllama({
+      '/api/show': () => jsonResponse({ capabilities: ['embedding'], model_info: { 'test.embedding_length': 3 } }),
+      '/api/embed': () => jsonResponse({ embeddings: [[1, 0]] }),
+    }) as unknown as typeof fetch
+
+    const { embedder } = await ollamaEmbeddings('ollama:x').resolve()
+    await expect(embedder(['one'])).rejects.toThrow(/returned 2 dimensions, expected 3/i)
+  })
+
+  it('rejects a zero vector', async () => {
+    globalThis.fetch = mockOllama({
+      '/api/show': () => jsonResponse({ capabilities: ['embedding'], model_info: { 'test.embedding_length': 2 } }),
+      '/api/embed': () => jsonResponse({ embeddings: [[0, 0]] }),
+    }) as unknown as typeof fetch
+
+    const { embedder } = await ollamaEmbeddings('ollama:x').resolve()
+    await expect(embedder(['one'])).rejects.toThrow(/zero vector/i)
+  })
+
+  it('rejects a vector whose magnitude overflows', async () => {
+    globalThis.fetch = mockOllama({
+      '/api/show': () => jsonResponse({ capabilities: ['embedding'], model_info: { 'test.embedding_length': 2 } }),
+      '/api/embed': () => jsonResponse({ embeddings: [[Number.MAX_VALUE, Number.MAX_VALUE]] }),
+    }) as unknown as typeof fetch
+
+    const { embedder } = await ollamaEmbeddings('ollama:x').resolve()
+    await expect(embedder(['one'])).rejects.toThrow(/invalid vector magnitude/i)
   })
 
   it('surfaces the Ollama error message when embedding fails', async () => {

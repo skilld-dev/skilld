@@ -1,19 +1,19 @@
 /**
  * Local embedding models available to the search index.
  *
- * Every model here runs offline through transformers.js — no API key, no
+ * Every model here runs offline through transformers.js. It needs no API key or
  * network after the initial download. Larger models retrieve more accurately
  * but cost more time and memory to index with.
  *
  * Dimensions are fixed per model and sqlite-vec columns are fixed-width, so
  * switching model invalidates existing indexes. Rebuild with
- * `skilld update --force`.
+ * `skilld update`.
  */
 export interface EmbedModelInfo {
   /** Model id passed to retriv (resolved to a Hugging Face repo internally) */
   id: string
   label: string
-  /** Vector width — determines index layout */
+  /** Vector width, which determines index layout */
   dimensions: number
   hint: string
 }
@@ -77,18 +77,20 @@ export function resolveEmbedModel(configured?: string): string {
  * unsupported ops and pays for graph partitioning).
  */
 export interface EmbedDeviceInfo {
-  id: string
+  id: EmbedDeviceSetting
   label: string
   hint: string
 }
 
 export const DEFAULT_EMBED_DEVICE = 'auto'
+export type EmbedDevice = 'cpu' | 'webgpu' | 'coreml'
+export type EmbedDeviceSetting = typeof DEFAULT_EMBED_DEVICE | EmbedDevice
 
 export const EMBED_DEVICES: readonly EmbedDeviceInfo[] = [
   {
     id: 'auto',
     label: 'Auto',
-    hint: 'let transformers.js choose — CPU under Node',
+    hint: 'let transformers.js choose; CPU under Node',
   },
   {
     id: 'cpu',
@@ -98,12 +100,12 @@ export const EMBED_DEVICES: readonly EmbedDeviceInfo[] = [
   {
     id: 'webgpu',
     label: 'GPU (WebGPU)',
-    hint: 'fastest on Apple Silicon in testing — verify on your hardware',
+    hint: 'fastest on Apple Silicon in testing; verify on your hardware',
   },
   {
     id: 'coreml',
     label: 'CoreML',
-    hint: 'Apple Neural Engine — measured slower than CPU for these models',
+    hint: 'Apple Neural Engine; measured slower than CPU for these models',
   },
 ]
 
@@ -115,8 +117,11 @@ export function getEmbedDeviceInfo(id: string): EmbedDeviceInfo | undefined {
  * Resolve the execution device. Returns `undefined` for `auto` so the option
  * is omitted entirely and transformers.js keeps its own default resolution.
  */
-export function resolveEmbedDevice(configured?: string): string | undefined {
+export function resolveEmbedDevice(configured?: string): EmbedDevice | undefined {
   const fromEnv = process.env.SKILLD_EMBED_DEVICE?.trim()
   const value = fromEnv || configured || DEFAULT_EMBED_DEVICE
-  return value === DEFAULT_EMBED_DEVICE ? undefined : value
+  const device = getEmbedDeviceInfo(value)
+  if (!device)
+    throw new Error(`Unknown embedding device "${value}". Run \`skilld config\` to choose a supported device.`)
+  return device.id === DEFAULT_EMBED_DEVICE ? undefined : device.id
 }

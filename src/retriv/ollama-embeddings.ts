@@ -77,7 +77,7 @@ export interface OllamaEmbedModelInfo {
 /**
  * Locally-pulled Ollama models that advertise the `embedding` capability.
  *
- * Returns `[]` when the daemon is unreachable — discovery must never block or
+ * Returns `[]` when the daemon is unreachable. Discovery must never block or
  * throw, it just contributes nothing to the picker.
  */
 export async function getAvailableOllamaEmbedModels(): Promise<OllamaEmbedModelInfo[]> {
@@ -111,20 +111,29 @@ export async function getAvailableOllamaEmbedModels(): Promise<OllamaEmbedModelI
   return checked.filter((m): m is OllamaEmbedModelInfo => m !== null)
 }
 
-function l2Normalize(vector: number[]): Float32Array {
+function l2Normalize(vector: unknown, expectedDimensions?: number): Float32Array {
+  if (!Array.isArray(vector) || !vector.every(value => typeof value === 'number' && Number.isFinite(value)))
+    throw new Error('Ollama returned an invalid embedding vector')
+  if (expectedDimensions !== undefined && vector.length !== expectedDimensions) {
+    throw new Error(
+      `Ollama returned ${vector.length} dimensions, expected ${expectedDimensions}`,
+    )
+  }
   let sum = 0
   for (const value of vector)
     sum += value * value
   const norm = Math.sqrt(sum)
   const out = new Float32Array(vector.length)
   if (norm === 0)
-    return out
+    throw new Error('Ollama returned a zero vector')
+  if (!Number.isFinite(norm))
+    throw new Error('Ollama returned an invalid vector magnitude')
   for (let i = 0; i < vector.length; i++)
     out[i] = vector[i]! / norm
   return out
 }
 
-async function embedBatch(model: string, input: string[]): Promise<number[][]> {
+async function embedBatch(model: string, input: string[], expectedDimensions?: number): Promise<Embedding[]> {
   const res = await fetch(`${ollamaHost()}/api/embed`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -134,15 +143,20 @@ async function embedBatch(model: string, input: string[]): Promise<number[][]> {
     throw new Error(`Could not reach Ollama at ${ollamaHost()}: ${err instanceof Error ? err.message : String(err)}`)
   })
 
-  const data = await res.json().catch(() => null) as { embeddings?: number[][], error?: string } | null
+  const data = await res.json().catch(() => null) as { embeddings?: unknown[], error?: string } | null
   if (!res.ok || data?.error) {
     const message = data?.error || `HTTP ${res.status}`
     throw new Error(`Ollama embedding failed for ${model}: ${message}`)
   }
-  if (!data?.embeddings?.length)
+  if (!Array.isArray(data?.embeddings) || data.embeddings.length === 0)
     throw new Error(`Ollama returned no embeddings for ${model}`)
+  if (data.embeddings.length !== input.length) {
+    throw new Error(
+      `Ollama returned ${data.embeddings.length} embeddings for ${input.length} inputs`,
+    )
+  }
 
-  return data.embeddings
+  return data.embeddings.map(vector => l2Normalize(vector, expectedDimensions))
 }
 
 /**
@@ -169,7 +183,7 @@ export function ollamaEmbeddings(id: string): {
           + `or pick a built-in model with \`skilld config\`.`,
         )
       }
-      if (info.capabilities && !info.capabilities.includes('embedding')) {
+      if (!info.capabilities?.includes('embedding')) {
         throw new Error(
           `Ollama model "${model}" does not support embeddings. `
           + `Pull an embedding model, for example \`ollama pull qwen3-embedding\`.`,
@@ -191,12 +205,8 @@ export function ollamaEmbeddings(id: string): {
           return []
         const out: Embedding[] = []
         for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-          const batch = await embedBatch(model, texts.slice(i, i + BATCH_SIZE))
-          // Ollama normalises server-side today; doing it here is idempotent
-          // and keeps ranking correct if that ever changes, since the index
-          // scores by L2 distance and assumes unit vectors.
-          for (const vector of batch)
-            out.push(l2Normalize(vector))
+          const batch = await embedBatch(model, texts.slice(i, i + BATCH_SIZE), dimensions)
+          out.push(...batch)
         }
         return out
       }

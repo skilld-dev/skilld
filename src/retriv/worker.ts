@@ -55,12 +55,19 @@ if (parentPort) {
           },
         }
 
-        const { getDb } = await import('./index.ts')
-        const db = await getDb(config)
-        if (msg.removeIds?.length)
-          await db.remove?.(msg.removeIds)
-        await db.index(documents, { onProgress: config.onProgress })
-        await db.close?.()
+        const { getIndexDb } = await import('./index.ts')
+        const { resolveEmbeddingIdentity, writeIndexEmbeddingIdentity } = await import('./index-identity.ts')
+        const identity = resolveEmbeddingIdentity()
+        const db = await getIndexDb(config, identity)
+        try {
+          if (msg.removeIds?.length)
+            await db.remove?.(msg.removeIds)
+          await db.index(documents, { onProgress: config.onProgress })
+        }
+        finally {
+          await db.close?.()
+        }
+        writeIndexEmbeddingIdentity(dbPath, identity)
 
         parentPort!.postMessage({ type: 'done', id } satisfies WorkerDoneResponse)
       }

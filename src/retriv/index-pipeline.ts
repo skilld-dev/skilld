@@ -14,6 +14,7 @@ import { getPackageDbPath } from '../cache/index.ts'
 import { defaultFeatures, readConfig } from '../core/config.ts'
 import { resolvePkgDir } from '../core/prepare.ts'
 import { resolveEntryFiles } from '../sources/index.ts'
+import { hasIndexEmbeddingIdentity, resolveEmbeddingIdentity } from './index-identity.ts'
 import { createIndex, listIndexIds, SearchDepsUnavailableError } from './index.ts'
 
 /** Max docs sent to the embedding pipeline to prevent oversized indexes */
@@ -62,7 +63,11 @@ export async function indexResources(opts: IndexResourcesOptions): Promise<void>
     return
 
   const dbPath = getPackageDbPath(packageName, version)
-  const dbExists = existsSync(dbPath)
+  const storedDbExists = existsSync(dbPath)
+  const identity = resolveEmbeddingIdentity()
+  const dbExists = storedDbExists && hasIndexEmbeddingIdentity(dbPath, identity)
+  if (storedDbExists && !dbExists)
+    onProgress('Embedding settings changed, rebuilding search index')
 
   const allDocs = [...opts.docsToIndex]
 

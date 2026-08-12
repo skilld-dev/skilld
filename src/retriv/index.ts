@@ -1,6 +1,8 @@
 import type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet } from './types.ts'
+import { existsSync } from 'node:fs'
 import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
+import { hasIndexEmbeddingIdentity, removeStaleIndex, resolveEmbeddingIdentity } from './index-identity.ts'
 import { resolveEmbedDevice, resolveEmbedModel } from './models.ts'
 import { isOllamaEmbedModel, ollamaEmbeddings } from './ollama-embeddings.ts'
 
@@ -46,7 +48,7 @@ function checkFts5(): boolean {
 }
 
 // Dynamic imports: retriv/chunkers/auto eagerly loads typescript which may not be installed (e.g. npx)
-export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
+async function openDb(config: Pick<IndexConfig, 'dbPath'>, identity: string) {
   if (!checkFts5())
     throw new SearchDepsUnavailableError(new Error('FTS5 module not available'), 'SQLite FTS5 module not available. Search indexing skipped. On Windows, run from WSL where FTS5 is included.')
 
@@ -88,7 +90,7 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
           // Omitted when `auto` so transformers.js keeps its own device resolution.
           ...(device ? { device } : {}),
         }),
-    isOllama ? embedModel : `${embedModel}@${device ?? 'auto'}`,
+    identity,
   )
   return createRetriv({
     driver: sqliteMod.default({
@@ -98,6 +100,24 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
     }),
     chunking: autoChunker(),
   })
+}
+
+export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
+  const identity = resolveEmbeddingIdentity()
+  if (existsSync(config.dbPath) && !hasIndexEmbeddingIdentity(config.dbPath, identity)) {
+    throw new Error(
+      'Search index uses different embedding settings. Run `skilld update` to rebuild it.',
+    )
+  }
+  return openDb(config, identity)
+}
+
+export async function getIndexDb(
+  config: Pick<IndexConfig, 'dbPath'>,
+  identity: string = resolveEmbeddingIdentity(),
+) {
+  removeStaleIndex(config.dbPath, identity)
+  return openDb(config, identity)
 }
 
 /**

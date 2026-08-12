@@ -115,6 +115,15 @@ describe('resolveEmbedDevice', () => {
     process.env.SKILLD_EMBED_DEVICE = 'auto'
     expect(resolveEmbedDevice('webgpu')).toBeUndefined()
   })
+
+  it('rejects an unknown configured device', () => {
+    expect(() => resolveEmbedDevice('quantum')).toThrow(/unknown embedding device/i)
+  })
+
+  it('rejects an unknown device from the environment', () => {
+    process.env.SKILLD_EMBED_DEVICE = 'quantum'
+    expect(() => resolveEmbedDevice('cpu')).toThrow(/unknown embedding device/i)
+  })
 })
 
 describe('embed device registry', () => {

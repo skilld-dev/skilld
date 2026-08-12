@@ -20,6 +20,7 @@ import { dirname, join } from 'pathe'
 import { defaultFeatures, readConfig } from '../../core/config.ts'
 import { getPackageDbPath, getRepoCacheDir, skillInternalDir } from '../../core/paths.ts'
 import { hasShippedDocs } from '../../core/prepare.ts'
+import { hasIndexEmbeddingIdentity, resolveEmbeddingIdentity } from '../../retriv/index-identity.ts'
 import { classifyCachedDoc } from './classify.ts'
 import {
   clearCache,
@@ -202,7 +203,7 @@ export function loadCachedReferences(opts: LoadCachedReferencesOptions): CachedR
 
   // Load cached docs for indexing if db doesn't exist yet
   const dbPath = getPackageDbPath(packageName, version)
-  if (!existsSync(dbPath)) {
+  if (!existsSync(dbPath) || !hasIndexEmbeddingIdentity(dbPath, resolveEmbeddingIdentity())) {
     onProgress('Reading cached docs for indexing')
     const cached = readCachedDocs(packageName, version)
     for (const doc of cached) {
