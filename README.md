@@ -146,6 +146,8 @@ skilld
 # Add skills for specific package(s) — npm: prefix for registry packages
 skilld add npm:vue npm:nuxt npm:pinia
 
+# The same prefixes work in the interactive wizard's package prompt
+
 # Add a pre-authored skill from a GitHub repo
 skilld add gh:vercel-labs/agent-skills
 

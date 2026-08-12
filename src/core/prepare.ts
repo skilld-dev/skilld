@@ -24,12 +24,21 @@ function toStorageName(name: string): string {
 
 /** Resolve package directory: node_modules first, then global cache */
 export function resolvePkgDir(name: string, cwd: string, version?: string): string | null {
+  if (!name)
+    return null
+
   const nodeModulesPath = join(cwd, 'node_modules', name)
   if (existsSync(nodeModulesPath))
     return nodeModulesPath
 
   if (version) {
-    const cachedPkgDir = join(getCacheDir(name, version), 'pkg')
+    let cachedPkgDir: string
+    try {
+      cachedPkgDir = join(getCacheDir(name, version), 'pkg')
+    }
+    catch {
+      return null
+    }
     if (existsSync(join(cachedPkgDir, 'package.json')))
       return cachedPkgDir
   }
