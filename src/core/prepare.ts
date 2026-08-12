@@ -29,7 +29,14 @@ export function resolvePkgDir(name: string, cwd: string, version?: string): stri
     return nodeModulesPath
 
   if (version) {
-    const cachedPkgDir = join(getCacheDir(name, version), 'pkg')
+    // getCacheDir rejects malformed names; this path probes, so treat that as a miss.
+    let cachedPkgDir: string
+    try {
+      cachedPkgDir = join(getCacheDir(name, version), 'pkg')
+    }
+    catch {
+      return null
+    }
     if (existsSync(join(cachedPkgDir, 'package.json')))
       return cachedPkgDir
   }
