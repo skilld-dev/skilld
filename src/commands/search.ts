@@ -1,7 +1,9 @@
+import type { AgentType } from '../agent/index.ts'
 import type { SearchFilter } from '../retriv/index.ts'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { detectCurrentAgent } from 'unagent/env'
+import { agents } from '../agent/index.ts'
 import { isInteractive } from '../cli/env.ts'
 import { formatSnippet, normalizeScores, sanitizeMarkdown } from '../core/index.ts'
 import { resolveSkilldCommand } from '../core/skilld-command.ts'
@@ -54,6 +56,7 @@ function mergeFilters(prefix?: SearchFilter, json?: SearchFilter): SearchFilter 
 }
 
 export interface SearchCommandOptions {
+  agents?: AgentType[]
   packageFilter?: string
   filter?: SearchFilter
   limit?: number
@@ -61,12 +64,12 @@ export interface SearchCommandOptions {
 
 export async function searchCommand(rawQuery: string, opts: SearchCommandOptions = {}): Promise<void> {
   const { packageFilter, limit: userLimit } = opts
-  const dbs = findPackageDbs(packageFilter)
-  const versions = getPackageVersions()
+  const dbs = findPackageDbs(packageFilter, opts.agents)
+  const versions = getPackageVersions(process.cwd(), opts.agents)
 
   if (dbs.length === 0) {
     if (packageFilter) {
-      const available = listLockPackages()
+      const available = listLockPackages(process.cwd(), opts.agents)
       if (available.length > 0)
         p.log.warn(`No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`)
       else
@@ -180,6 +183,18 @@ Without -p, searches all installed packages.
 Omit the query for interactive mode with live results.`
 }
 
+function parseAgentFilter(raw?: string): AgentType[] | undefined | null {
+  if (!raw)
+    return undefined
+  const ids = raw.split(',').map(s => s.trim()).filter(Boolean)
+  const unknown = ids.filter(id => !(id in agents))
+  if (unknown.length) {
+    p.log.error(`Unknown agent: ${unknown.join(', ')}. Available: ${Object.keys(agents).join(', ')}`)
+    return null
+  }
+  return ids as AgentType[]
+}
+
 export const searchCommandDef = defineCommand({
   meta: { name: 'search', description: 'Search indexed docs' },
   args: {
@@ -193,6 +208,11 @@ export const searchCommandDef = defineCommand({
       alias: 'p',
       description: 'Filter by package name',
       valueHint: 'name',
+    },
+    agents: {
+      type: 'string',
+      description: 'Only search skills installed for these agents (comma-separated)',
+      valueHint: 'names',
     },
     filter: {
       type: 'string',
@@ -229,6 +249,10 @@ export const searchCommandDef = defineCommand({
       filter = parsed
     }
 
+    const agentTypes = parseAgentFilter(args.agents as string | undefined)
+    if (agentTypes === null)
+      return
+
     let limit: number | undefined
     if (args.limit !== undefined) {
       const parsed = Number(args.limit)
@@ -240,7 +264,7 @@ export const searchCommandDef = defineCommand({
     }
 
     if (args.query)
-      return searchCommand(args.query, { packageFilter, filter, limit })
+      return searchCommand(args.query, { packageFilter, filter, limit, agents: agentTypes })
 
     if (filter || limit)
       p.log.warn('--filter and --limit are ignored in interactive mode. Provide a query to use them.')
@@ -250,6 +274,6 @@ export const searchCommandDef = defineCommand({
       process.exit(1)
     }
     const { interactiveSearch } = await import('./search-interactive.ts')
-    return interactiveSearch(packageFilter)
+    return interactiveSearch(packageFilter, agentTypes)
   },
 })
