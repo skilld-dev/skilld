@@ -1,6 +1,6 @@
 import { getModelDimensions, resolveModelForPreset } from 'retriv/embeddings/model-info'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, getEmbedDeviceInfo, getEmbedModelInfo, getEmbeddingIdentity, resolveEmbedDevice, resolveEmbedModel } from '../../src/retriv/models.ts'
+import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, getEmbedDeviceInfo, getEmbedModelInfo, resolveEmbedDevice, resolveEmbedModel } from '../../src/retriv/models.ts'
 
 describe('resolveEmbedModel', () => {
   let original: string | undefined
@@ -116,15 +116,13 @@ describe('resolveEmbedDevice', () => {
     expect(resolveEmbedDevice('webgpu')).toBeUndefined()
   })
 
-  it('rejects an unsupported device', () => {
-    expect(() => resolveEmbedDevice('invalid')).toThrow('Unsupported embedding device: invalid')
+  it('rejects an unknown configured device', () => {
+    expect(() => resolveEmbedDevice('quantum')).toThrow(/unknown embedding device/i)
   })
-})
 
-describe('getEmbeddingIdentity', () => {
-  it('uses the resolved model repo and device', () => {
-    expect(getEmbeddingIdentity('bge-small-en-v1.5', 'webgpu'))
-      .toBe('Xenova/bge-small-en-v1.5@webgpu')
+  it('rejects an unknown device from the environment', () => {
+    process.env.SKILLD_EMBED_DEVICE = 'quantum'
+    expect(() => resolveEmbedDevice('cpu')).toThrow(/unknown embedding device/i)
   })
 })
 

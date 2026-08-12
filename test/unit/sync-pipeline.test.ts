@@ -171,6 +171,11 @@ vi.mock('../../src/core/lockfile', () => ({
   writeLock: vi.fn(),
 }))
 
+vi.mock('../../src/retriv/index-identity', () => ({
+  hasIndexEmbeddingIdentity: vi.fn(() => true),
+  resolveEmbeddingIdentity: vi.fn(() => 'v1:model-a@auto'),
+}))
+
 vi.mock('../../src/retriv', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../src/retriv')>()
   return { ...orig, createIndex: vi.fn(), listIndexIds: vi.fn().mockResolvedValue([]) }
@@ -188,6 +193,7 @@ const { fetchReleaseNotes, isGhAvailable, isShallowGitDocs, resolveEntryFiles } 
 const { registerProject } = await import('../../src/core/config')
 const { writeLock } = await import('../../src/core/lockfile')
 const { createIndex, listIndexIds } = await import('../../src/retriv')
+const { hasIndexEmbeddingIdentity, resolveEmbeddingIdentity } = await import('../../src/retriv/index-identity')
 const { getShippedSkills, linkShippedSkill, resolvePkgDir } = await import('../../src/core/prepare')
 
 const {
@@ -216,6 +222,8 @@ describe('sync-shared', () => {
     vi.mocked(isShallowGitDocs).mockReturnValue(false)
     vi.mocked(resolveEntryFiles).mockResolvedValue([])
     vi.mocked(fetchReleaseNotes).mockResolvedValue([])
+    vi.mocked(hasIndexEmbeddingIdentity).mockReturnValue(true)
+    vi.mocked(resolveEmbeddingIdentity).mockReturnValue('v1:model-a@auto')
   })
 
   // ── 1. classifyCachedDoc ──
@@ -403,6 +411,21 @@ describe('sync-shared', () => {
       await indexResources({ ...baseOpts, docsToIndex: [{ id: 'a.md', content: 'x', metadata: {} }], onProgress })
       expect(createIndex).not.toHaveBeenCalled()
       expect(onProgress).toHaveBeenCalledWith('Search index up to date')
+    })
+
+    it('rebuilds every document when embedding settings changed', async () => {
+      vi.mocked(existsSync).mockReturnValue(true)
+      vi.mocked(hasIndexEmbeddingIdentity).mockReturnValue(false)
+      vi.mocked(resolvePkgDir).mockReturnValue(null)
+      const docs = [
+        { id: 'a.md', content: 'existing', metadata: { type: 'doc' } },
+        { id: 'b.md', content: 'existing', metadata: { type: 'doc' } },
+      ]
+
+      await indexResources({ ...baseOpts, docsToIndex: docs })
+
+      expect(listIndexIds).not.toHaveBeenCalled()
+      expect(createIndex).toHaveBeenCalledWith(docs, expect.objectContaining({ dbPath: expect.any(String) }))
     })
 
     // 6a2: db exists with new docs → incremental index

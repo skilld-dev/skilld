@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'pathe'
 import { describe, expect, it } from 'vitest'
@@ -209,19 +209,26 @@ author: someone
     })
 
     it('discovers skills from agent-specific skill directories', async () => {
-      const fixture = join(__dirname, '../fixtures/mock-skills-repo-agent-dirs')
-      const { skills } = await fetchGitSkills({ type: 'local', localPath: fixture })
+      const fixture = mkdtempSync(join(tmpdir(), 'skilld-agent-skill-dirs-'))
+      const expected = [
+        { name: 'agents-skill', path: '.agents/skills/agents-skill' },
+        { name: 'claude-skill', path: '.claude/skills/claude-skill' },
+        { name: 'github-skill', path: '.github/skills/github-skill' },
+      ]
+      for (const skill of expected) {
+        const skillDir = join(fixture, skill.path)
+        mkdirSync(skillDir, { recursive: true })
+        writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${skill.name}\n---\n`)
+      }
 
-      expect(skills.map(s => s.name).sort()).toEqual([
-        'agents-skill',
-        'claude-skill',
-        'github-skill',
-      ])
-      expect(skills.map(s => s.path).sort()).toEqual([
-        '.agents/skills/agents-skill',
-        '.claude/skills/claude-skill',
-        '.github/skills/github-skill',
-      ])
+      try {
+        const { skills } = await fetchGitSkills({ type: 'local', localPath: fixture })
+        expect(skills.map(s => s.name).sort()).toEqual(expected.map(s => s.name))
+        expect(skills.map(s => s.path).sort()).toEqual(expected.map(s => s.path))
+      }
+      finally {
+        rmSync(fixture, { recursive: true, force: true })
+      }
     })
   })
 

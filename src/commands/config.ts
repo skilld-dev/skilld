@@ -12,6 +12,7 @@ import { NO_MODELS_MESSAGE, OAUTH_NOTE, pickModel } from '../cli/model-picker.ts
 import { defaultFeatures, readConfig, updateConfig } from '../core/config.ts'
 import { getProjectState } from '../core/skills.ts'
 import { DEFAULT_EMBED_DEVICE, DEFAULT_EMBED_MODEL, EMBED_DEVICES, EMBED_MODELS, resolveEmbedModel } from '../retriv/models.ts'
+import { getAvailableOllamaEmbedModels, isOllamaEmbedModel } from '../retriv/ollama-embeddings.ts'
 
 export async function configCommand(): Promise<void> {
   const initConfig = readConfig()
@@ -248,7 +249,7 @@ async function configureModel(): Promise<void> {
   }
 }
 
-// Embedding model selection
+// ── Embedding model selection ────────────────────────────────────────
 
 async function configureEmbedModel(): Promise<void> {
   const config = readConfig()
@@ -259,13 +260,22 @@ async function configureEmbedModel(): Promise<void> {
     p.log.warn(`SKILLD_EMBED_MODEL is set to ${envOverride} and overrides this setting for the current shell.`)
   }
 
+  const builtIn = EMBED_MODELS.map(m => ({
+    label: m.label,
+    value: m.id,
+    hint: `${m.dimensions}d · ${m.hint}`,
+  }))
+  // Locally-pulled Ollama models are additive: an unreachable daemon simply
+  // contributes nothing rather than blocking the picker.
+  const ollama = (await getAvailableOllamaEmbedModels()).map(m => ({
+    label: m.name,
+    value: m.id,
+    hint: m.hint,
+  }))
+
   const choice = guard(await p.select({
-    message: 'Embedding model for indexing and querying skilld search',
-    options: EMBED_MODELS.map(m => ({
-      label: m.label,
-      value: m.id,
-      hint: `${m.dimensions}d · ${m.hint}`,
-    })),
+    message: 'Embedding model: indexes and queries docs for skilld search',
+    options: [...builtIn, ...ollama],
     initialValue: current,
   }))
 
@@ -276,14 +286,19 @@ async function configureEmbedModel(): Promise<void> {
 
   updateConfig({ embedModel: choice === DEFAULT_EMBED_MODEL ? undefined : choice as string })
   p.log.success(`Embedding model set to ${choice}`)
-  p.log.warn('Embedding model changed. Rebuild existing search indexes: skilld update --force')
+  p.log.warn('Run `skilld update` to rebuild existing search indexes with this model.')
 }
 
-// Embedding device selection
+// ── Embedding device selection ───────────────────────────────────────
 
 async function configureEmbedDevice(): Promise<void> {
   const config = readConfig()
   const current = config.embedDevice || DEFAULT_EMBED_DEVICE
+
+  const isOllama = isOllamaEmbedModel(resolveEmbedModel(config.embedModel))
+  if (isOllama) {
+    p.log.warn('The active embedding model runs inside Ollama, which manages its own device. This setting will have no effect until you switch to a built-in model.')
+  }
   const envOverride = process.env.SKILLD_EMBED_DEVICE?.trim()
 
   if (envOverride)
@@ -297,7 +312,7 @@ async function configureEmbedDevice(): Promise<void> {
   )
 
   const choice = guard(await p.select({
-    message: 'Embedding device where the model runs',
+    message: 'Embedding device: where the model runs',
     options: EMBED_DEVICES.map(d => ({ label: d.label, value: d.id, hint: d.hint })),
     initialValue: current,
   }))
@@ -309,10 +324,13 @@ async function configureEmbedDevice(): Promise<void> {
 
   updateConfig({ embedDevice: choice === DEFAULT_EMBED_DEVICE ? undefined : choice as string })
   p.log.success(`Embedding device set to ${choice}`)
-  p.log.warn('Embedding device changed. Rebuild existing search indexes: skilld update --force')
 
-  if (choice !== DEFAULT_EMBED_DEVICE && choice !== 'cpu')
-    p.log.info('If indexing fails to start, switch back to Auto. The backend may be unavailable on this machine.')
+  if (!isOllama)
+    p.log.warn('Run `skilld update` to rebuild existing search indexes on this device.')
+
+  if (choice !== DEFAULT_EMBED_DEVICE && choice !== 'cpu') {
+    p.log.info('If indexing fails to start, the backend is unavailable on this machine. Switch back to Auto.')
+  }
 }
 
 export const configCommandDef = defineCommand({

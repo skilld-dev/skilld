@@ -1,8 +1,10 @@
 import type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet } from './types.ts'
+import { existsSync } from 'node:fs'
 import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
-import { checkIndexEmbeddingIdentity, recordIndexEmbeddingIdentity } from './index-embedding-identity.ts'
-import { getEmbeddingIdentity, resolveEmbedDevice, resolveEmbedModel } from './models.ts'
+import { hasIndexEmbeddingIdentity, removeStaleIndex, resolveEmbeddingIdentity } from './index-identity.ts'
+import { resolveEmbedDevice, resolveEmbedModel } from './models.ts'
+import { isOllamaEmbedModel, ollamaEmbeddings } from './ollama-embeddings.ts'
 
 export type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet }
 
@@ -13,14 +15,6 @@ export class SearchDepsUnavailableError extends Error {
     super(message ?? 'Search dependencies unavailable (sqlite-vec or retriv not installed). Search indexing skipped.')
     this.name = 'SearchDepsUnavailableError'
     this.cause = cause
-  }
-}
-
-export class EmbeddingIndexMismatchError extends Error {
-  constructor(dbPath: string, stored: string, current: string) {
-    super(`Search index uses ${stored}, but embedding settings resolve to ${current}. Rebuild indexes with: skilld update --force`)
-    this.name = 'EmbeddingIndexMismatchError'
-    this.cause = { dbPath, stored, current }
   }
 }
 
@@ -54,17 +48,9 @@ function checkFts5(): boolean {
 }
 
 // Dynamic imports: retriv/chunkers/auto eagerly loads typescript which may not be installed (e.g. npx)
-export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
+async function openDb(config: Pick<IndexConfig, 'dbPath'>, identity: string) {
   if (!checkFts5())
     throw new SearchDepsUnavailableError(new Error('FTS5 module not available'), 'SQLite FTS5 module not available. Search indexing skipped. On Windows, run from WSL where FTS5 is included.')
-
-  const userConfig = readConfig()
-  const embedModel = resolveEmbedModel(userConfig.embedModel)
-  const device = resolveEmbedDevice(userConfig.embedDevice)
-  const embeddingIdentity = getEmbeddingIdentity(embedModel, device)
-  const identityState = checkIndexEmbeddingIdentity(config.dbPath, embeddingIdentity)
-  if (identityState._tag === 'Mismatch')
-    throw new EmbeddingIndexMismatchError(config.dbPath, identityState.stored, identityState.current)
 
   let createRetriv, autoChunker, sqliteMod, sqliteVec, transformersJs, cachedEmbeddings
   try {
@@ -89,14 +75,24 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
       throw new SearchDepsUnavailableError(err)
     throw err
   }
+  const userConfig = readConfig()
+  const embedModel = resolveEmbedModel(userConfig.embedModel)
+  const device = resolveEmbedDevice(userConfig.embedDevice)
+  // Cache identity pairs model with device: cached vectors are only valid for
+  // the embedder that produced them, and backends can differ numerically.
+  // Ollama runs the model in its own process, so `device` does not apply there.
+  const isOllama = isOllamaEmbedModel(embedModel)
   const embeddings = await cachedEmbeddings(
-    transformersJs({
-      model: embedModel,
-      ...(device ? { device } : {}),
-    }),
-    embeddingIdentity,
+    isOllama
+      ? ollamaEmbeddings(embedModel)
+      : transformersJs({
+          model: embedModel,
+          // Omitted when `auto` so transformers.js keeps its own device resolution.
+          ...(device ? { device } : {}),
+        }),
+    identity,
   )
-  const db = await createRetriv({
+  return createRetriv({
     driver: sqliteMod.default({
       path: config.dbPath,
       embeddings,
@@ -104,14 +100,24 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
     }),
     chunking: autoChunker(),
   })
-  try {
-    recordIndexEmbeddingIdentity(config.dbPath, embeddingIdentity)
+}
+
+export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
+  const identity = resolveEmbeddingIdentity()
+  if (existsSync(config.dbPath) && !hasIndexEmbeddingIdentity(config.dbPath, identity)) {
+    throw new Error(
+      'Search index uses different embedding settings. Run `skilld update` to rebuild it.',
+    )
   }
-  catch (error) {
-    await db.close?.()
-    throw error
-  }
-  return db
+  return openDb(config, identity)
+}
+
+export async function getIndexDb(
+  config: Pick<IndexConfig, 'dbPath'>,
+  identity: string = resolveEmbeddingIdentity(),
+) {
+  removeStaleIndex(config.dbPath, identity)
+  return openDb(config, identity)
 }
 
 /**

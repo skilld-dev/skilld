@@ -14,8 +14,8 @@ import type { OptimizeModel } from './types.ts'
 import { getSkillReferenceDirs } from '../../cache/index.ts'
 import { CLI_ADAPTERS, CLI_MODELS } from './index.ts'
 import { isOllamaModel, ollamaExecutor } from './ollama.ts'
-import { getAvailablePiAiModels, isPiAiModel, optimizeSectionPiAi } from './pi-ai.ts'
 import { createPiAiModels } from './pi-ai-auth.ts'
+import { getAvailablePiAiModels, isPiAiModel, optimizeSectionPiAi } from './pi-ai.ts'
 import { spawnCliAndStream } from './runner.ts'
 
 function cliExecutor(model: OptimizeModel): SectionExecutor | { error: string } {
