@@ -1,3 +1,4 @@
+import type { AgentType } from '../agent/index.ts'
 import type { SearchFilter, SearchSnippet } from '../retriv/index.ts'
 import { styleText } from 'node:util'
 import { createLogUpdate } from 'log-update'
@@ -20,13 +21,13 @@ function filterToSearchFilter(label: FilterLabel): SearchFilter | undefined {
 
 const SPINNER_FRAMES = ['◐', '◓', '◑', '◒']
 
-export async function interactiveSearch(packageFilter?: string): Promise<void> {
-  const dbs = findPackageDbs(packageFilter)
-  const versions = getPackageVersions()
+export async function interactiveSearch(packageFilter?: string, agentFilter?: AgentType[]): Promise<void> {
+  const dbs = findPackageDbs(packageFilter, agentFilter)
+  const versions = getPackageVersions(process.cwd(), agentFilter)
   if (dbs.length === 0) {
     let msg: string
     if (packageFilter) {
-      const available = listLockPackages()
+      const available = listLockPackages(process.cwd(), agentFilter)
       msg = available.length > 0
         ? `No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`
         : `No docs indexed for "${packageFilter}". Run \`skilld add ${packageFilter}\` first.`

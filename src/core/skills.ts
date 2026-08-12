@@ -1,11 +1,11 @@
 import type { AgentType } from '../agent/index.ts'
-import type { SkillInfo } from './lockfile.ts'
+import type { SkilldLock, SkillInfo } from './lockfile.ts'
 import type { ShippedSkill } from './prepare.ts'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'pathe'
 import { agents } from '../agent/index.ts'
 import { readLocalDependencies } from '../sources/index.ts'
-import { parsePackages, parseSkillFrontmatter, readLock } from './lockfile.ts'
+import { mergeLocks, parsePackages, parseSkillFrontmatter, readLock } from './lockfile.ts'
 import { getSharedSkillsDir, LOCK_FILENAME, skillInternalFile } from './paths.ts'
 import { getShippedSkills } from './prepare.ts'
 import { NPM_SCOPE_PREFIX_RE, VERSION_RANGE_PREFIX_RE } from './regex.ts'
@@ -122,6 +122,32 @@ export function* iterateSkills(opts: IterateSkillsOptions = {}): Generator<Skill
       }
     }
   }
+}
+
+/**
+ * Read the project lockfile, merging every agent's skills dir.
+ *
+ * Indexes are keyed by package and version, not by agent, so restricting to one
+ * agent would hide skills the project actually has. Pass `agentFilter` to
+ * narrow to specific agents.
+ */
+export function readProjectLock(cwd: string, agentFilter?: AgentType[]): SkilldLock | null {
+  const shared = getSharedSkillsDir(cwd)
+  if (shared) {
+    const lock = readLock(shared)
+    if (lock)
+      return lock
+  }
+
+  const targets = agentFilter?.length
+    ? agentFilter.map(id => agents[id]).filter(Boolean)
+    : Object.values(agents)
+
+  const locks = targets
+    .map(target => readLock(join(cwd, target.skillsDir)))
+    .filter((lock): lock is SkilldLock => !!lock)
+
+  return locks.length ? mergeLocks(locks) : null
 }
 
 export function isOutdated(skill: SkillEntry, depVersion: string): boolean {
