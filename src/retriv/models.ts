@@ -6,7 +6,7 @@
  * but cost more time and memory to index with.
  *
  * Dimensions are fixed per model and sqlite-vec columns are fixed-width, so
- * switching model invalidates existing indexes. Rebuild with
+ * switching a model or device invalidates existing indexes. Rebuild with
  * `skilld update`.
  */
 export interface EmbedModelInfo {
@@ -57,8 +57,8 @@ export function getEmbedModelInfo(id: string): EmbedModelInfo | undefined {
 /**
  * Resolve the embedding model to index and query with.
  *
- * `SKILLD_EMBED_MODEL` wins so a single run can be overridden without touching
- * saved config; otherwise the configured value, otherwise the default.
+ * `SKILLD_EMBED_MODEL` overrides saved config. The configured value overrides
+ * the default.
  */
 export function resolveEmbedModel(configured?: string): string {
   const fromEnv = process.env.SKILLD_EMBED_MODEL?.trim()
@@ -72,9 +72,9 @@ export function resolveEmbedModel(configured?: string): string {
  *
  * `auto` means "let transformers.js decide", which resolves to CPU under Node.
  * Everything else is opt-in because the fastest backend is hardware-specific:
- * on an Apple M5 Max `webgpu` measured 2.6-2.9x faster than CPU across every
- * bge size, while `coreml` measured 3-8x slower (it falls back to CPU for
- * unsupported ops and pays for graph partitioning).
+ * on an Apple M5 Max `webgpu` measured 2.6 to 2.9 times faster than CPU.
+ * `coreml` measured 3 to 8 times slower because it falls back to CPU for
+ * unsupported operations and pays for graph partitioning.
  */
 export interface EmbedDeviceInfo {
   id: EmbedDeviceSetting

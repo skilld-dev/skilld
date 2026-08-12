@@ -306,8 +306,8 @@ async function configureEmbedDevice(): Promise<void> {
 
   p.note(
     'The fastest backend depends on your hardware. On an Apple M5 Max, WebGPU\n'
-    + 'ran 2.6-2.9x faster than CPU across every model size, while CoreML ran\n'
-    + '3-8x slower. Benchmark before trusting a device on other machines.',
+    + 'ran 2.6 to 2.9 times faster than CPU. CoreML ran 3 to 8 times slower.\n'
+    + 'Benchmark before trusting a device on other machines.',
     'Choosing a device',
   )
 
@@ -316,6 +316,11 @@ async function configureEmbedDevice(): Promise<void> {
     options: EMBED_DEVICES.map(d => ({ label: d.label, value: d.id, hint: d.hint })),
     initialValue: current,
   }))
+
+  if (choice === current) {
+    p.log.info(`Embedding device unchanged (${choice})`)
+    return
+  }
 
   updateConfig({ embedDevice: choice === DEFAULT_EMBED_DEVICE ? undefined : choice as string })
   p.log.success(`Embedding device set to ${choice}`)

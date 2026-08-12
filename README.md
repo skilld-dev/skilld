@@ -297,7 +297,7 @@ Measured on an Apple M5 Max, 120 documents, best of 3 after warm-up (docs/sec):
 | `bge-base-en-v1.5` | 198 | 68 | **580** |
 | `Xenova/bge-large-en-v1.5` | 71 | 9 | **201** |
 
-WebGPU was 2.6-2.9x faster than CPU at every size. `bge-large` on WebGPU indexes faster than `bge-base` does on CPU, with better retrieval and less wall-clock time. CoreML was consistently slower.
+WebGPU was 2.6 to 2.9 times faster than CPU at every size. On WebGPU, `bge-large` indexed faster than `bge-base` on CPU and improved retrieval. CoreML was consistently slower.
 
 The ranking is hardware-specific, so benchmark before trusting a device on other machines. Export `SKILLD_EMBED_DEVICE` to override the saved setting in the current shell:
 

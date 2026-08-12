@@ -1,6 +1,7 @@
 import type { SkilldConfig } from '../core/config.ts'
 import { createHash } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
+import { resolveModelForPreset } from 'retriv/embeddings/model-info'
 import { readConfig } from '../core/config.ts'
 import { ollamaHost } from '../core/ollama-host.ts'
 import { resolveEmbedDevice, resolveEmbedModel } from './models.ts'
@@ -14,8 +15,10 @@ export function resolveEmbeddingIdentity(
   config: Pick<SkilldConfig, 'embedModel' | 'embedDevice'> = readConfig(),
 ): string {
   const model = resolveEmbedModel(config.embedModel)
-  if (!isOllamaEmbedModel(model))
-    return `${IDENTITY_VERSION}:${model}@${resolveEmbedDevice(config.embedDevice) ?? 'auto'}`
+  if (!isOllamaEmbedModel(model)) {
+    const resolvedModel = resolveModelForPreset(model, 'transformers.js')
+    return `${IDENTITY_VERSION}:${resolvedModel}@${resolveEmbedDevice(config.embedDevice) ?? 'auto'}`
+  }
 
   const host = createHash('sha256').update(ollamaHost()).digest('hex').slice(0, 16)
   return `${IDENTITY_VERSION}:${model}@host:${host}`

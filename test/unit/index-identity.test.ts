@@ -2,11 +2,12 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'pathe'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   hasIndexEmbeddingIdentity,
   readIndexEmbeddingIdentity,
   removeStaleIndex,
+  resolveEmbeddingIdentity,
   writeIndexEmbeddingIdentity,
 } from '../../src/retriv/index-identity.ts'
 
@@ -14,6 +15,7 @@ const TEST_DIR = join(tmpdir(), 'skilld-test-index-identity')
 const DB_PATH = join(TEST_DIR, 'search.db')
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   rmSync(TEST_DIR, { recursive: true, force: true })
 })
 
@@ -23,6 +25,15 @@ function createIndexFile(): void {
 }
 
 describe('search index embedding identity', () => {
+  it('resolves transformer presets before identifying the provider', () => {
+    vi.stubEnv('SKILLD_EMBED_MODEL', '')
+    vi.stubEnv('SKILLD_EMBED_DEVICE', '')
+    expect(resolveEmbeddingIdentity({
+      embedModel: 'bge-small-en-v1.5',
+      embedDevice: 'webgpu',
+    })).toBe('v1:Xenova/bge-small-en-v1.5@webgpu')
+  })
+
   it('persists the model identity in the search database', () => {
     createIndexFile()
     writeIndexEmbeddingIdentity(DB_PATH, 'model-a@cpu')
