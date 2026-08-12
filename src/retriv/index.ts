@@ -3,7 +3,6 @@ import { readConfig } from '../core/config.ts'
 import { stripFrontmatter } from '../core/markdown.ts'
 import { checkIndexEmbeddingIdentity, recordIndexEmbeddingIdentity } from './index-embedding-identity.ts'
 import { getEmbeddingIdentity, resolveEmbedDevice, resolveEmbedModel } from './models.ts'
-import { transformersEmbeddings } from './transformers-embeddings.ts'
 
 export type { ChunkEntity, Document, IndexConfig, IndexPhase, IndexProgress, SearchFilter, SearchOptions, SearchResult, SearchSnippet }
 
@@ -67,19 +66,21 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
   if (identityState._tag === 'Mismatch')
     throw new EmbeddingIndexMismatchError(config.dbPath, identityState.stored, identityState.current)
 
-  let createRetriv, autoChunker, sqliteMod, sqliteVec, cachedEmbeddings
+  let createRetriv, autoChunker, sqliteMod, sqliteVec, transformersJs, cachedEmbeddings
   try {
     ;([
       { createRetriv },
       { autoChunker },
       sqliteMod,
       sqliteVec,
+      { transformersJs },
       { cachedEmbeddings },
     ] = await Promise.all([
       import('retriv'),
       import('retriv/chunkers/auto'),
       import('retriv/db/sqlite'),
       import('sqlite-vec'),
+      import('retriv/embeddings/transformers-js'),
       import('./embedding-cache.ts'),
     ]))
   }
@@ -89,7 +90,7 @@ export async function getDb(config: Pick<IndexConfig, 'dbPath'>) {
     throw err
   }
   const embeddings = await cachedEmbeddings(
-    transformersEmbeddings({
+    transformersJs({
       model: embedModel,
       ...(device ? { device } : {}),
     }),
