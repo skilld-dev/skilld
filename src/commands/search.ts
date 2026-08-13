@@ -183,16 +183,19 @@ Without -p, searches all installed packages.
 Omit the query for interactive mode with live results.`
 }
 
-function parseAgentFilter(raw?: string): AgentType[] | undefined | null {
-  if (!raw)
-    return undefined
+export type AgentFilterParseResult
+  = | { _tag: 'All' }
+    | { _tag: 'Selected', agents: AgentType[] }
+    | { _tag: 'Invalid', values: string[] }
+
+export function parseAgentFilter(raw?: string): AgentFilterParseResult {
+  if (raw === undefined)
+    return { _tag: 'All' }
   const ids = raw.split(',').map(s => s.trim()).filter(Boolean)
-  const unknown = ids.filter(id => !(id in agents))
-  if (unknown.length) {
-    p.log.error(`Unknown agent: ${unknown.join(', ')}. Available: ${Object.keys(agents).join(', ')}`)
-    return null
-  }
-  return ids as AgentType[]
+  const unknown = ids.filter(id => !Object.hasOwn(agents, id))
+  if (ids.length === 0 || unknown.length > 0)
+    return { _tag: 'Invalid', values: unknown }
+  return { _tag: 'Selected', agents: ids as AgentType[] }
 }
 
 export const searchCommandDef = defineCommand({
@@ -249,9 +252,15 @@ export const searchCommandDef = defineCommand({
       filter = parsed
     }
 
-    const agentTypes = parseAgentFilter(args.agents as string | undefined)
-    if (agentTypes === null)
+    const agentFilter = parseAgentFilter(args.agents as string | undefined)
+    if (agentFilter._tag === 'Invalid') {
+      const reason = agentFilter.values.length > 0
+        ? `Unknown agent: ${agentFilter.values.join(', ')}`
+        : 'Agent filter is empty'
+      p.log.error(`${reason}. Available: ${Object.keys(agents).join(', ')}`)
       return
+    }
+    const agentTypes = agentFilter._tag === 'Selected' ? agentFilter.agents : undefined
 
     let limit: number | undefined
     if (args.limit !== undefined) {

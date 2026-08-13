@@ -1,6 +1,6 @@
 import type { SearchSnippet } from '../../src/retriv/types'
 import { describe, expect, it } from 'vitest'
-import { generateSearchGuide, parseFilterPrefix, parseJsonFilter } from '../../src/commands/search'
+import { generateSearchGuide, parseAgentFilter, parseFilterPrefix, parseJsonFilter } from '../../src/commands/search'
 import { normalizeScores, scoreLabel } from '../../src/core/formatting'
 
 function snippet(overrides: Partial<SearchSnippet> = {}): SearchSnippet {
@@ -131,6 +131,23 @@ describe('parseJsonFilter', () => {
 
   it('accepts boolean values', () => {
     expect(parseJsonFilter('{"active":true}')).toEqual({ active: true })
+  })
+})
+
+describe('parseAgentFilter', () => {
+  it('parses known agents', () => {
+    expect(parseAgentFilter('claude-code, codex')).toEqual({
+      _tag: 'Selected',
+      agents: ['claude-code', 'codex'],
+    })
+  })
+
+  it('rejects an empty selection', () => {
+    expect(parseAgentFilter(',')).toEqual({ _tag: 'Invalid', values: [] })
+  })
+
+  it('rejects inherited object properties', () => {
+    expect(parseAgentFilter('toString')).toEqual({ _tag: 'Invalid', values: ['toString'] })
   })
 })
 
