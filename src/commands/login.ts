@@ -7,13 +7,14 @@
  *   - Otherwise → PKCE loopback.
  */
 
+import type { StoredSession } from '../auth/store.ts'
 import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { runDeviceFlow } from '../auth/device-flow.ts'
 import { isGhaOidcAvailable, runOidcExchange } from '../auth/oidc.ts'
 import { runPkceFlow } from '../auth/pkce-flow.ts'
-import { saveSession } from '../auth/store.ts'
+import { loadSession, saveSession } from '../auth/store.ts'
 import { getRegistryBase } from '../registry/client.ts'
 import { track } from '../telemetry.ts'
 import { version } from '../version.ts'
@@ -28,12 +29,33 @@ function shouldUseDevice(force: boolean): boolean {
   return !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
 }
 
+export type LoginRequirement
+  = | { _tag: 'Reuse', session: StoredSession }
+    | { _tag: 'Authenticate' }
+
+export function resolveLoginRequirement(
+  session: StoredSession | null,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): LoginRequirement {
+  if (!session)
+    return { _tag: 'Authenticate' }
+  if (session.refreshToken || session.expiresAt === undefined || session.expiresAt > nowSeconds)
+    return { _tag: 'Reuse', session }
+  return { _tag: 'Authenticate' }
+}
+
 export const loginCommandDef = defineCommand({
   meta: { name: 'login', description: 'Authenticate with skilld.dev' },
   args: {
     device: { type: 'boolean', description: 'Use RFC 8628 device flow' },
   },
   async run({ args }) {
+    const requirement = resolveLoginRequirement(await loadSession())
+    if (requirement._tag === 'Reuse') {
+      p.log.success(`Already logged in as ${styleText('cyan', `@${requirement.session.login}`)}`)
+      return
+    }
+
     const registryBase = getRegistryBase()
 
     if (isGhaOidcAvailable()) {
