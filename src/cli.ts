@@ -21,7 +21,7 @@ import { runWizard } from './commands/wizard.ts'
 import { timedSpinner } from './core/formatting.ts'
 import { getProjectState, hasCompletedWizard, isOutdated, readConfig, semverGt } from './core/index.ts'
 import { readPackageJsonSafe } from './core/package-json.ts'
-import { parseSkillInput } from './core/prefix.ts'
+import { parseNpmPackageInputs } from './core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE, VERSION_RANGE_PREFIX_RE } from './core/regex.ts'
 import { iterateSkills } from './core/skills.ts'
 import { fetchLatestVersion, fetchNpmRegistryMeta } from './sources/index.ts'
@@ -59,19 +59,6 @@ function deprecatedForwarder(
 }
 
 // ── Subcommands (lazy-loaded) ──
-
-function toPackageNames(tokens: string[]): string[] | null {
-  const names: string[] = []
-  for (const token of tokens) {
-    const source = parseSkillInput(token)
-    if (source.type !== 'npm' && source.type !== 'bare') {
-      p.log.error(`${token} is not an npm package. Install it with \`skilld add ${token}\`.`)
-      return null
-    }
-    names.push(source.package)
-  }
-  return names
-}
 
 const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
 
@@ -304,10 +291,12 @@ const main = defineCommand({
             p.log.warn('No packages entered')
             continue
           }
-          const names = toPackageNames(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
-          if (!names)
+          const parsed = parseNpmPackageInputs(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
+          if (parsed._tag === 'Err') {
+            p.log.error(`${parsed.input} is not an npm package. Install it with \`skilld add ${parsed.input}\`.`)
             continue
-          selected = names
+          }
+          selected = parsed.packageSpecs
           if (selected.length === 0) {
             p.log.warn('No valid packages entered')
             continue
@@ -555,10 +544,12 @@ const main = defineCommand({
               }))
               if (!input)
                 return
-              const names = toPackageNames(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
-              if (!names)
+              const parsed = parseNpmPackageInputs(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
+              if (parsed._tag === 'Err') {
+                p.log.error(`${parsed.input} is not an npm package. Install it with \`skilld add ${parsed.input}\`.`)
                 return
-              selected = names
+              }
+              selected = parsed.packageSpecs
               if (selected.length === 0)
                 return
             }

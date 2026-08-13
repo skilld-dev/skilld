@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { parseSkillInput, resolveSkillName } from '../../src/core/prefix'
+import { parseNpmPackageInputs, parseSkillInput, resolveSkillName } from '../../src/core/prefix'
 
 describe('prefix parser', () => {
+  describe('wizard npm inputs', () => {
+    it('normalizes prefixes without dropping npm tags', () => {
+      expect(parseNpmPackageInputs(['npm:vue@beta', '@nuxt/ui@3.0.0', 'pinia'])).toEqual({
+        _tag: 'Ok',
+        packageSpecs: ['vue@beta', '@nuxt/ui@3.0.0', 'pinia'],
+      })
+    })
+
+    it.each(['gh:owner/repo', 'gh:not-a-repo', 'crate:serde', '@curator'])('rejects non-npm input %s', (input) => {
+      expect(parseNpmPackageInputs([input])).toEqual({ _tag: 'Err', input })
+    })
+  })
+
   describe('npm: prefix', () => {
     it('parses simple package name', () => {
       expect(parseSkillInput('npm:vue')).toEqual({
