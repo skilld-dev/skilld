@@ -1,5 +1,9 @@
+import type { ArgsDef } from 'citty'
 import { parseArgs } from 'citty'
 import { describe, expect, it } from 'vitest'
+import { rootArgs, sharedArgs } from '../../src/cli/args.ts'
+import { addCommandDef } from '../../src/commands/sync/add.ts'
+import { updateCommandDef } from '../../src/commands/sync/update.ts'
 
 /**
  * Validates that CLI flag definitions parse correctly via citty.
@@ -50,5 +54,30 @@ describe('citty --no-X flag gotcha', () => {
     // Both are false — the flag has no effect
     expect(withFlag['no-search']).toBe(false)
     expect(withoutFlag['no-search']).toBe(false)
+  })
+})
+
+describe('--agent none', () => {
+  it.each([
+    ['root', ['add', 'vue', '--agent', 'none'], rootArgs],
+    ['add', ['vue', '--agent', 'none'], addCommandDef.args as ArgsDef],
+    ['update', ['--agent', 'none'], updateCommandDef.args as ArgsDef],
+  ])('reaches the portable export path through %s arguments', (_name, input, args) => {
+    expect(parseArgs(input, args).agent).toBe('none')
+  })
+
+  it('keeps installed agents selectable', () => {
+    expect(parseArgs(['--agent', 'claude-code'], rootArgs).agent).toBe('claude-code')
+  })
+
+  it('still rejects an agent that does not exist', () => {
+    expect(() => parseArgs(['--agent', 'notepad'], rootArgs)).toThrow()
+  })
+
+  it('remains invalid for commands without portable exports', () => {
+    expect(() => parseArgs(['vue', '--agent', 'none'], {
+      package: { type: 'positional' as const },
+      agent: sharedArgs.agent,
+    })).toThrow()
   })
 })

@@ -3,7 +3,7 @@ import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { autoResolveAgent } from '../../cli/agent-prompt.ts'
-import { sharedArgs } from '../../cli/args.ts'
+import { agentOrNoneArg, sharedArgs } from '../../cli/args.ts'
 import { isInteractive } from '../../cli/env.ts'
 import { getInstalledGenerators, introLine } from '../../cli/intro.ts'
 import { readConfig } from '../../core/config.ts'
@@ -29,6 +29,8 @@ export const updateCommandDef = defineCommand({
       default: false,
     },
     ...sharedArgs,
+    // This command supports portable exports.
+    agent: agentOrNoneArg,
   },
   async run({ args }) {
     const cwd = process.cwd()
