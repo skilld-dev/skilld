@@ -17,7 +17,7 @@ export {
 // Import detection
 export { detectImportedPackages } from './detect-imports.ts'
 // Detection
-export { detectInstalledAgents, detectProjectAgents, detectTargetAgent, getAgentVersion } from './detect.ts'
+export { detectEnvAgent, detectInstalledAgents, detectProjectAgents, detectTargetAgent, getAgentVersion } from './detect.ts'
 // Installation
 export { computeSkillDirName, installSkillForAgents, linkSkillToAgents, sanitizeName, unlinkSkillFromAgents } from './install.ts'
 

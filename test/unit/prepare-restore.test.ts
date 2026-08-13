@@ -12,9 +12,13 @@ vi.mock('node:fs', async () => {
   }
 })
 
-vi.mock('../../src/cache/internal/version', () => ({
-  getCacheDir: (name: string, version: string) => `/home/.skilld/references/${name}@${version}`,
-}))
+vi.mock('../../src/cache/internal/version', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/cache/internal/version')>()
+  return {
+    ...actual,
+    getCacheDir: (name: string, version: string) => `/home/.skilld/references/${name}@${version}`,
+  }
+})
 
 describe('restorePkgSymlink', () => {
   beforeEach(() => vi.resetAllMocks())

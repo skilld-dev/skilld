@@ -21,6 +21,7 @@ import { runWizard } from './commands/wizard.ts'
 import { timedSpinner } from './core/formatting.ts'
 import { getProjectState, hasCompletedWizard, isOutdated, readConfig, semverGt } from './core/index.ts'
 import { readPackageJsonSafe } from './core/package-json.ts'
+import { parseNpmPackageInputs } from './core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE, VERSION_RANGE_PREFIX_RE } from './core/regex.ts'
 import { iterateSkills } from './core/skills.ts'
 import { fetchLatestVersion, fetchNpmRegistryMeta } from './sources/index.ts'
@@ -280,7 +281,7 @@ const main = defineCommand({
         if (source === 'manual') {
           const input = await p.text({
             message: 'Enter package names (space or comma-separated)',
-            placeholder: 'vue nuxt pinia',
+            placeholder: 'vue npm:nuxt pinia',
           })
           if (p.isCancel(input)) {
             if (!hasPkgJson) {
@@ -293,7 +294,12 @@ const main = defineCommand({
             p.log.warn('No packages entered')
             continue
           }
-          selected = input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean)
+          const parsed = parseNpmPackageInputs(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
+          if (parsed._tag === 'Err') {
+            p.log.error(`${parsed.input} is not an npm package. Install it with \`skilld add ${parsed.input}\`.`)
+            continue
+          }
+          selected = parsed.packageSpecs
           if (selected.length === 0) {
             p.log.warn('No valid packages entered')
             continue
@@ -537,11 +543,16 @@ const main = defineCommand({
             if (source === 'manual') {
               const input = guard(await p.text({
                 message: 'Enter package names (space or comma-separated)',
-                placeholder: 'vue nuxt pinia',
+                placeholder: 'vue npm:nuxt pinia',
               }))
               if (!input)
                 return
-              selected = input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean)
+              const parsed = parseNpmPackageInputs(input.split(COMMA_OR_WHITESPACE_RE).map(s => s.trim()).filter(Boolean))
+              if (parsed._tag === 'Err') {
+                p.log.error(`${parsed.input} is not an npm package. Install it with \`skilld add ${parsed.input}\`.`)
+                return
+              }
+              selected = parsed.packageSpecs
               if (selected.length === 0)
                 return
             }

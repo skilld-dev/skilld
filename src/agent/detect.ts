@@ -18,6 +18,15 @@ export function detectInstalledAgents(): AgentType[] {
     .map(([type]) => type as AgentType)
 }
 
+/** Detect the active agent from environment variables. */
+export function detectEnvAgent(): AgentType | null {
+  for (const [type, target] of Object.entries(agents)) {
+    if (target.detectEnv())
+      return type as AgentType
+  }
+  return null
+}
+
 /**
  * Detect the target agent (where skills are installed) from env vars and cwd.
  * This is NOT the generator LLM — it determines the skills directory.
@@ -27,10 +36,9 @@ export function detectInstalledAgents(): AgentType[] {
  * rather than silently picking the first match.
  */
 export function detectTargetAgent(): AgentType | null {
-  for (const [type, target] of Object.entries(agents)) {
-    if (target.detectEnv())
-      return type as AgentType
-  }
+  const envAgent = detectEnvAgent()
+  if (envAgent)
+    return envAgent
 
   const cwd = process.cwd()
   const projectMatches: AgentType[] = []

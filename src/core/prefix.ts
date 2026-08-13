@@ -16,6 +16,7 @@ import type { GitSkillSource } from '../sources/git-skills.ts'
 import { parseGitSkillInput } from '../sources/git-skills.ts'
 
 const STATIC_REGEX_1 = /^[\w.-]+\/[\w.-]+/
+const EXPLICIT_NON_NPM_PREFIX_RE = /^(?:crate|gh|github):/
 
 export type SkillSource
   = | { type: 'npm', package: string, tag?: string }
@@ -24,6 +25,25 @@ export type SkillSource
     | { type: 'curator', handle: string }
     | { type: 'collection', handle: string, name: string }
     | { type: 'bare', package: string, tag?: string }
+
+export type NpmPackageInputResult
+  = | { _tag: 'Ok', packageSpecs: string[] }
+    | { _tag: 'Err', input: string }
+
+export function parseNpmPackageInputs(inputs: string[]): NpmPackageInputResult {
+  const packageSpecs: string[] = []
+
+  for (const input of inputs) {
+    const source = parseSkillInput(input)
+    const isMalformedExplicitSource = source.type === 'bare' && EXPLICIT_NON_NPM_PREFIX_RE.test(input)
+    if ((source.type !== 'npm' && source.type !== 'bare') || isMalformedExplicitSource || !source.package)
+      return { _tag: 'Err', input }
+
+    packageSpecs.push(source.tag ? `${source.package}@${source.tag}` : source.package)
+  }
+
+  return { _tag: 'Ok', packageSpecs }
+}
 
 /**
  * Parse a single CLI input token into a typed SkillSource.

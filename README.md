@@ -146,6 +146,8 @@ skilld
 # Add skills for specific package(s) — npm: prefix for registry packages
 skilld add npm:vue npm:nuxt npm:pinia
 
+# The same prefixes work in the interactive wizard's package prompt
+
 # Add a pre-authored skill from a GitHub repo
 skilld add gh:vercel-labs/agent-skills
 
@@ -159,6 +161,7 @@ skilld update tailwindcss
 # Search docs across installed skills
 skilld search "useFetch options" -p nuxt
 skilld search "error" -p nuxt --filter '{"type":"issue"}'
+skilld search "routing" --agents claude-code
 skilld search --guide -p nuxt
 
 # Target a specific agent
@@ -188,7 +191,7 @@ skilld config
 | `skilld` | Interactive wizard (first run) or status menu (existing skills) |
 | `skilld add <source...>` | Add skills. Sources: `npm:<pkg>`, `crate:<name>`, `gh:<owner/repo>`, or bare names (deprecated) |
 | `skilld update [pkg]`   | Update outdated skills (all or specific) |
-| `skilld search [query]` | Search indexed docs (`-p` package, `--filter` JSON, `--limit`, `--guide`) |
+| `skilld search [query]` | Search indexed docs (`-p` package, `--agents` filter, `--filter` JSON, `--limit`, `--guide`) |
 | `skilld list`           | List installed skills (`--json` for machine-readable output) |
 | `skilld info`           | Show skill info and config |
 | `skilld config`         | Configure agent, model, preferences |
@@ -240,6 +243,13 @@ Generation runs locally: free, offline, no API key. Unlike the CLI and API backe
 The large default context can exceed memory for big models on constrained hardware (Ollama returns a 500). Lower `OLLAMA_NUM_CTX` or pick a smaller model if generation fails to load.
 
 ### Embedding Model
+
+Search covers skills installed for every agent in the project, deduplicated. Restrict it with `--agents`:
+
+```bash
+skilld search "routing" --agents claude-code
+skilld search "routing" --agents claude-code,codex
+```
 
 `skilld search` is powered by a local embedding model. It runs offline through transformers.js. It needs no API key or network traffic after the first download. Pick one under **Embedding model** in `skilld config`:
 
