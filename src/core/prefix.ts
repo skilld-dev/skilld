@@ -17,6 +17,7 @@ import { parseGitSkillInput } from '../sources/git-skills.ts'
 
 const STATIC_REGEX_1 = /^[\w.-]+\/[\w.-]+/
 const EXPLICIT_NON_NPM_PREFIX_RE = /^(?:crate|gh|github):/
+const SCOPED_NPM_PACKAGE_RE = /^@[^/\s]+\/[^@\s]+(?:@.+)?$/
 
 export type SkillSource
   = | { type: 'npm', package: string, tag?: string }
@@ -34,6 +35,11 @@ export function parseNpmPackageInputs(inputs: string[]): NpmPackageInputResult {
   const packageSpecs: string[] = []
 
   for (const input of inputs) {
+    if (SCOPED_NPM_PACKAGE_RE.test(input)) {
+      const { name, tag } = splitPackageTag(input)
+      packageSpecs.push(tag ? `${name}@${tag}` : name)
+      continue
+    }
     const source = parseSkillInput(input)
     const isMalformedExplicitSource = source.type === 'bare' && EXPLICIT_NON_NPM_PREFIX_RE.test(input)
     if ((source.type !== 'npm' && source.type !== 'bare') || isMalformedExplicitSource || !source.package)
