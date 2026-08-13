@@ -21,7 +21,7 @@ function mockResolveAndDetail(ofetch: ReturnType<typeof vi.fn>, opts: {
     repo,
     name: opts.packageName,
     displayName: opts.packageName,
-    installs: 1,
+    stars: 1,
     branch: 'main',
     skillPath: `skills/${opts.packageName}/SKILL.md`,
     raw: opts.raw ?? '# skill',
@@ -83,12 +83,12 @@ describe('registry client', () => {
     expect(ofetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/api/skills/resolve', expect.any(Object))
   })
 
-  it('returns null when resolve fails', async () => {
+  it('propagates resolve transport failures', async () => {
     const { ofetch } = await import('ofetch')
     vi.mocked(ofetch).mockRejectedValueOnce(new Error('network'))
 
     const { fetchRegistrySkill } = await import('../../src/registry/client')
-    expect(await fetchRegistrySkill('nonexistent')).toBeNull()
+    await expect(fetchRegistrySkill('nonexistent')).rejects.toThrow('network')
   })
 
   it('returns null when resolve has no hit', async () => {
@@ -104,7 +104,17 @@ describe('registry client', () => {
     const { ofetch } = await import('ofetch')
     vi.mocked(ofetch)
       .mockResolvedValueOnce({ vue: { owner: 'antfu', repo: 'skills', official: false } })
-      .mockResolvedValueOnce({ owner: 'antfu', repo: 'skills', name: 'vue', raw: null })
+      .mockResolvedValueOnce({
+        owner: 'antfu',
+        repo: 'skills',
+        name: 'vue',
+        displayName: 'Vue',
+        stars: 1,
+        branch: 'main',
+        skillPath: 'skills/vue/SKILL.md',
+        raw: null,
+        pushedAt: null,
+      })
 
     const { fetchRegistrySkill } = await import('../../src/registry/client')
     expect(await fetchRegistrySkill('vue')).toBeNull()

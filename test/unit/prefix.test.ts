@@ -82,7 +82,7 @@ describe('prefix parser', () => {
     })
   })
 
-  describe('@ prefix (curator and scoped npm)', () => {
+  describe('@ prefix (curator and collection)', () => {
     it('parses @handle as curator', () => {
       expect(parseSkillInput('@antfu')).toEqual({
         type: 'curator',
@@ -90,17 +90,17 @@ describe('prefix parser', () => {
       })
     })
 
-    it('parses @scope/pkg as bare scoped npm package', () => {
+    it('parses the collection command emitted by skilld.dev', () => {
       expect(parseSkillInput('@nuxt/fonts')).toEqual({
-        type: 'bare',
-        package: '@nuxt/fonts',
-        tag: undefined,
+        type: 'collection',
+        handle: 'nuxt',
+        name: 'fonts',
       })
     })
 
-    it('parses @scope/pkg@tag as bare scoped npm with tag', () => {
-      expect(parseSkillInput('@nuxt/fonts@1.0.0')).toEqual({
-        type: 'bare',
+    it('keeps scoped npm packages explicit', () => {
+      expect(parseSkillInput('npm:@nuxt/fonts@1.0.0')).toEqual({
+        type: 'npm',
         package: '@nuxt/fonts',
         tag: '1.0.0',
       })
@@ -178,8 +178,8 @@ describe('prefix parser', () => {
       expect(resolveSkillName('@antfu')).toBeNull()
     })
 
-    it('returns scoped name for @scope/pkg', () => {
-      expect(resolveSkillName('@nuxt/fonts')).toBe('@nuxt/fonts')
+    it('returns null for a collection', () => {
+      expect(resolveSkillName('@nuxt/fonts')).toBeNull()
     })
 
     it('returns crate:<name> for crate inputs', () => {

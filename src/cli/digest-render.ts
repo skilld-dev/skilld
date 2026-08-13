@@ -23,12 +23,7 @@ function relative(iso: string, now = Date.now()): string {
   return RELATIVE_FORMATTER.format(Math.round(hours / 24), 'day')
 }
 
-export function renderDigest(entries: ChangeEntry[]): void {
-  if (entries.length === 0) {
-    p.log.success('No new updates since last digest.')
-    return
-  }
-
+export function formatDigestLines(entries: ChangeEntry[], now = Date.now()): string[] {
   const byRepo = new Map<string, ChangeEntry[]>()
   for (const entry of entries) {
     const list = byRepo.get(entry.repo) ?? []
@@ -40,14 +35,21 @@ export function renderDigest(entries: ChangeEntry[]): void {
   for (const [repo, items] of byRepo) {
     lines.push(styleText('cyan', repo))
     for (const item of items) {
-      const when = styleText('gray', relative(item.at))
+      const when = styleText('gray', relative(item.at, now))
       lines.push(`  ${styleText('green', '•')} ${item.skill} ${when}`)
       if (item.summary)
         lines.push(`    ${styleText('gray', item.summary)}`)
+      lines.push(`    ${styleText('gray', `https://skilld.dev/gh/${item.repo}/${encodeURIComponent(item.skill)}`)}`)
     }
   }
-  lines.push('')
-  lines.push(styleText('gray', 'See full activity at https://skilld.dev/me/activity'))
+  return lines
+}
 
-  p.log.message(lines.join('\n'))
+export function renderDigest(entries: ChangeEntry[]): void {
+  if (entries.length === 0) {
+    p.log.success('No new updates since last digest.')
+    return
+  }
+
+  p.log.message(formatDigestLines(entries).join('\n'))
 }

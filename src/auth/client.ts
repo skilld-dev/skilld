@@ -1,5 +1,5 @@
 /**
- * `withAuth(fetcher)` — wraps an ofetch-like call with the current session.
+ * `withAuth(baseUrl)` wraps an ofetch-like call with the current session.
  * Adds `Authorization: Bearer …`, refreshes on 401, re-reads the marker file
  * before refreshing so concurrent CLI invocations can share a rotated token.
  *
@@ -7,62 +7,84 @@
  * expiry: a 401 propagates instead of triggering refresh.
  */
 
+import type { StorageScheme, StoredSession } from './store.ts'
 import type { TokenResponse } from './types.ts'
 import { ofetch } from 'ofetch'
-import { getRegistryBase } from '../registry/client.ts'
 import { loadSession, saveSession } from './store.ts'
 
 export interface AuthedFetcher {
   <T>(url: string, init?: Parameters<typeof ofetch<T>>[1]): Promise<T>
 }
 
-async function refreshSession(refreshToken: string): Promise<TokenResponse | null> {
-  const base = getRegistryBase()
-  return ofetch<TokenResponse>(`${base}/cli/oauth/refresh`, {
-    method: 'POST',
-    body: { refresh_token: refreshToken },
-  }).catch(() => null)
+interface AuthenticatedFetchDependencies {
+  baseUrl: string
+  fetch: AuthedFetcher
+  loadSession: () => Promise<StoredSession | null>
+  saveSession: (session: Parameters<typeof saveSession>[0]) => Promise<StorageScheme>
 }
 
-export function withAuth(): AuthedFetcher {
+type FetchAttempt<T>
+  = | { _tag: 'Ok', value: T }
+    | { _tag: 'Err', error: unknown }
+
+function isAuthFailure(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('statusCode' in error))
+    return false
+  const statusCode = (error as { statusCode?: unknown }).statusCode
+  return statusCode === 401 || statusCode === 403
+}
+
+export function createAuthenticatedFetch(deps: AuthenticatedFetchDependencies): AuthedFetcher {
   return async <T>(url: string, init?: Parameters<typeof ofetch<T>>[1]): Promise<T> => {
-    const session = await loadSession()
+    const session = await deps.loadSession()
     if (!session)
       throw new Error('auth required')
 
-    const send = (token: string): Promise<T> => ofetch<T>(url, {
+    const send = (token: string): Promise<T> => deps.fetch<T>(url, {
       ...init,
       headers: { ...(init?.headers as any), Authorization: `Bearer ${token}` },
     })
 
-    const fail401Codes = new Set([401, 403])
-
-    const firstAttempt = await send(session.accessToken).catch((err: { statusCode?: number } & Error) => err)
-    if (!(firstAttempt instanceof Error) || !fail401Codes.has((firstAttempt as { statusCode?: number }).statusCode ?? 0))
-      return firstAttempt as T
+    const firstAttempt: FetchAttempt<T> = await send(session.accessToken)
+      .then(value => ({ _tag: 'Ok' as const, value }))
+      .catch(error => ({ _tag: 'Err' as const, error }))
+    if (firstAttempt._tag === 'Ok')
+      return firstAttempt.value
+    if (!isAuthFailure(firstAttempt.error))
+      throw firstAttempt.error
 
     if (session.scheme === 'env' || !session.refreshToken)
-      throw firstAttempt
+      throw firstAttempt.error
 
     // Re-read marker; another process may have already rotated.
-    const fresh = await loadSession()
+    const fresh = await deps.loadSession()
     const candidateRefresh = fresh?.refreshToken ?? session.refreshToken
-    if (fresh && fresh.accessToken !== session.accessToken) {
+    if (fresh && fresh.accessToken !== session.accessToken)
       return send(fresh.accessToken)
-    }
 
-    const rotated = await refreshSession(candidateRefresh)
-    if (!rotated)
-      throw firstAttempt
+    const rotated = await deps.fetch<TokenResponse>(`${deps.baseUrl}/cli/oauth/refresh`, {
+      method: 'POST',
+      body: { refresh_token: candidateRefresh },
+    })
 
-    await saveSession({
+    await deps.saveSession({
       login: rotated.login,
       accessToken: rotated.accessToken,
       refreshToken: rotated.refreshToken,
       expiresAt: rotated.expiresAt,
+      host: session.host,
       tokens: { accessToken: rotated.accessToken, refreshToken: rotated.refreshToken },
     })
 
     return send(rotated.accessToken)
   }
+}
+
+export function withAuth(baseUrl: string): AuthedFetcher {
+  return createAuthenticatedFetch({
+    baseUrl,
+    fetch: ofetch,
+    loadSession,
+    saveSession,
+  })
 }

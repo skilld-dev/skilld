@@ -16,6 +16,7 @@ import { loadSession } from '../auth/store.ts'
 import { autoResolveAgent } from '../cli/agent-prompt.ts'
 import { sharedArgs } from '../cli/args.ts'
 import { createRegistryClient } from '../registry/client.ts'
+import { manifestToSources } from '../registry/collections.ts'
 import { track } from '../telemetry.ts'
 import { installSkills } from './sync/install-many.ts'
 
@@ -23,46 +24,6 @@ function manifestItemKey(item: CollectionManifestItem): string {
   if (item.kind === 'gh')
     return item.name ? `${item.owner}/${item.repo}/${item.name}` : `${item.owner}/${item.repo}`
   return item.package ?? `${item.kind}:unknown`
-}
-
-/**
- * Convert selected manifest items into `installSkills` inputs. Multiple gh
- * items in the same repo collapse to one `git` source carrying the union of
- * picked skill names as `skillFilter`, so a repo with N skills installs in
- * one `syncGitSkills` call instead of N redundant ones.
- */
-function manifestToSources(items: CollectionManifestItem[]): Array<{ source: SkillSource, skillFilter?: string }> {
-  const npm: Array<{ source: SkillSource, skillFilter?: string }> = []
-  const crate: Array<{ source: SkillSource, skillFilter?: string }> = []
-  const ghByRepo = new Map<string, { owner: string, repo: string, names: string[] }>()
-
-  for (const item of items) {
-    if (item.kind === 'npm' && item.package) {
-      npm.push({ source: { type: 'npm', package: item.package } })
-      continue
-    }
-    if (item.kind === 'crate' && item.package) {
-      crate.push({ source: { type: 'crate', package: item.package } })
-      continue
-    }
-    if (item.kind === 'gh' && item.owner && item.repo) {
-      const key = `${item.owner}/${item.repo}`
-      const group = ghByRepo.get(key) ?? { owner: item.owner, repo: item.repo, names: [] }
-      if (item.name && !group.names.includes(item.name))
-        group.names.push(item.name)
-      ghByRepo.set(key, group)
-    }
-  }
-
-  const gh: Array<{ source: SkillSource, skillFilter?: string }> = []
-  for (const group of ghByRepo.values()) {
-    gh.push({
-      source: { type: 'git', source: { type: 'github', owner: group.owner, repo: group.repo } },
-      skillFilter: group.names.length ? group.names.join(',') : undefined,
-    })
-  }
-
-  return [...gh, ...npm, ...crate]
 }
 
 function badgeFor(status: AuditStatus, result: AuditResult): string {
@@ -126,15 +87,28 @@ export const pullCommandDef = defineCommand({
       return
     }
 
-    const client = createRegistryClient({ session })
-    const collections = await client.my.collections()
+    const client = createRegistryClient()
+    const collections = await client.my.collections().catch((error) => {
+      p.log.error(`Failed to load collections: ${error instanceof Error ? error.message : String(error)}`)
+      process.exitCode = 1
+      return null
+    })
+    if (!collections)
+      return
     const picked = await pickCollection(collections, args.collection)
     if (!picked)
       return
 
-    const manifest = await client.fetchCollection(session.login, picked.slug) as CollectionManifest | null
+    let manifestFailed = false
+    const manifest = await client.fetchCollection(session.login, picked.slug).catch((error) => {
+      manifestFailed = true
+      p.log.error(`Failed to load @${session.login}/${picked.slug}: ${error instanceof Error ? error.message : String(error)}`)
+      process.exitCode = 1
+      return null
+    }) as CollectionManifest | null
     if (!manifest) {
-      p.log.error(`Failed to load collection manifest for @${session.login}/${picked.slug}.`)
+      if (!manifestFailed)
+        p.log.error(`Collection @${session.login}/${picked.slug} was not found.`)
       process.exitCode = 1
       return
     }
@@ -156,7 +130,10 @@ export const pullCommandDef = defineCommand({
         auditByKey.set(manifestItemKey(item), { status: 'unaudited', audits: [] })
         return
       }
-      const result = await client.audit({ owner: item.owner, repo: item.repo, name: item.name })
+      const result = await client.audit({ owner: item.owner, repo: item.repo, name: item.name }).catch((error) => {
+        p.log.warn(`Audit unavailable for ${item.owner}/${item.repo}/${item.name}: ${error instanceof Error ? error.message : String(error)}`)
+        return { status: 'unaudited' as const, audits: [] }
+      })
       auditCache.set(`${item.owner}/${item.repo}/${item.name}`, result)
       auditByKey.set(manifestItemKey(item), result)
     }))

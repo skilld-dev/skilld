@@ -2,34 +2,17 @@ import type { AgentType, OptimizeModel } from '../../agent/index.ts'
 import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
-import { loadSession, peekMarker, updateMarker } from '../../auth/store.ts'
 import { autoResolveAgent } from '../../cli/agent-prompt.ts'
 import { sharedArgs } from '../../cli/args.ts'
-import { renderDigest } from '../../cli/digest-render.ts'
 import { isInteractive } from '../../cli/env.ts'
 import { getInstalledGenerators, introLine } from '../../cli/intro.ts'
 import { readConfig } from '../../core/config.ts'
 import { resolveSkillName } from '../../core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE } from '../../core/regex.ts'
 import { getProjectState } from '../../core/skills.ts'
-import { createRegistryClient } from '../../registry/client.ts'
 import { syncCommand } from '../sync.ts'
+import { renderChangesDigest } from './changes-digest.ts'
 import { exportPortablePrompts } from './portable.ts'
-
-async function renderChangesDigest(): Promise<void> {
-  const session = await loadSession()
-  if (!session || session.scheme === 'env')
-    return
-  const marker = peekMarker()
-  const client = createRegistryClient({ session })
-  const digest = await client.my.changes({ since: marker?.lastDigestAt }).catch(() => null)
-  if (!digest || digest.entries.length === 0)
-    return
-  renderDigest(digest.entries)
-  // Use the server's windowEnd as the canonical watermark — round-trippable
-  // and aligns with skilld.dev's email digest cron.
-  updateMarker({ lastDigestAt: digest.windowEnd })
-}
 
 export const updateCommandDef = defineCommand({
   meta: { name: 'update', description: 'Update outdated skills' },
@@ -152,7 +135,10 @@ export const updateCommandDef = defineCommand({
       mode: 'update',
     })
 
-    if (!silent)
-      await renderChangesDigest()
+    if (!silent) {
+      await renderChangesDigest().catch((error) => {
+        p.log.warn(`Changes unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }
   },
 })
