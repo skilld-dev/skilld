@@ -24,7 +24,7 @@ describe('manifestToSources', () => {
 
   it('expands the collection command from skilld.dev without authentication', async () => {
     const result = await expandPublicSources([
-      { type: 'collection', handle: 'harlan', name: 'nuxt' },
+      { type: 'collection-or-npm', handle: 'harlan', name: 'nuxt', package: '@harlan/nuxt' },
     ], {
       fetchCollection: async () => ({
         name: 'Nuxt',
@@ -42,5 +42,31 @@ describe('manifestToSources', () => {
       skipped: 0,
       failed: 0,
     })
+  })
+
+  it('falls back to the existing scoped npm meaning when no collection exists', async () => {
+    const result = await expandPublicSources([
+      { type: 'collection-or-npm', handle: 'harlan', name: 'nuxt', package: '@harlan/nuxt' },
+    ], {
+      fetchCollection: async () => null,
+      fetchCurator: async () => null,
+    }, true)
+
+    expect(result).toEqual({
+      items: [{ type: 'bare', package: '@harlan/nuxt' }],
+      skipped: 0,
+      failed: 0,
+    })
+  })
+
+  it('surfaces collection transport failures without changing the source', async () => {
+    const result = await expandPublicSources([
+      { type: 'collection-or-npm', handle: 'harlan', name: 'nuxt', package: '@harlan/nuxt' },
+    ], {
+      fetchCollection: async () => Promise.reject(new Error('offline')),
+      fetchCurator: async () => null,
+    }, true)
+
+    expect(result).toEqual({ items: [], skipped: 0, failed: 1 })
   })
 })

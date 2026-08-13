@@ -61,6 +61,10 @@ function manifestItemsToSources(items: Parameters<typeof manifestToSources>[0]):
   )
 }
 
+type MissingCollectionAction
+  = | { _tag: 'Fail' }
+    | { _tag: 'UseNpm', package: string }
+
 export async function expandPublicSources(
   items: SkillSource[],
   client: Pick<RegistryClient, 'fetchCollection' | 'fetchCurator'>,
@@ -70,7 +74,12 @@ export async function expandPublicSources(
   let skipped = 0
   let failed = 0
 
-  const loadCollection = async (handle: string, name: string, confirm: boolean): Promise<void> => {
+  const loadCollection = async (
+    handle: string,
+    name: string,
+    confirm: boolean,
+    onMissing: MissingCollectionAction,
+  ): Promise<void> => {
     let transportFailed = false
     const manifest = await client.fetchCollection(handle, name).catch((error) => {
       p.log.error(`Failed to load @${handle}/${name}: ${error instanceof Error ? error.message : String(error)}`)
@@ -79,7 +88,10 @@ export async function expandPublicSources(
       return null
     })
     if (!manifest) {
-      if (!transportFailed) {
+      if (!transportFailed && onMissing._tag === 'UseNpm') {
+        expanded.push({ type: 'bare', package: onMissing.package })
+      }
+      else if (!transportFailed) {
         p.log.error(`Collection @${handle}/${name} was not found.`)
         failed += 1
       }
@@ -103,8 +115,8 @@ export async function expandPublicSources(
   }
 
   for (const source of items) {
-    if (source.type === 'collection') {
-      await loadCollection(source.handle, source.name, true)
+    if (source.type === 'collection-or-npm') {
+      await loadCollection(source.handle, source.name, true, { _tag: 'UseNpm', package: source.package })
       continue
     }
     if (source.type !== 'curator') {
@@ -150,7 +162,7 @@ export async function expandPublicSources(
       slugs = selection as string[]
     }
     for (const slug of slugs)
-      await loadCollection(source.handle, slug, false)
+      await loadCollection(source.handle, slug, false, { _tag: 'Fail' })
   }
 
   return { items: expanded, skipped, failed }
@@ -218,7 +230,7 @@ export async function installSkills(items: SkillSource[], opts: InstallOpts): Pr
         npmEntries.push({ name: source.package, spec: source.tag ? `${source.package}@${source.tag}` : source.package })
         break
       case 'curator':
-      case 'collection':
+      case 'collection-or-npm':
         throw new Error(`Unexpanded public source: ${JSON.stringify(source)}`)
       default: {
         const _exhaustive: never = source

@@ -45,8 +45,8 @@ export const addCommandDef = defineCommand({
 
     // --agent none → portable export (no installed-agent target needed).
     if (args.agent === 'none') {
-      if (items.some(item => item.type === 'curator' || item.type === 'collection')) {
-        p.log.error('Curator and collection installs require a target agent.')
+      if (items.some(item => item.type === 'curator')) {
+        p.log.error('Curator installs require a target agent.')
         process.exitCode = 1
         return
       }

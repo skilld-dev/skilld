@@ -103,17 +103,18 @@ describe('prefix parser', () => {
       })
     })
 
-    it('parses the collection command emitted by skilld.dev', () => {
+    it('keeps an untagged scoped package available as a collection or npm package', () => {
       expect(parseSkillInput('@nuxt/fonts')).toEqual({
-        type: 'collection',
+        type: 'collection-or-npm',
         handle: 'nuxt',
         name: 'fonts',
+        package: '@nuxt/fonts',
       })
     })
 
-    it('keeps scoped npm packages explicit', () => {
-      expect(parseSkillInput('npm:@nuxt/fonts@1.0.0')).toEqual({
-        type: 'npm',
+    it('keeps tagged scoped packages on npm', () => {
+      expect(parseSkillInput('@nuxt/fonts@1.0.0')).toEqual({
+        type: 'bare',
         package: '@nuxt/fonts',
         tag: '1.0.0',
       })
@@ -191,8 +192,8 @@ describe('prefix parser', () => {
       expect(resolveSkillName('@antfu')).toBeNull()
     })
 
-    it('returns null for a collection', () => {
-      expect(resolveSkillName('@nuxt/fonts')).toBeNull()
+    it('keeps the scoped package name addressable', () => {
+      expect(resolveSkillName('@nuxt/fonts')).toBe('@nuxt/fonts')
     })
 
     it('returns crate:<name> for crate inputs', () => {

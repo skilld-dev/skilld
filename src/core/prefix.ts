@@ -7,7 +7,7 @@
  *   gh:owner/repo   → git skill
  *   github:o/r      → git skill (alias)
  *   @handle          → curator's skills
- *   @handle/coll     → specific collection
+ *   @handle/coll     → collection, with scoped npm fallback
  *
  * Bare names (no prefix) are deprecated but still resolve as npm: with a warning.
  */
@@ -24,7 +24,7 @@ export type SkillSource
     | { type: 'crate', package: string, version?: string }
     | { type: 'git', source: GitSkillSource, skillFilter?: string }
     | { type: 'curator', handle: string }
-    | { type: 'collection', handle: string, name: string }
+    | { type: 'collection-or-npm', handle: string, name: string, package: string }
     | { type: 'bare', package: string, tag?: string }
 
 export type NpmPackageInputResult
@@ -90,16 +90,20 @@ export function parseSkillInput(input: string): SkillSource {
     return { type: 'bare', package: rest }
   }
 
-  // @handle (curator) or @handle/collection
+  // @handle (curator), @handle/collection, or legacy @scope/package
   if (trimmed.startsWith('@')) {
-    const rest = trimmed.slice(1)
+    const { name: packageName, tag } = splitPackageTag(trimmed)
+    if (tag)
+      return { type: 'bare', package: packageName, tag }
+    const rest = packageName.slice(1)
     const slashIdx = rest.indexOf('/')
     if (slashIdx === -1)
       return { type: 'curator', handle: rest }
     return {
-      type: 'collection',
+      type: 'collection-or-npm',
       handle: rest.slice(0, slashIdx),
       name: rest.slice(slashIdx + 1),
+      package: packageName,
     }
   }
 
@@ -115,14 +119,15 @@ export function parseSkillInput(input: string): SkillSource {
 
 /**
  * Resolve a CLI input to the bare package/skill name used for lookup in the lockfile.
- * Strips `npm:` / `gh:` prefixes. Returns null for curator/collection (not addressable
- * as a single skill name).
+ * Strips `npm:` / `gh:` prefixes. Returns null for curators, which do not address
+ * a single skill name.
  */
 export function resolveSkillName(input: string): string | null {
   const source = parseSkillInput(input)
   switch (source.type) {
     case 'npm':
     case 'bare':
+    case 'collection-or-npm':
       return source.package
     case 'crate':
       return `crate:${source.package}`
@@ -131,7 +136,6 @@ export function resolveSkillName(input: string): string | null {
         return source.source.repo
       return null
     case 'curator':
-    case 'collection':
       return null
     default: {
       const _exhaustive: never = source
