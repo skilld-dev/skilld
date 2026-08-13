@@ -2,7 +2,7 @@ import type { AgentType, OptimizeModel } from '../../agent/index.ts'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { autoResolveAgent } from '../../cli/agent-prompt.ts'
-import { sharedArgs } from '../../cli/args.ts'
+import { agentOrNoneArg, sharedArgs } from '../../cli/args.ts'
 import { hasCompletedWizard } from '../../core/config.ts'
 import { parseSkillInput } from '../../core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE } from '../../core/regex.ts'
@@ -34,6 +34,8 @@ export const addCommandDef = defineCommand({
       description: 'Watch installed repositories for changes',
     },
     ...sharedArgs,
+    // This command supports portable exports.
+    'agent': agentOrNoneArg,
   },
   async run({ args }) {
     const rawInputs = [...new Set(

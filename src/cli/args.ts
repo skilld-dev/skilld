@@ -37,3 +37,15 @@ export const sharedArgs = {
     default: false,
   },
 }
+
+/** Agent argument for flows that can export portable prompts. */
+export const agentOrNoneArg = {
+  type: 'enum' as const,
+  options: [...Object.keys(agents), 'none'],
+  alias: 'a',
+  description: 'Target agent, or `none` to export portable prompts',
+}
+
+export const rootArgs = {
+  agent: agentOrNoneArg,
+}

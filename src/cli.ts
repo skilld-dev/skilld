@@ -9,7 +9,7 @@ import pLimit from 'p-limit'
 import { join, resolve } from 'pathe'
 import { agents, detectImportedPackages, detectInstalledAgents } from './agent/index.ts'
 import { promptForAgent, resolveAgent } from './cli/agent-prompt.ts'
-import { sharedArgs } from './cli/args.ts'
+import { rootArgs } from './cli/args.ts'
 import { isInteractive, isRunningInsideAgent } from './cli/env.ts'
 import { formatStatus, getRepoHint, relativeTime } from './cli/intro.ts'
 import { guard, menuLoop } from './cli/menu.ts'
@@ -70,9 +70,8 @@ const main = defineCommand({
     version,
     description: 'Curated agent skills for your projects',
   },
-  args: {
-    agent: sharedArgs.agent,
-  },
+  // Citty parses root arguments before dispatching subcommands.
+  args: rootArgs,
   subCommands: {
     add: () => import('./commands/sync/add.ts').then(m => m.addCommandDef),
     update: () => import('./commands/sync/update.ts').then(m => m.updateCommandDef),
