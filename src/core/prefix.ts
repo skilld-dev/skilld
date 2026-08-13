@@ -7,7 +7,7 @@
  *   gh:owner/repo   → git skill
  *   github:o/r      → git skill (alias)
  *   @handle          → curator's skills
- *   @handle/coll     → specific collection
+ *   @handle/coll     → collection, with scoped npm fallback
  *
  * Bare names (no prefix) are deprecated but still resolve as npm: with a warning.
  */
@@ -17,13 +17,14 @@ import { parseGitSkillInput } from '../sources/git-skills.ts'
 
 const STATIC_REGEX_1 = /^[\w.-]+\/[\w.-]+/
 const EXPLICIT_NON_NPM_PREFIX_RE = /^(?:crate|gh|github):/
+const SCOPED_NPM_PACKAGE_RE = /^@[^/\s]+\/[^@\s]+(?:@.+)?$/
 
 export type SkillSource
   = | { type: 'npm', package: string, tag?: string }
     | { type: 'crate', package: string, version?: string }
     | { type: 'git', source: GitSkillSource, skillFilter?: string }
     | { type: 'curator', handle: string }
-    | { type: 'collection', handle: string, name: string }
+    | { type: 'collection-or-npm', handle: string, name: string, package: string }
     | { type: 'bare', package: string, tag?: string }
 
 export type NpmPackageInputResult
@@ -34,6 +35,11 @@ export function parseNpmPackageInputs(inputs: string[]): NpmPackageInputResult {
   const packageSpecs: string[] = []
 
   for (const input of inputs) {
+    if (SCOPED_NPM_PACKAGE_RE.test(input)) {
+      const { name, tag } = splitPackageTag(input)
+      packageSpecs.push(tag ? `${name}@${tag}` : name)
+      continue
+    }
     const source = parseSkillInput(input)
     const isMalformedExplicitSource = source.type === 'bare' && EXPLICIT_NON_NPM_PREFIX_RE.test(input)
     if ((source.type !== 'npm' && source.type !== 'bare') || isMalformedExplicitSource || !source.package)
@@ -84,17 +90,21 @@ export function parseSkillInput(input: string): SkillSource {
     return { type: 'bare', package: rest }
   }
 
-  // @handle (curator) or @scope/pkg (npm scoped package)
+  // @handle (curator), @handle/collection, or legacy @scope/package
   if (trimmed.startsWith('@')) {
-    const rest = trimmed.slice(1)
+    const { name: packageName, tag } = splitPackageTag(trimmed)
+    if (tag)
+      return { type: 'bare', package: packageName, tag }
+    const rest = packageName.slice(1)
     const slashIdx = rest.indexOf('/')
-    if (slashIdx === -1) {
+    if (slashIdx === -1)
       return { type: 'curator', handle: rest }
+    return {
+      type: 'collection-or-npm',
+      handle: rest.slice(0, slashIdx),
+      name: rest.slice(slashIdx + 1),
+      package: packageName,
     }
-    // @scope/pkg → treat as npm scoped package (bare, deprecated form)
-    // Collections must be installed via npm:@handle/coll or a future prefix.
-    const { name, tag } = splitPackageTag(trimmed)
-    return { type: 'bare', package: name, tag }
   }
 
   // Try existing git detection (SSH, URLs, local paths, owner/repo shorthand)
@@ -109,14 +119,15 @@ export function parseSkillInput(input: string): SkillSource {
 
 /**
  * Resolve a CLI input to the bare package/skill name used for lookup in the lockfile.
- * Strips `npm:` / `gh:` prefixes. Returns null for curator/collection (not addressable
- * as a single skill name).
+ * Strips `npm:` / `gh:` prefixes. Returns null for curators, which do not address
+ * a single skill name.
  */
 export function resolveSkillName(input: string): string | null {
   const source = parseSkillInput(input)
   switch (source.type) {
     case 'npm':
     case 'bare':
+    case 'collection-or-npm':
       return source.package
     case 'crate':
       return `crate:${source.package}`
@@ -125,7 +136,6 @@ export function resolveSkillName(input: string): string | null {
         return source.source.repo
       return null
     case 'curator':
-    case 'collection':
       return null
     default: {
       const _exhaustive: never = source

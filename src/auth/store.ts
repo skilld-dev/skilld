@@ -6,7 +6,7 @@
  * file. Use it in CI when keychain access isn't available.
  */
 
-import type { AuthSession } from '../registry/client.ts'
+import type { AuthSession } from 'skilld-protocol/wire'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'pathe'
 import { AUTH_PATH, CACHE_DIR } from '../core/paths.ts'

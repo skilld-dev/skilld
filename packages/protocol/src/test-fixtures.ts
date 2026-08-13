@@ -29,8 +29,6 @@ export const fixtures = {
   audit: {
     skillLivePass: {
       id: 'antfu/skills/vue',
-      installs: 1234,
-      formatted: '1.2k',
       audits: [
         { provider: 'skills.sh', slug: 'static', status: 'pass' },
         { provider: 'skills.sh', slug: 'license', status: 'pass' },
@@ -40,8 +38,6 @@ export const fixtures = {
     },
     skillLiveWarn: {
       id: 'antfu/skills/motion-v',
-      installs: 42,
-      formatted: '42',
       audits: [
         { provider: 'skills.sh', slug: 'static', status: 'pass' },
         { provider: 'skills.sh', slug: 'deps', status: 'warn', summary: 'wildcard import', riskLevel: 'medium', categories: ['imports'] },
@@ -177,7 +173,7 @@ export const fixtures = {
       repo: 'skills',
       name: 'vue',
       displayName: 'Vue',
-      installs: 1234,
+      stars: 1234,
       branch: 'main',
       skillPath: 'vue/SKILL.md',
       raw: '# Vue\n\nUse <script setup>.',

@@ -26,12 +26,10 @@ export const AuditEntrySchema = z.object({
 
 export const SkillLiveResponseSchema = z.object({
   id: z.string(),
-  installs: z.number().nullable(),
-  formatted: z.string().nullable(),
   audits: z.array(AuditEntrySchema),
   source: z.literal('skills.sh'),
   fetchedAt: z.string(),
-})
+}).strict()
 
 export type AuditEntry = z.infer<typeof AuditEntrySchema>
 export type SkillLiveResponse = z.infer<typeof SkillLiveResponseSchema>

@@ -95,7 +95,7 @@ describe('prefix parser', () => {
     })
   })
 
-  describe('@ prefix (curator and scoped npm)', () => {
+  describe('@ prefix (curator and collection)', () => {
     it('parses @handle as curator', () => {
       expect(parseSkillInput('@antfu')).toEqual({
         type: 'curator',
@@ -103,15 +103,16 @@ describe('prefix parser', () => {
       })
     })
 
-    it('parses @scope/pkg as bare scoped npm package', () => {
+    it('keeps an untagged scoped package available as a collection or npm package', () => {
       expect(parseSkillInput('@nuxt/fonts')).toEqual({
-        type: 'bare',
+        type: 'collection-or-npm',
+        handle: 'nuxt',
+        name: 'fonts',
         package: '@nuxt/fonts',
-        tag: undefined,
       })
     })
 
-    it('parses @scope/pkg@tag as bare scoped npm with tag', () => {
+    it('keeps tagged scoped packages on npm', () => {
       expect(parseSkillInput('@nuxt/fonts@1.0.0')).toEqual({
         type: 'bare',
         package: '@nuxt/fonts',
@@ -191,7 +192,7 @@ describe('prefix parser', () => {
       expect(resolveSkillName('@antfu')).toBeNull()
     })
 
-    it('returns scoped name for @scope/pkg', () => {
+    it('keeps the scoped package name addressable', () => {
       expect(resolveSkillName('@nuxt/fonts')).toBe('@nuxt/fonts')
     })
 

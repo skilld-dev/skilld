@@ -60,7 +60,7 @@ function deprecatedForwarder(
 
 // ── Subcommands (lazy-loaded) ──
 
-const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
+const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'changes', 'watch', 'unwatch', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
 
 // ── Main command ──
 
@@ -76,6 +76,9 @@ const main = defineCommand({
   subCommands: {
     add: () => import('./commands/sync/add.ts').then(m => m.addCommandDef),
     update: () => import('./commands/sync/update.ts').then(m => m.updateCommandDef),
+    changes: () => import('./commands/changes.ts').then(m => m.changesCommandDef),
+    watch: () => import('./commands/watch.ts').then(m => m.watchCommandDef),
+    unwatch: () => import('./commands/watch.ts').then(m => m.unwatchCommandDef),
     info: () => infoCommandDef,
     list: () => import('./commands/list.ts').then(m => m.listCommandDef),
     config: () => configCommandDef,

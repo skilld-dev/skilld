@@ -31,12 +31,12 @@ export const SkillDetailResponseSchema = z.object({
   repo: z.string(),
   name: z.string(),
   displayName: z.string(),
-  installs: z.number(),
-  branch: z.string().optional(),
-  skillPath: z.string().nullable().optional(),
-  raw: z.string().nullable().optional(),
-  pushedAt: z.string().nullable().optional(),
-})
+  stars: z.number(),
+  branch: z.string(),
+  skillPath: z.string().nullable(),
+  raw: z.string().nullable(),
+  pushedAt: z.string().nullable(),
+}).passthrough()
 
 export type SkillsResolveInput = z.infer<typeof SkillsResolveInputSchema>
 export type SkillsResolveEntry = z.infer<typeof SkillsResolveEntrySchema>

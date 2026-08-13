@@ -37,13 +37,12 @@ describe('aggregateAuditStatus', () => {
 })
 
 describe('createRegistryClient.audit', () => {
-  it('returns unaudited on network error', async () => {
+  it('propagates network errors', async () => {
     const { ofetch } = await import('ofetch')
     vi.mocked(ofetch).mockReset().mockRejectedValueOnce(new Error('network'))
     const { createRegistryClient } = await import('../../src/registry/client')
     const client = createRegistryClient()
-    const res = await client.audit({ owner: 'foo', repo: 'bar', name: 'baz' })
-    expect(res).toEqual({ status: 'unaudited', audits: [] })
+    await expect(client.audit({ owner: 'foo', repo: 'bar', name: 'baz' })).rejects.toThrow('network')
   })
 
   it('aggregates server response with audits + riskLevel + summary', async () => {
@@ -114,22 +113,31 @@ describe('gateInstall', () => {
 describe('createRegistryClient.my requires session', () => {
   it('throws auth required without a session', async () => {
     const { createRegistryClient } = await import('../../src/registry/client')
-    const client = createRegistryClient()
+    const authenticatedFetch = async (): Promise<never> => {
+      throw new Error('auth required')
+    }
+    const client = createRegistryClient({ authenticatedFetch })
     await expect(client.my.collections()).rejects.toThrow('auth required')
-    await expect(client.my.subscriptions()).rejects.toThrow('auth required')
     await expect(client.my.changes({})).rejects.toThrow('auth required')
-    await expect(client.my.installs({ slug: 'x', sourceKind: 'npm', surface: 'cli:add' })).rejects.toThrow('auth required')
+    await expect(client.my.watch([{ owner: 'nuxt', repo: 'nuxt' }])).rejects.toThrow('auth required')
   })
 
-  it('passes Bearer header when session present', async () => {
-    const { ofetch } = await import('ofetch')
-    vi.mocked(ofetch).mockReset().mockResolvedValueOnce([])
+  it('posts repositories through the authenticated transport', async () => {
+    const authenticatedFetch = vi.fn().mockResolvedValueOnce({ ok: true, inserted: 1 })
     const { createRegistryClient } = await import('../../src/registry/client')
-    const client = createRegistryClient({ session: { accessToken: 'tok', login: 'me' } })
-    await client.my.collections()
-    expect(ofetch).toHaveBeenCalledWith(
-      expect.stringContaining('/me/collections'),
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer tok' }) }),
-    )
+    const client = createRegistryClient({ authenticatedFetch })
+    await expect(client.my.watch([{ owner: 'nuxt', repo: 'nuxt' }])).resolves.toEqual({ inserted: 1 })
+    expect(authenticatedFetch).toHaveBeenCalledWith('https://skilld.dev/api/me/subscriptions', {
+      method: 'POST',
+      body: { source: 'cli', repos: [{ owner: 'nuxt', repo: 'nuxt' }] },
+    })
+  })
+
+  it('loads CLI collection summaries from the unambiguous route', async () => {
+    const authenticatedFetch = vi.fn().mockResolvedValueOnce([])
+    const { createRegistryClient } = await import('../../src/registry/client')
+    const client = createRegistryClient({ authenticatedFetch })
+    await expect(client.my.collections()).resolves.toEqual([])
+    expect(authenticatedFetch).toHaveBeenCalledWith('https://skilld.dev/api/cli/collections')
   })
 })

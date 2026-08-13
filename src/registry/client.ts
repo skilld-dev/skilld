@@ -6,31 +6,37 @@
  * the raw SKILL.md. For local development, set SKILLD_REGISTRY_URL (e.g.
  * http://localhost:3000/api) to point at a running Nuxt dev server.
  *
- * Returns null when a skill isn't curated, the API is unreachable, or the
- * skill has no resolvable SKILL.md, so callers fall through to the
- * doc-generation pipeline.
+ * Returns null when a skill is not curated or has no SKILL.md. Transport and
+ * contract failures propagate to the command boundary.
  */
 
 import type { AuditStatus } from 'skilld-protocol/constants'
 import type {
   AuditEntry,
-  AuthSession,
   ChangeEntry,
   CollectionManifest,
   CollectionManifestItem,
   CollectionSummary,
   CuratorPayload,
   DigestResponse,
-  InstallEventPayload,
   SkillDetailResponse,
-  SkillsResolveEntry,
   SkillsResolveResponse,
-  SubscriptionSummary,
 } from 'skilld-protocol/wire'
+import type { AuthedFetcher } from '../auth/client.ts'
 import { ofetch } from 'ofetch'
+import {
+  AuditEntrySchema,
+  CollectionManifestSchema,
+  CollectionSummarySchema,
+  CuratorPayloadSchema,
+  DigestResponseSchema,
+  SkillDetailResponseSchema,
+  SkillsResolveResponseSchema,
+} from 'skilld-protocol/wire'
+import { withAuth } from '../auth/client.ts'
 import { TRAILING_SLASH_RE } from '../core/regex.ts'
 
-export type { AuditEntry, AuditStatus, AuthSession, ChangeEntry, CollectionManifest, CollectionManifestItem, CollectionSummary, CuratorPayload, DigestResponse, InstallEventPayload, SkillDetailResponse, SkillsResolveResponse, SubscriptionSummary }
+export type { AuditEntry, AuditStatus, ChangeEntry, CollectionManifest, CollectionManifestItem, CollectionSummary, CuratorPayload, DigestResponse, SkillDetailResponse, SkillsResolveResponse }
 
 const DEFAULT_REGISTRY_URL = 'https://skilld.dev/api'
 
@@ -45,7 +51,6 @@ export interface RegistrySkill {
   owner: string
   repo: string
   displayName?: string
-  installs?: number
   official?: boolean
   branch?: string
   skillPath?: string
@@ -67,10 +72,9 @@ export interface AuditResult {
   audits: AuditEntry[]
 }
 
-interface AuditApiResponse {
-  riskLevel?: 'low' | 'medium' | 'high'
-  summary?: string
-  audits?: AuditEntry[]
+export interface RepositoryRef {
+  owner: string
+  repo: string
 }
 
 export interface RegistryClient {
@@ -81,9 +85,9 @@ export interface RegistryClient {
   fetchCurator: (login: string) => Promise<CuratorPayload | null>
   my: {
     collections: () => Promise<CollectionSummary[]>
-    subscriptions: () => Promise<SubscriptionSummary[]>
-    changes: (params: { since?: number }) => Promise<DigestResponse | null>
-    installs: (payload: InstallEventPayload) => Promise<void>
+    changes: (params: { since?: number }) => Promise<DigestResponse>
+    watch: (repos: RepositoryRef[]) => Promise<{ inserted: number }>
+    unwatch: (repo: RepositoryRef) => Promise<void>
   }
 }
 
@@ -125,35 +129,66 @@ export function aggregateAuditStatus(audits: AuditEntry[]): AuditStatus {
   return 'pass'
 }
 
-export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: string } = {}): RegistryClient {
+export interface RegistryClientOptions {
+  baseUrl?: string
+  publicFetch?: AuthedFetcher
+  authenticatedFetch?: AuthedFetcher
+}
+
+function errorStatus(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null)
+    return null
+  if ('statusCode' in error && typeof error.statusCode === 'number')
+    return error.statusCode
+  if ('status' in error && typeof error.status === 'number')
+    return error.status
+  return null
+}
+
+async function optional<T>(request: Promise<T>): Promise<T | null> {
+  return request.catch((error) => {
+    if (errorStatus(error) === 404)
+      return null
+    throw error
+  })
+}
+
+function parseAuditResponse(value: unknown): AuditResult {
+  if (typeof value !== 'object' || value === null)
+    throw new TypeError('Invalid audit response')
+  const record = value as Record<string, unknown>
+  const audits = AuditEntrySchema.array().parse(record.audits ?? [])
+  const riskLevel = record.riskLevel === 'low' || record.riskLevel === 'medium' || record.riskLevel === 'high'
+    ? record.riskLevel
+    : undefined
+  const summary = typeof record.summary === 'string' ? record.summary : undefined
+  return { status: aggregateAuditStatus(audits), riskLevel, summary, audits }
+}
+
+function parseWatchResponse(value: unknown): { inserted: number } {
+  if (typeof value !== 'object' || value === null || !('inserted' in value) || typeof value.inserted !== 'number')
+    throw new TypeError('Invalid watch response')
+  return { inserted: value.inserted }
+}
+
+export function createRegistryClient(opts: RegistryClientOptions = {}): RegistryClient {
   const base = (opts.baseUrl ?? getRegistryBase()).replace(TRAILING_SLASH_RE, '')
-  const headers = opts.session ? { Authorization: `Bearer ${opts.session.accessToken}` } : undefined
-
-  const fetcher = <T>(url: string, init?: Parameters<typeof ofetch<T>>[1]): Promise<T> => {
-    if (!headers && !init)
-      return ofetch<T>(url)
-    if (!headers)
-      return ofetch<T>(url, init)
-    return ofetch<T>(url, { ...init, headers: { ...headers, ...(init?.headers as any) } })
-  }
-
-  const requireSession = (): void => {
-    if (!opts.session)
-      throw new Error('auth required')
-  }
+  const publicFetch = opts.publicFetch ?? ofetch
+  const authenticatedFetch = opts.authenticatedFetch ?? withAuth(base)
 
   return {
     async resolveSkill(packageName, fetchOpts = {}) {
-      const resolved = await fetcher<Record<string, SkillsResolveEntry>>(`${base}/skills/resolve`, {
+      const resolved = SkillsResolveResponseSchema.parse(await publicFetch<unknown>(`${base}/skills/resolve`, {
         method: 'POST',
         body: { items: [{ packageName, owner: fetchOpts.owner }] },
-      }).catch(() => null)
+      }))
 
-      const hit = resolved?.[packageName]
+      const hit = resolved[packageName]
       if (!hit)
         return null
 
-      const detail = await fetcher<SkillDetailResponse>(`${base}/skills/${hit.owner}/${hit.repo}/${packageName}`).catch(() => null)
+      const rawDetail = await optional(publicFetch<unknown>(`${base}/skills/${hit.owner}/${hit.repo}/${packageName}`))
+      const detail = rawDetail === null ? null : SkillDetailResponseSchema.parse(rawDetail)
       if (!detail?.raw)
         return null
 
@@ -164,7 +199,6 @@ export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: st
         owner: detail.owner,
         repo: `${detail.owner}/${detail.repo}`,
         displayName: detail.displayName,
-        installs: detail.installs,
         official: hit.official,
         branch: detail.branch,
         skillPath: detail.skillPath ?? undefined,
@@ -173,47 +207,41 @@ export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: st
     },
 
     async fetchSkillDetail(owner, repo, name) {
-      return fetcher<SkillDetailResponse>(`${base}/skills/${owner}/${repo}/${name}`).catch(() => null)
+      const response = await optional(publicFetch<unknown>(`${base}/skills/${owner}/${repo}/${name}`))
+      return response === null ? null : SkillDetailResponseSchema.parse(response)
     },
 
     async audit({ owner, repo, name }) {
-      const res = await fetcher<AuditApiResponse>(`${base}/skill-live/${owner}/${repo}/${name}`).catch(() => null)
-      if (!res)
-        return { status: 'unaudited', audits: [] }
-      const audits = res.audits ?? []
-      return {
-        status: aggregateAuditStatus(audits),
-        riskLevel: res.riskLevel,
-        summary: res.summary,
-        audits,
-      }
+      return parseAuditResponse(await publicFetch<unknown>(`${base}/skill-live/${owner}/${repo}/${name}`))
     },
 
     async fetchCollection(login, slug) {
-      return fetcher<CollectionManifest>(`${base}/collections/by-author/${login}/${slug}/manifest`).catch(() => null)
+      const response = await optional(publicFetch<unknown>(`${base}/collections/by-author/${login}/${slug}/manifest`))
+      return response === null ? null : CollectionManifestSchema.parse(response)
     },
 
     async fetchCurator(login) {
-      return fetcher<CuratorPayload>(`${base}/curators/${login}`).catch(() => null)
+      const response = await optional(publicFetch<unknown>(`${base}/curators/${login}`))
+      return response === null ? null : CuratorPayloadSchema.parse(response)
     },
 
     my: {
       async collections() {
-        requireSession()
-        return fetcher<CollectionSummary[]>(`${base}/me/collections`).catch(() => [])
-      },
-      async subscriptions() {
-        requireSession()
-        return fetcher<SubscriptionSummary[]>(`${base}/me/subscriptions`).catch(() => [])
+        return CollectionSummarySchema.array().parse(await authenticatedFetch<unknown>(`${base}/cli/collections`))
       },
       async changes({ since }) {
-        requireSession()
         const qs = since != null ? `?since=${since}` : ''
-        return fetcher<DigestResponse>(`${base}/cli/changes${qs}`).catch(() => null)
+        return DigestResponseSchema.parse(await authenticatedFetch<unknown>(`${base}/cli/changes${qs}`))
       },
-      async installs(payload) {
-        requireSession()
-        await fetcher<void>(`${base}/me/installs`, { method: 'POST', body: payload }).catch(() => {})
+      async watch(repos) {
+        const response = await authenticatedFetch<unknown>(`${base}/me/subscriptions`, {
+          method: 'POST',
+          body: { source: 'cli', repos },
+        })
+        return parseWatchResponse(response)
+      },
+      async unwatch(repo) {
+        await authenticatedFetch<void>(`${base}/me/subscriptions/${repo.owner}/${repo.repo}`, { method: 'DELETE' })
       },
     },
   }
@@ -221,9 +249,7 @@ export function createRegistryClient(opts: { session?: AuthSession, baseUrl?: st
 
 /**
  * Fetch a curated package skill from the registry.
- * Returns null if no curated skill exists, the SKILL.md can't be loaded, or the API is unreachable.
- *
- * Thin wrapper over `createRegistryClient().resolveSkill` for back-compat.
+ * Returns null if no curated skill exists or the SKILL.md cannot be loaded.
  */
 export async function fetchRegistrySkill(
   packageName: string,

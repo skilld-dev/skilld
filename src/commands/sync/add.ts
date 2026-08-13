@@ -6,12 +6,13 @@ import { sharedArgs } from '../../cli/args.ts'
 import { hasCompletedWizard } from '../../core/config.ts'
 import { parseSkillInput } from '../../core/prefix.ts'
 import { COMMA_OR_WHITESPACE_RE } from '../../core/regex.ts'
+import { watchRepositories } from '../watch.ts'
 import { runWizard } from '../wizard.ts'
 import { installSkills } from './install-many.ts'
 import { exportPortablePrompts } from './portable.ts'
 
 export const addCommandDef = defineCommand({
-  meta: { name: 'add', description: 'Install skills (npm:<pkg>, crate:<name>, gh:<owner/repo>, @<curator>)' },
+  meta: { name: 'add', description: 'Install skills from packages, repositories, curators, or collections' },
   args: {
     'package': {
       type: 'positional',
@@ -28,6 +29,10 @@ export const addCommandDef = defineCommand({
       type: 'boolean',
       description: 'Install skills that fail the upstream audit gate',
     },
+    'watch': {
+      type: 'boolean',
+      description: 'Watch installed repositories for changes',
+    },
     ...sharedArgs,
   },
   async run({ args }) {
@@ -36,9 +41,15 @@ export const addCommandDef = defineCommand({
         .map((s: string) => s.trim())
         .filter(Boolean),
     )]
+    const items = rawInputs.map(parseSkillInput)
 
     // --agent none → portable export (no installed-agent target needed).
     if (args.agent === 'none') {
+      if (items.some(item => item.type === 'curator')) {
+        p.log.error('Curator installs require a target agent.')
+        process.exitCode = 1
+        return
+      }
       const packages = [...new Set(rawInputs.flatMap(s => s.split(COMMA_OR_WHITESPACE_RE)).map(s => s.trim()).filter(Boolean))]
       for (const pkg of packages)
         await exportPortablePrompts(pkg, { force: args.force, agent: 'none' })
@@ -55,8 +66,7 @@ export const addCommandDef = defineCommand({
     if (!hasCompletedWizard())
       await runWizard({ agent })
 
-    const items = rawInputs.map(parseSkillInput)
-    await installSkills(items, {
+    const summary = await installSkills(items, {
       agent,
       surface: 'cli:add',
       global: args.global,
@@ -67,5 +77,22 @@ export const addCommandDef = defineCommand({
       skillFilter: args.skill,
       allowUnsafe: args['allow-unsafe'],
     })
+    if (args.watch) {
+      if (summary.repositories.length === 0) {
+        p.log.warn('No GitHub repositories were resolved to watch.')
+        return
+      }
+      await watchRepositories(summary.repositories).then((result) => {
+        if (result._tag === 'AuthRequired') {
+          p.log.error('Skills installed. Run `skilld login`, then `skilld watch`.')
+          process.exitCode = 1
+          return
+        }
+        p.log.success(`Watching ${summary.repositories.length} repositories. ${result.inserted} added.`)
+      }).catch((error) => {
+        p.log.error(`Skills installed, but watch failed: ${error instanceof Error ? error.message : String(error)}`)
+        process.exitCode = 1
+      })
+    }
   },
 })
