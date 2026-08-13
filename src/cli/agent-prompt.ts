@@ -1,16 +1,22 @@
 import type { AgentType } from '../agent/index.ts'
 import { styleText } from 'node:util'
 import * as p from '@clack/prompts'
-import { agents, detectInstalledAgents, detectProjectAgents, detectTargetAgent } from '../agent/index.ts'
+import { agents, detectEnvAgent, detectInstalledAgents, detectProjectAgents } from '../agent/index.ts'
 import { readConfig, updateConfig } from '../core/config.ts'
 import { isInteractive } from './env.ts'
+
+function detectProjectAgent(): AgentType | null {
+  const projectMatches = detectProjectAgents()
+  return projectMatches.length === 1 ? projectMatches[0]! : null
+}
 
 export function resolveAgent(agentFlag?: string): AgentType | 'none' | null {
   if (process.env.SKILLD_NO_AGENT)
     return null
   return (agentFlag as AgentType | undefined)
-    ?? detectTargetAgent()
+    ?? detectEnvAgent()
     ?? (readConfig().agent as AgentType | undefined)
+    ?? detectProjectAgent()
     ?? null
 }
 
@@ -34,10 +40,6 @@ export function autoResolveAgent(agentFlag?: string): AgentType | null {
 
   if (process.env.SKILLD_NO_AGENT)
     return null
-
-  const projectMatches = detectProjectAgents()
-  if (projectMatches.length === 1)
-    return projectMatches[0]!
 
   const installed = detectInstalledAgents()
   if (installed.length === 1)
