@@ -1,28 +1,28 @@
+import type { AgentType } from '../agent/index.ts'
+import type { readLock } from '../core/index.ts'
 import type { SearchFilter } from '../retriv/index.ts'
 import { existsSync, readdirSync } from 'node:fs'
 import * as p from '@clack/prompts'
 import { join } from 'pathe'
-import { agents, detectTargetAgent } from '../agent/index.ts'
 import { getPackageDbPath, REFERENCES_DIR } from '../cache/index.ts'
-import { readLock } from '../core/index.ts'
-import { getSharedSkillsDir } from '../core/paths.ts'
 import { toStoragePackageName } from '../core/prefix.ts'
+import { readProjectLock } from '../core/skills.ts'
 
 const STATIC_REGEX_1 = /[-_/]+/
 const STATIC_REGEX_2 = /^(issues?|docs?|releases?):(.+)$/i
 
 /** Collect search.db paths for packages installed in the current project (from skilld-lock.yaml) */
-export function findPackageDbs(packageFilter?: string): string[] {
+export function findPackageDbs(packageFilter?: string, agentTypes?: AgentType[]): string[] {
   const cwd = process.cwd()
-  const lock = readProjectLock(cwd)
+  const lock = readProjectLock(cwd, agentTypes)
   if (!lock)
     return []
   return filterLockDbs(lock, packageFilter)
 }
 
 /** Build package name → version map from the project lockfile */
-export function getPackageVersions(cwd: string = process.cwd()): Map<string, string> {
-  const lock = readProjectLock(cwd)
+export function getPackageVersions(cwd: string = process.cwd(), agentTypes?: AgentType[]): Map<string, string> {
+  const lock = readProjectLock(cwd, agentTypes)
   const map = new Map<string, string>()
   if (!lock)
     return map
@@ -33,23 +33,9 @@ export function getPackageVersions(cwd: string = process.cwd()): Map<string, str
   return map
 }
 
-/** Read the project's skilld-lock.yaml (shared dir or agent skills dir) */
-function readProjectLock(cwd: string): ReturnType<typeof readLock> {
-  const shared = getSharedSkillsDir(cwd)
-  if (shared) {
-    const lock = readLock(shared)
-    if (lock)
-      return lock
-  }
-  const agent = detectTargetAgent()
-  if (!agent)
-    return null
-  return readLock(`${cwd}/${agents[agent].skillsDir}`)
-}
-
 /** List installed packages with versions from the project lockfile */
-export function listLockPackages(cwd: string = process.cwd()): string[] {
-  const lock = readProjectLock(cwd)
+export function listLockPackages(cwd: string = process.cwd(), agentTypes?: AgentType[]): string[] {
+  const lock = readProjectLock(cwd, agentTypes)
   if (!lock)
     return []
   const seen = new Map<string, string>()
