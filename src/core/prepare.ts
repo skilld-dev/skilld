@@ -9,7 +9,7 @@
 import type { SkillInfo } from './lockfile.ts'
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync, unlinkSync } from 'node:fs'
 import { basename, join } from 'pathe'
-import { getCacheDir } from '../cache/internal/version.ts'
+import { getCacheDir, isValidCachePackageName, isValidCacheVersion } from '../cache/internal/version.ts'
 import { readPackageJsonSafe } from './package-json.ts'
 import { README_FILENAME_RE } from './regex.ts'
 
@@ -24,11 +24,16 @@ function toStorageName(name: string): string {
 
 /** Resolve package directory: node_modules first, then global cache */
 export function resolvePkgDir(name: string, cwd: string, version?: string): string | null {
+  if (!isValidCachePackageName(name))
+    return null
+
   const nodeModulesPath = join(cwd, 'node_modules', name)
   if (existsSync(nodeModulesPath))
     return nodeModulesPath
 
   if (version) {
+    if (!isValidCacheVersion(version))
+      return null
     const cachedPkgDir = join(getCacheDir(name, version), 'pkg')
     if (existsSync(join(cachedPkgDir, 'package.json')))
       return cachedPkgDir
