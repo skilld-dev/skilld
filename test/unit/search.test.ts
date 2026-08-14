@@ -1,7 +1,7 @@
 import type { SearchSnippet } from '../../src/retriv/types'
 import { describe, expect, it } from 'vitest'
-import { generateSearchGuide, parseAgentFilter, parseFilterPrefix, parseJsonFilter } from '../../src/commands/search'
-import { normalizeScores, scoreLabel } from '../../src/core/formatting'
+import { generateSearchGuide, mergeSearchResults, parseAgentFilter, parseFilterPrefix, parseJsonFilter } from '../../src/commands/search'
+import { formatCompactSnippet, formatSnippet, normalizeScores, scoreLabel } from '../../src/core/formatting'
 
 function snippet(overrides: Partial<SearchSnippet> = {}): SearchSnippet {
   return {
@@ -182,6 +182,46 @@ describe('generateSearchGuide', () => {
     const guide = generateSearchGuide()
     for (const op of ['$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$prefix', '$exists'])
       expect(guide).toContain(op)
+  })
+})
+
+describe('mergeSearchResults', () => {
+  it('keeps matching source locations from different indexes', () => {
+    const projectResult = snippet({
+      package: 'foo-project',
+      referenceRoot: '.agents/skills/foo-project/.skilld',
+      source: 'src/index.ts',
+      score: 0.9,
+    })
+    const dependencyResult = snippet({
+      package: 'foo-project',
+      referenceRoot: '.claude/skills/foo-project/.skilld',
+      source: 'src/index.ts',
+      score: 0.8,
+    })
+
+    expect(mergeSearchResults([[projectResult], [dependencyResult]], 5)).toEqual([
+      projectResult,
+      dependencyResult,
+    ])
+  })
+
+  it('deduplicates matching source locations within a package', () => {
+    const result = snippet({ source: 'src/index.ts' })
+
+    expect(mergeSearchResults([[result], [{ ...result }]], 5)).toEqual([result])
+  })
+})
+
+describe('search result paths', () => {
+  it('uses an indexed project reference root when provided', () => {
+    const result = snippet({
+      source: 'project/src/index.ts',
+      referenceRoot: '.agents/skills/demo-project/.skilld',
+    })
+
+    expect(formatSnippet(result)).toContain('.agents/skills/demo-project/.skilld/project/src/index.ts:L1-10')
+    expect(formatCompactSnippet(result, 120).path).toBe('.agents/skills/demo-project/.skilld/project/src/index.ts:L1-10')
   })
 })
 

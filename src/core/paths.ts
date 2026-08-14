@@ -105,3 +105,8 @@ export function getRepoCacheDir(owner: string, repo: string): string {
 export function getPackageDbPath(name: string, version: string): string {
   return join(getReferencesDir(name, version), 'search.db')
 }
+
+/** Project-local search database for the live self skill */
+export function selfIndexDbPath(cwd: string = process.cwd()): string {
+  return join(cwd, '.skilld', 'self', 'search.db')
+}

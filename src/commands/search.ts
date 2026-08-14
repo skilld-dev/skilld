@@ -1,5 +1,5 @@
 import type { AgentType } from '../agent/index.ts'
-import type { SearchFilter } from '../retriv/index.ts'
+import type { SearchFilter, SearchSnippet } from '../retriv/index.ts'
 import * as p from '@clack/prompts'
 import { defineCommand } from 'citty'
 import { detectCurrentAgent } from 'unagent/env'
@@ -62,6 +62,20 @@ export interface SearchCommandOptions {
   limit?: number
 }
 
+export function mergeSearchResults(results: SearchSnippet[][], limit: number): SearchSnippet[] {
+  const seen = new Set<string>()
+  return results.flat()
+    .sort((a, b) => b.score - a.score)
+    .filter((result) => {
+      const key = `${result.package}:${result.referenceRoot ?? ''}:${result.source}:${result.lineStart}-${result.lineEnd}`
+      if (seen.has(key))
+        return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, limit)
+}
+
 export async function searchCommand(rawQuery: string, opts: SearchCommandOptions = {}): Promise<void> {
   const { packageFilter, limit: userLimit } = opts
   const dbs = findPackageDbs(packageFilter, opts.agents)
@@ -69,11 +83,16 @@ export async function searchCommand(rawQuery: string, opts: SearchCommandOptions
 
   if (dbs.length === 0) {
     if (packageFilter) {
-      const available = listLockPackages(process.cwd(), opts.agents)
-      if (available.length > 0)
-        p.log.warn(`No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`)
-      else
-        p.log.warn(`No docs indexed for "${packageFilter}". Run \`skilld add ${packageFilter}\` first.`)
+      if (packageFilter.toLowerCase() === 'self') {
+        p.log.warn('No project index found. Run `skilld self` first.')
+      }
+      else {
+        const available = listLockPackages(process.cwd(), opts.agents)
+        if (available.length > 0)
+          p.log.warn(`No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`)
+        else
+          p.log.warn(`No docs indexed for "${packageFilter}". Run \`skilld add ${packageFilter}\` first.`)
+      }
     }
     else {
       p.log.warn('No docs indexed yet. Run `skilld add <package>` first.')
@@ -103,18 +122,8 @@ export async function searchCommand(rawQuery: string, opts: SearchCommandOptions
     throw err
   }
 
-  // Merge, deduplicate by source+lineRange, and sort by score
-  const seen = new Set<string>()
-  const merged = allResults.flat()
-    .sort((a, b) => b.score - a.score)
-    .filter((r) => {
-      const key = `${r.source}:${r.lineStart}-${r.lineEnd}`
-      if (seen.has(key))
-        return false
-      seen.add(key)
-      return true
-    })
-    .slice(0, resultLimit)
+  // Merge, deduplicate within each package, and sort by score
+  const merged = mergeSearchResults(allResults, resultLimit)
 
   const elapsed = ((performance.now() - start) / 1000).toFixed(2)
 

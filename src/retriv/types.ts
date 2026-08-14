@@ -70,6 +70,8 @@ export interface SearchSnippet {
   package: string
   /** Source file path */
   source: string
+  /** Project-relative directory containing the referenced source tree */
+  referenceRoot?: string
   /** Start line number */
   lineStart: number
   /** End line number */

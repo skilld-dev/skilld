@@ -158,6 +158,10 @@ skilld add crate:serde
 skilld update
 skilld update tailwindcss
 
+# Build a searchable skill from the current project
+skilld self
+skilld search "how is authentication handled" -p self
+
 # Search docs across installed skills
 skilld search "useFetch options" -p nuxt
 skilld search "error" -p nuxt --filter '{"type":"issue"}'
@@ -191,6 +195,7 @@ skilld config
 | `skilld` | Interactive wizard (first run) or status menu (existing skills) |
 | `skilld add <source...>` | Add skills. Sources: `npm:<pkg>`, `crate:<name>`, `gh:<owner/repo>`, or bare names (deprecated) |
 | `skilld update [pkg]`   | Update outdated skills (all or specific) |
+| `skilld self`           | Build a searchable skill from the current project source and docs |
 | `skilld search [query]` | Search indexed docs (`-p` package, `--agents` filter, `--filter` JSON, `--limit`, `--guide`) |
 | `skilld list`           | List installed skills (`--json` for machine-readable output) |
 | `skilld info`           | Show skill info and config |

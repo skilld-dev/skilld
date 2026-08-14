@@ -5,19 +5,21 @@ import { existsSync, readdirSync } from 'node:fs'
 import * as p from '@clack/prompts'
 import { join } from 'pathe'
 import { getPackageDbPath, REFERENCES_DIR } from '../cache/index.ts'
+import { selfIndexDbPath } from '../core/paths.ts'
 import { toStoragePackageName } from '../core/prefix.ts'
 import { readProjectLock } from '../core/skills.ts'
 
 const STATIC_REGEX_1 = /[-_/]+/
 const STATIC_REGEX_2 = /^(issues?|docs?|releases?):(.+)$/i
 
-/** Collect search.db paths for packages installed in the current project (from skilld-lock.yaml) */
+/** Collect project-local and installed-package search databases. */
 export function findPackageDbs(packageFilter?: string, agentTypes?: AgentType[]): string[] {
   const cwd = process.cwd()
   const lock = readProjectLock(cwd, agentTypes)
-  if (!lock)
-    return []
-  return filterLockDbs(lock, packageFilter)
+  const packageDbs = lock ? filterLockDbs(lock, packageFilter) : []
+  const selfDb = selfIndexDbPath(cwd)
+  const includeSelf = existsSync(selfDb) && (!packageFilter || packageFilter.toLowerCase() === 'self')
+  return includeSelf ? [selfDb, ...packageDbs] : packageDbs
 }
 
 /** Build package name → version map from the project lockfile */

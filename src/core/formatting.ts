@@ -86,8 +86,13 @@ export function normalizeScores(results: SearchSnippet[]): Map<SearchSnippet, nu
   return map
 }
 
+function snippetRefPath(r: SearchSnippet): string {
+  const root = r.referenceRoot || `.claude/skills/${r.package}/.skilld`
+  return `${root}/${r.source}`
+}
+
 export function formatSnippet(r: SearchSnippet, versions?: Map<string, string>, pct?: number): string {
-  const refPath = `.claude/skills/${r.package}/.skilld/${r.source}`
+  const refPath = snippetRefPath(r)
   const lineRange = r.lineStart === r.lineEnd ? `L${r.lineStart}` : `L${r.lineStart}-${r.lineEnd}`
   const score = pct != null ? scoreLabel(pct) : styleText('gray', r.score.toFixed(2))
   const version = versions?.get(r.package)
@@ -112,7 +117,7 @@ export function formatCompactSnippet(r: SearchSnippet, cols: number): { title: s
   const scopeStr = r.scope?.length ? `${r.scope.map(e => e.name).join('.')} → ` : ''
   const title = entityStr ? `${scopeStr}${entityStr}` : r.source.split('/').pop() || r.source
 
-  const refPath = `.claude/skills/${r.package}/.skilld/${r.source}`
+  const refPath = snippetRefPath(r)
   const lineRange = r.lineStart === r.lineEnd ? `L${r.lineStart}` : `L${r.lineStart}-${r.lineEnd}`
   const path = `${refPath}:${lineRange}`
 
