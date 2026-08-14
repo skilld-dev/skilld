@@ -1,6 +1,5 @@
 import { GIT_PLUS_PREFIX_RE, GIT_PROTOCOL_PREFIX_RE, GIT_SUFFIX_RE, GITHUB_SSH_URL_PREFIX_RE } from './regex.ts'
 
-const STATIC_REGEX_1 = /github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:[/#]|$)/
 const STATIC_REGEX_3 = /#.*$/
 const STATIC_REGEX_7 = /^git@github\.com:/
 const STATIC_REGEX_8 = /^(?:127\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/
@@ -17,10 +16,19 @@ const STATIC_REGEX_9 = /^\[(?:f[cd]|fe[89ab]|::ffff:)/i
  * Parse owner/repo from GitHub URL
  */
 export function parseGitHubUrl(url: string): { owner: string, repo: string } | null {
-  const match = url.match(STATIC_REGEX_1)
-  if (!match)
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname !== 'github.com' && parsed.hostname !== 'www.github.com')
+      return null
+    const [, owner, repoWithSuffix] = parsed.pathname.split('/')
+    const repo = repoWithSuffix?.replace(GIT_SUFFIX_RE, '')
+    if (!owner || !repo)
+      return null
+    return { owner, repo }
+  }
+  catch {
     return null
-  return { owner: match[1]!, repo: match[2]! }
+  }
 }
 
 /** Parse owner/repo slug from GitHub URL */

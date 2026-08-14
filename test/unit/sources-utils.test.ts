@@ -36,6 +36,10 @@ describe('sources/utils', () => {
         owner: 'owner',
         repo: 'repo',
       })
+      expect(parseGitHubUrl('https://github.com/owner/repo.git/tree/main')).toEqual({
+        owner: 'owner',
+        repo: 'repo',
+      })
     })
 
     it('strips .git suffix from repo name', () => {
@@ -52,6 +56,9 @@ describe('sources/utils', () => {
     it('returns null for invalid URLs', () => {
       expect(parseGitHubUrl('https://gitlab.com/owner/repo')).toBeNull()
       expect(parseGitHubUrl('not-a-url')).toBeNull()
+      expect(parseGitHubUrl('https://notgithub.com/owner/repo')).toBeNull()
+      expect(parseGitHubUrl('https://example.com/github.com/owner/repo')).toBeNull()
+      expect(parseGitHubUrl('https://github.com/owner/.git')).toBeNull()
     })
   })
 
