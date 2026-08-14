@@ -69,11 +69,16 @@ export async function searchCommand(rawQuery: string, opts: SearchCommandOptions
 
   if (dbs.length === 0) {
     if (packageFilter) {
-      const available = listLockPackages(process.cwd(), opts.agents)
-      if (available.length > 0)
-        p.log.warn(`No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`)
-      else
-        p.log.warn(`No docs indexed for "${packageFilter}". Run \`skilld add ${packageFilter}\` first.`)
+      if (packageFilter.toLowerCase() === 'self') {
+        p.log.warn('No project index found. Run `skilld self` first.')
+      }
+      else {
+        const available = listLockPackages(process.cwd(), opts.agents)
+        if (available.length > 0)
+          p.log.warn(`No docs indexed for "${packageFilter}". Available: ${available.join(', ')}`)
+        else
+          p.log.warn(`No docs indexed for "${packageFilter}". Run \`skilld add ${packageFilter}\` first.`)
+      }
     }
     else {
       p.log.warn('No docs indexed yet. Run `skilld add <package>` first.')

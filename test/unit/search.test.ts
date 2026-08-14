@@ -1,7 +1,7 @@
 import type { SearchSnippet } from '../../src/retriv/types'
 import { describe, expect, it } from 'vitest'
 import { generateSearchGuide, parseAgentFilter, parseFilterPrefix, parseJsonFilter } from '../../src/commands/search'
-import { normalizeScores, scoreLabel } from '../../src/core/formatting'
+import { formatCompactSnippet, formatSnippet, normalizeScores, scoreLabel } from '../../src/core/formatting'
 
 function snippet(overrides: Partial<SearchSnippet> = {}): SearchSnippet {
   return {
@@ -182,6 +182,18 @@ describe('generateSearchGuide', () => {
     const guide = generateSearchGuide()
     for (const op of ['$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$prefix', '$exists'])
       expect(guide).toContain(op)
+  })
+})
+
+describe('search result paths', () => {
+  it('uses an indexed project reference root when provided', () => {
+    const result = snippet({
+      source: 'project/src/index.ts',
+      referenceRoot: '.agents/skills/demo-project/.skilld',
+    })
+
+    expect(formatSnippet(result)).toContain('.agents/skills/demo-project/.skilld/project/src/index.ts:L1-10')
+    expect(formatCompactSnippet(result, 120).path).toBe('.agents/skills/demo-project/.skilld/project/src/index.ts:L1-10')
   })
 })
 

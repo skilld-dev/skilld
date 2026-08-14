@@ -198,6 +198,7 @@ function toSnippets(results: SearchResult[]): SearchSnippet[] {
     return {
       package: r.metadata.package || 'unknown',
       source,
+      referenceRoot: typeof r.metadata.referenceRoot === 'string' ? r.metadata.referenceRoot : undefined,
       lineStart: r.lineRange?.[0] ?? 1,
       lineEnd: r.lineRange?.[1] ?? lines,
       content,

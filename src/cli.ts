@@ -60,7 +60,7 @@ function deprecatedForwarder(
 
 // ── Subcommands (lazy-loaded) ──
 
-const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'changes', 'watch', 'unwatch', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
+const SUBCOMMAND_NAMES = ['add', 'eject', 'update', 'changes', 'watch', 'unwatch', 'info', 'list', 'config', 'remove', 'install', 'uninstall', 'search', 'self', 'cache', 'validate', 'assemble', 'setup', 'prepare', 'author', 'publish', 'upload', 'login', 'logout', 'whoami', 'pull']
 
 // ── Main command ──
 
@@ -86,6 +86,7 @@ const main = defineCommand({
     prepare: () => import('./commands/prepare.ts').then(m => m.prepareCommandDef),
     uninstall: () => import('./commands/uninstall.ts').then(m => m.uninstallCommandDef),
     search: () => import('./commands/search.ts').then(m => m.searchCommandDef),
+    self: () => import('./commands/self.ts').then(m => m.selfCommandDef),
     cache: () => import('./commands/cache.ts').then(m => m.cacheCommandDef),
     setup: () => import('./commands/wizard.ts').then(m => m.setupCommandDef),
     login: () => import('./commands/login.ts').then(m => m.loginCommandDef),
