@@ -468,7 +468,7 @@ export async function suggestPrepareHook(cwd: string = process.cwd()): Promise<b
   if (existing?.includes('skilld'))
     return true
 
-  const prepareCmd = buildPrepareScript(existing)
+  const prepareCmd = buildPrepareScript(existing, cwd)
 
   if (!isInteractive()) {
     p.log.info(
@@ -505,8 +505,9 @@ export async function suggestPrepareHook(cwd: string = process.cwd()): Promise<b
 /**
  * Build the full prepare script value, safely appending to any existing command.
  */
-export function buildPrepareScript(existing: string | undefined): string {
-  const cmd = 'skilld prepare || true'
+export function buildPrepareScript(existing: string | undefined, cwd: string = process.cwd()): string {
+  const bin = isSkilldInstalled(cwd) ? 'skilld' : 'npx skilld'
+  const cmd = `${bin} prepare || true`
   if (!existing || !existing.trim())
     return cmd
 
@@ -518,6 +519,17 @@ export function buildPrepareScript(existing: string | undefined): string {
     return cmd
 
   return `${cleaned} && (${cmd})`
+}
+
+/**
+ * Check if skilld is listed as a dependency (dev or regular) in the project's package.json.
+ */
+function isSkilldInstalled(cwd: string): boolean {
+  const pkg = readPackageJsonSafe(join(cwd, 'package.json'))
+  if (!pkg)
+    return false
+  const deps = pkg.parsed as Record<string, any>
+  return !!(deps.dependencies?.skilld || deps.devDependencies?.skilld)
 }
 
 export function getRepoHint(name: string, cwd: string): string | undefined {
