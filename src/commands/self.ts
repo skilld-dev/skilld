@@ -42,6 +42,42 @@ const IGNORED_DIRS: Record<string, true> = {
 
 export const MAX_SELF_FILE_BYTES = 512 * 1024
 
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
+function assertSafeSkillDestination(cwd: string, skillDir: string): void {
+  const relativeDir = relative(cwd, skillDir)
+  if (relativeDir === '..' || relativeDir.startsWith('../'))
+    throw new Error(`Skill destination escapes the project: ${skillDir}`)
+
+  let current = cwd
+  for (const segment of relativeDir.split('/')) {
+    current = join(current, segment)
+    try {
+      if (lstatSync(current).isSymbolicLink())
+        throw new Error(`Refusing to write through symlink: ${current}`)
+    }
+    catch (error) {
+      if (!isMissingPathError(error))
+        throw error
+    }
+  }
+}
+
+function assertReplaceableProjectLink(projectLink: string): boolean {
+  try {
+    if (!lstatSync(projectLink).isSymbolicLink())
+      throw new Error(`Cannot replace non-symlink project reference: ${projectLink}`)
+    return true
+  }
+  catch (error) {
+    if (isMissingPathError(error))
+      return false
+    throw error
+  }
+}
+
 export interface SelfProject {
   name: string
   description?: string
@@ -145,6 +181,10 @@ export async function createSelfSkill(opts: CreateSelfSkillOptions): Promise<Cre
   const shared = getSharedSkillsDir(opts.cwd)
   const baseDir = shared || join(opts.cwd, agents[opts.agent].skillsDir)
   const skillDir = join(baseDir, skillName)
+  const internalDir = skillInternalDir(skillDir)
+  const projectLink = join(internalDir, 'project')
+  assertSafeSkillDestination(opts.cwd, internalDir)
+  assertReplaceableProjectLink(projectLink)
   const dbPath = selfIndexDbPath(opts.cwd)
   const referenceRoot = `${relative(opts.cwd, skillDir)}/.skilld`
   for (const document of project.documents)
@@ -208,19 +248,9 @@ export async function createSelfSkill(opts: CreateSelfSkillOptions): Promise<Cre
       rmSync(`${backupDbPath}${suffix}`, { force: true })
   }
 
-  const internalDir = skillInternalDir(skillDir)
   mkdirSync(internalDir, { recursive: true })
-  const projectLink = join(internalDir, 'project')
-  try {
-    const existing = lstatSync(projectLink)
-    if (!existing.isSymbolicLink())
-      throw new Error(`Cannot replace non-symlink project reference: ${projectLink}`)
+  if (assertReplaceableProjectLink(projectLink))
     unlinkSync(projectLink)
-  }
-  catch (error) {
-    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT')
-      throw error
-  }
   symlinkSync(relative(internalDir, opts.cwd), projectLink, 'dir')
   const skillContent = renderSelfSkill(project, skillName)
   writeFileSync(join(skillDir, 'SKILL.md'), skillContent)

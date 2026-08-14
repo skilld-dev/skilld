@@ -135,4 +135,64 @@ describe('createSelfSkill', () => {
     expect(readFileSync(dbPath, 'utf8')).toBe('working')
     expect(existsSync(`${dbPath}.previous`)).toBe(false)
   })
+
+  it('does not replace the index when the project reference is not replaceable', async () => {
+    const cwd = makeProject()
+    const dbPath = selfIndexDbPath(cwd)
+    mkdirSync(join(cwd, '.skilld/self'), { recursive: true })
+    writeFileSync(dbPath, 'working')
+    const projectLink = join(cwd, '.agents/skills/demo-project-project/.skilld/project')
+    mkdirSync(join(projectLink, '..'), { recursive: true })
+    writeFileSync(projectLink, 'not a symlink')
+
+    await expect(createSelfSkill({
+      cwd,
+      agent: 'codex',
+      index: async (_documents, config) => {
+        writeFileSync(config.dbPath, 'complete')
+      },
+    })).rejects.toThrow('Cannot replace non-symlink project reference')
+
+    expect(readFileSync(dbPath, 'utf8')).toBe('working')
+  })
+
+  it('rejects a symlinked skill destination', async () => {
+    const cwd = makeProject()
+    const outside = mkdtempSync(join(tmpdir(), 'skilld-self-outside-'))
+    fixtures.push(outside)
+    const skillsDir = join(cwd, '.agents/skills')
+    mkdirSync(skillsDir, { recursive: true })
+    symlinkSync(outside, join(skillsDir, 'demo-project-project'), 'dir')
+
+    await expect(createSelfSkill({
+      cwd,
+      agent: 'codex',
+      index: async (_documents, config) => {
+        writeFileSync(config.dbPath, 'complete')
+      },
+    })).rejects.toThrow('Refusing to write through symlink')
+
+    expect(existsSync(join(outside, 'SKILL.md'))).toBe(false)
+    expect(existsSync(join(outside, '_SKILL.md'))).toBe(false)
+  })
+
+  it('rejects a symlinked internal skill directory', async () => {
+    const cwd = makeProject()
+    const outside = mkdtempSync(join(tmpdir(), 'skilld-self-internal-outside-'))
+    fixtures.push(outside)
+    const skillDir = join(cwd, '.agents/skills/demo-project-project')
+    mkdirSync(skillDir, { recursive: true })
+    symlinkSync(outside, join(skillDir, '.skilld'), 'dir')
+
+    await expect(createSelfSkill({
+      cwd,
+      agent: 'codex',
+      index: async (_documents, config) => {
+        writeFileSync(config.dbPath, 'complete')
+      },
+    })).rejects.toThrow('Refusing to write through symlink')
+
+    expect(existsSync(join(outside, '_SKILL.md'))).toBe(false)
+    expect(existsSync(join(outside, 'project'))).toBe(false)
+  })
 })
