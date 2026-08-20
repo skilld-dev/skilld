@@ -1,0 +1,55 @@
+{
+  "name": "@skilld/harness",
+  "type": "module",
+  "version": "3.0.0-alpha.0",
+  "description": "Harness workflows for generating and reviewing Agent Skills",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skilld-dev/skilld.git",
+    "directory": "packages/harness"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./workflows": {
+      "types": "./dist/workflows.d.mts",
+      "import": "./dist/workflows.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "obuild && node scripts/copy-skilld-maintained-skills.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "catalog:",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider-utils": "catalog:",
+    "@antfu/eslint-config": "catalog:dev-lint",
+    "@types/node": "catalog:dev-build",
+    "@typescript/native": "catalog:",
+    "eslint": "catalog:dev-lint",
+    "obuild": "catalog:dev-build",
+    "typescript": "catalog:",
+    "vitest": "catalog:dev-test",
+    "ws": "catalog:",
+    "zod": "catalog:"
+  }
+}
