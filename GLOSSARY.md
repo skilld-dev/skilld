@@ -30,6 +30,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld remove` | Skill removal |
 | `skilld upgrade` | Skill upgrade |
 | `skilld verify` | source verification |
+| `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login|status|logout` | account authentication |
 | `skilld config get|set|list` | configuration |
 
