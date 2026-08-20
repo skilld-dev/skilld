@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "name": "vue-testing",
+      "description": "Test Vue components with current tools.",
+      "source": {
+        "provider": "github",
+        "owner": "skilld-dev",
+        "repository": "skills",
+        "selector": {
+          "type": "named-skill",
+          "name": "vue-testing"
+        }
+      },
+      "stargazerCount": 120
+    }
+  ],
+  "total": 1
+}

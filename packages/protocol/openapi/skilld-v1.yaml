@@ -9,6 +9,8 @@ info:
 servers:
   - url: https://skilld.dev
 tags:
+  - name: Skills
+    description: Skill discovery for the skilld CLI.
   - name: Resolutions
     description: Exact Repository source resolution and Artifact state.
   - name: Artifacts
@@ -16,6 +18,42 @@ tags:
   - name: Trust
     description: Attestation verification keys.
 paths:
+  /api/v1/skills:
+    get:
+      operationId: searchSkills
+      tags: [Skills]
+      summary: Search for Skills
+      security:
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Matching Skills in ranked order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillSearchResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
   /api/v1/resolutions:
     post:
       operationId: createResolution
@@ -215,6 +253,10 @@ components:
     CommitSha:
       type: string
       pattern: '^[a-f0-9]{40}$'
+    SkillName:
+      type: string
+      pattern: '^[a-z0-9](?:[a-z0-9]|-(?!-)){0,62}[a-z0-9]$|^[a-z0-9]$'
+      maxLength: 64
     RepositoryVisibility:
       type: string
       enum: [public, private]
@@ -252,9 +294,7 @@ components:
           type: string
           const: named-skill
         name:
-          type: string
-          minLength: 1
-          maxLength: 128
+          $ref: '#/components/schemas/SkillName'
     SourceRef:
       oneOf:
         - $ref: '#/components/schemas/BranchRef'
@@ -327,6 +367,34 @@ components:
       properties:
         source:
           $ref: '#/components/schemas/SourceRequest'
+    SkillSearchResult:
+      type: object
+      additionalProperties: false
+      required: [name, description, source, stargazerCount]
+      properties:
+        name:
+          $ref: '#/components/schemas/SkillName'
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        source:
+          $ref: '#/components/schemas/SourceRequest'
+        stargazerCount:
+          type: integer
+          minimum: 0
+    SkillSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/SkillSearchResult'
+        total:
+          type: integer
+          minimum: 0
     ResolvedSource:
       type: object
       additionalProperties: false

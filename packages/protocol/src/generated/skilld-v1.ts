@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search for Skills */
+        get: operations["searchSkills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/trusted-root": {
         parameters: {
             query?: never;
@@ -166,7 +183,7 @@ export interface components {
             source: components["schemas"]["SourceRequest"];
         };
         NamedSkillSelector: {
-            name: string;
+            name: components["schemas"]["SkillName"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -284,6 +301,17 @@ export interface components {
             visibility: components["schemas"]["RepositoryVisibility"];
         };
         Sha256: string;
+        SkillName: string;
+        SkillSearchResponse: {
+            items: components["schemas"]["SkillSearchResult"][];
+            total: number;
+        };
+        SkillSearchResult: {
+            description: string | null;
+            name: components["schemas"]["SkillName"];
+            source: components["schemas"]["SourceRequest"];
+            stargazerCount: number;
+        };
         SourceRef: components["schemas"]["BranchRef"] | components["schemas"]["TagRef"] | components["schemas"]["CommitRef"];
         SourceRequest: {
             owner: string;
@@ -473,6 +501,32 @@ export interface operations {
             };
             401: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    searchSkills: {
+        parameters: {
+            query: {
+                limit?: number;
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matching Skills in ranked order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillSearchResponse"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };
     };
