@@ -16,6 +16,14 @@ name = "skilld"
 path = "src/main.rs"
 
 [dependencies]
+skilld-auth.workspace = true
+
 skilld-command.workspace = true
 
+skilld-core.workspace = true
+
 tempfile.workspace = true
+
+ureq = { version = "=3.1.4", default-features = false, features = ["rustls"] }
+
+url.workspace = true

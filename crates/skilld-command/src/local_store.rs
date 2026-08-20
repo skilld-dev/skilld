@@ -174,6 +174,33 @@ impl LocalStore {
         })
     }
 
+    pub fn verify_content(
+        &self,
+        name: &SkillName,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<SkillView, StoreError> {
+        if !self.root.exists() {
+            return Err(StoreError::NotFound(format!(
+                "Skill {} is not installed",
+                name.as_str()
+            )));
+        }
+        let _lock = self.lock_existing()?;
+        self.recover_locked(known_targets)?;
+        let document = self.read_lock()?;
+        let skill = document
+            .skills
+            .get(name.as_str())
+            .cloned()
+            .ok_or_else(|| StoreError::NotFound(format!("Skill {name} is not installed")))?;
+        self.verify_managed_state(name, Some(&skill), known_targets)?;
+        Ok(SkillView {
+            name: name.to_string(),
+            canonical_path: self.root.join(name.as_str()),
+            skill,
+        })
+    }
+
     pub fn install_from(
         &self,
         source: &Path,
@@ -181,12 +208,31 @@ impl LocalStore {
         targets: &[TargetInstall],
         known_targets: &[ResolvedTarget],
     ) -> Result<SkillName, StoreError> {
-        self.install_from_with_gate(
+        self.install_from_with_gate_and_status(
             source,
             locked_source,
             targets,
             known_targets,
             &AllowTransaction,
+            None,
+        )
+    }
+
+    pub fn install_from_with_status(
+        &self,
+        source: &Path,
+        locked_source: LockedSource,
+        source_status: SourceStatus,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+    ) -> Result<SkillName, StoreError> {
+        self.install_from_with_gate_and_status(
+            source,
+            locked_source,
+            targets,
+            known_targets,
+            &AllowTransaction,
+            Some(source_status),
         )
     }
 
@@ -197,6 +243,25 @@ impl LocalStore {
         targets: &[TargetInstall],
         known_targets: &[ResolvedTarget],
         gate: &G,
+    ) -> Result<SkillName, StoreError> {
+        self.install_from_with_gate_and_status(
+            source,
+            locked_source,
+            targets,
+            known_targets,
+            gate,
+            None,
+        )
+    }
+
+    fn install_from_with_gate_and_status<G: TransactionGate>(
+        &self,
+        source: &Path,
+        locked_source: LockedSource,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+        gate: &G,
+        source_status: Option<SourceStatus>,
     ) -> Result<SkillName, StoreError> {
         ensure_write_capability()?;
         let source = absolute_normalized(source).map_err(fs_error)?;
@@ -285,15 +350,24 @@ impl LocalStore {
         if let Err(error) = gate.before_lock_commit(&self.lockfile_path()) {
             return self.rollback_error(error, known_targets);
         }
+        let source_status = source_status.unwrap_or_else(|| SourceStatus::Local {
+            content_sha256: digest.clone(),
+        });
+        if source_digest(&source_status) != digest {
+            return self.rollback_error(
+                StoreError::InvalidSource(
+                    "the installed Skill does not match its source status".to_owned(),
+                ),
+                known_targets,
+            );
+        }
         let mut new_lock = old_lock;
         new_lock.transaction_id.clone_from(&transaction);
         new_lock.skills.insert(
             name.to_string(),
             LockedSkill {
                 source: locked_source,
-                source_status: SourceStatus::Local {
-                    content_sha256: digest,
-                },
+                source_status,
                 targets: targets
                     .iter()
                     .map(|target| LockedTarget {
@@ -866,9 +940,13 @@ fn verify_managed_link(destination: &Path, canonical: &Path) -> Result<(), Store
 
 fn source_digest(status: &SourceStatus) -> &str {
     match status {
-        SourceStatus::Verified { content_sha256, .. }
-        | SourceStatus::Local { content_sha256 }
-        | SourceStatus::Unverified { content_sha256 } => content_sha256,
+        SourceStatus::Verified {
+            installed_sha256, ..
+        }
+        | SourceStatus::Unverified {
+            installed_sha256, ..
+        } => installed_sha256,
+        SourceStatus::Local { content_sha256 } => content_sha256,
     }
 }
 

@@ -262,7 +262,7 @@ fn an_existing_project_signal_selects_its_agent_target() {
 }
 
 #[test]
-fn missing_native_credential_capability_is_explicit() {
+fn native_auth_status_uses_the_os_credential_store() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     let data = temporary.path().join("data");
@@ -271,11 +271,12 @@ fn missing_native_credential_capability_is_explicit() {
     fs::create_dir_all(&home).unwrap();
     let output = run(&project, &data, &home, &["auth", "status"]);
 
-    assert_eq!(output.status.code(), Some(2));
+    assert!(output.status.success());
     assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
-        "UNSUPPORTED_HOST: credential access is unavailable on this host\n"
+        String::from_utf8(output.stdout).unwrap(),
+        "Not authenticated.\n"
     );
+    assert!(output.stderr.is_empty());
 }
 
 #[test]

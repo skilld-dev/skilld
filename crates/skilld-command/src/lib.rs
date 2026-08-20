@@ -1,5 +1,6 @@
 mod config;
 mod local_store;
+mod remote;
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -14,6 +15,11 @@ pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
     AllowTransaction, LocalStore, ResolvedTarget, SkillView, StoreError, TargetInstall,
     TransactionGate,
+};
+pub use remote::{
+    Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
+    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill, RemoteProvider,
+    RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallRequest,
@@ -45,6 +51,8 @@ enum Command {
         agents: Vec<String>,
         #[arg(long)]
         mode: Option<String>,
+        #[arg(long)]
+        direct: bool,
     },
     /// List installed Skills.
     List {
@@ -119,6 +127,24 @@ pub trait Host {
     fn remove(&self, _name: &str, _scope: InstallScope) -> Result<(), CommandError> {
         Err(CommandError::unsupported_host(
             "Skill removal is unavailable on this host",
+        ))
+    }
+
+    fn search(&self, _query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill search is unavailable on this host",
+        ))
+    }
+
+    fn verify(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+        Err(CommandError::unsupported_host(
+            "source verification is unavailable on this host",
+        ))
+    }
+
+    fn upgrade(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill upgrade is unavailable on this host",
         ))
     }
 
@@ -221,6 +247,13 @@ impl CommandError {
             message: error.to_string(),
         }
     }
+
+    pub fn remote(error: skilld_core::RemoteError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+        }
+    }
 }
 
 impl fmt::Display for CommandError {
@@ -309,9 +342,21 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
             global,
             agents,
             mode,
+            direct,
         } => {
             let scope = scope(global);
-            let source = source.map(|source| InstallSource::parse(&source));
+            let source = source
+                .map(|source| InstallSource::parse(&source))
+                .map(|source| match (direct, source) {
+                    (true, InstallSource::Remote(source)) => {
+                        Ok(InstallSource::DirectRemote(source))
+                    }
+                    (true, _) => Err(CommandError::input(
+                        "--direct needs an explicit public GitHub Repository selector",
+                    )),
+                    (false, source) => Ok(source),
+                })
+                .transpose()?;
             if source == Some(InstallSource::BundledSkilld) && scope != InstallScope::Global {
                 return Err(CommandError::input(
                     "install the skilld-maintained Skill with --global",
@@ -332,10 +377,14 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
                 targets,
                 mode,
             })?;
-            Ok(names
+            let mut lines = names
                 .into_iter()
                 .map(|name| format!("Installed Skill {name}."))
-                .collect())
+                .collect::<Vec<_>>();
+            if direct {
+                lines.push("Review the unverified Skill before use.".to_owned());
+            }
+            Ok(lines)
         }
         Command::List { global } => host.list(scope(global)),
         Command::View { skill, global } => render_view(host.view(&skill, scope(global))?),
@@ -374,18 +423,31 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
         Command::Config {
             command: ConfigCommand::List,
         } => host.config_list(),
-        Command::Search { query } => unavailable(format!(
-            "Skill search is not implemented yet: {}",
-            query.join(" ")
-        )),
-        Command::Upgrade { skill } => unavailable(format!(
-            "Skill upgrade is not implemented yet: {}",
-            skill.unwrap_or_else(|| "all installed Skills".to_owned())
-        )),
-        Command::Verify { skill } => unavailable(format!(
-            "source verification is not implemented yet: {}",
-            skill.unwrap_or_else(|| "all installed Skills".to_owned())
-        )),
+        Command::Search { query } => host
+            .search(&query.join(" "))?
+            .into_iter()
+            .map(|result| {
+                let selector = result.selector().map_err(CommandError::remote)?;
+                let description = result
+                    .description
+                    .unwrap_or_default()
+                    .chars()
+                    .map(|character| {
+                        if character.is_control() {
+                            ' '
+                        } else {
+                            character
+                        }
+                    })
+                    .collect::<String>();
+                Ok(format!(
+                    "{}\t{}\t{}\t{} stars",
+                    result.name, selector, description, result.stargazer_count
+                ))
+            })
+            .collect(),
+        Command::Upgrade { skill } => host.upgrade(skill.as_deref()),
+        Command::Verify { skill } => host.verify(skill.as_deref()),
     }
 }
 
@@ -393,7 +455,7 @@ fn render_view(view: SkillView) -> Result<Vec<String>, CommandError> {
     let source = match view.skill.source {
         LockedSource::Local { path } => format!("local {path}"),
         LockedSource::BundledSkilld => "skilld-maintained Skill".to_owned(),
-        LockedSource::Remote { source } => source,
+        LockedSource::Remote { source, .. } => source,
     };
     let targets = if view.skill.targets.is_empty() {
         "none".to_owned()
@@ -412,10 +474,6 @@ fn render_view(view: SkillView) -> Result<Vec<String>, CommandError> {
         format!("Source status: {}", view.skill.source_status.as_str()),
         format!("Agent targets: {targets}"),
     ])
-}
-
-fn unavailable<T>(message: String) -> Result<T, CommandError> {
-    Err(CommandError::not_implemented(message))
 }
 
 fn scope(global: bool) -> InstallScope {
@@ -464,6 +522,12 @@ pub trait BundledSkillProvider: Send + Sync {
     fn skilld_source(&self) -> Result<PathBuf, CommandError>;
 }
 
+pub trait AccountProvider: Send + Sync {
+    fn status(&self) -> Result<bool, CommandError>;
+    fn login(&self) -> Result<(), CommandError>;
+    fn logout(&self) -> Result<(), CommandError>;
+}
+
 #[derive(Clone, Debug)]
 struct DirectoryBundledSkillProvider {
     path: PathBuf,
@@ -481,6 +545,8 @@ pub struct LocalHost {
     target_roots: TargetRoots,
     detection: DetectionEnvironment,
     bundled_skill: Option<Arc<dyn BundledSkillProvider>>,
+    remote: Option<Arc<dyn RemoteProvider>>,
+    account: Option<Arc<dyn AccountProvider>>,
 }
 
 impl LocalHost {
@@ -499,6 +565,8 @@ impl LocalHost {
             ),
             detection: DetectionEnvironment::default(),
             bundled_skill: None,
+            remote: None,
+            account: None,
         }
     }
 
@@ -519,6 +587,16 @@ impl LocalHost {
 
     pub fn with_bundled_skill(self, path: PathBuf) -> Self {
         self.with_bundled_provider(Arc::new(DirectoryBundledSkillProvider { path }))
+    }
+
+    pub fn with_remote_provider(mut self, provider: Arc<dyn RemoteProvider>) -> Self {
+        self.remote = Some(provider);
+        self
+    }
+
+    pub fn with_account_provider(mut self, provider: Arc<dyn AccountProvider>) -> Self {
+        self.account = Some(provider);
+        self
     }
 
     fn store(&self, scope: InstallScope) -> LocalStore {
@@ -632,7 +710,43 @@ impl LocalHost {
             InstallSource::Remote(source) => Err(CommandError::not_implemented(format!(
                 "Artifact delivery is not implemented yet: {source}"
             ))),
+            InstallSource::DirectRemote(source) => Err(CommandError::not_implemented(format!(
+                "direct Repository access is not implemented yet: {source}"
+            ))),
         }
+    }
+
+    fn remote_provider(&self) -> Result<&dyn RemoteProvider, CommandError> {
+        self.remote.as_deref().ok_or_else(|| {
+            CommandError::service("remote Artifact delivery is unavailable in this build")
+        })
+    }
+
+    fn install_remote(
+        &self,
+        source: &str,
+        direct: bool,
+        scope: InstallScope,
+        targets: &[TargetInstall],
+        known: &[ResolvedTarget],
+    ) -> Result<String, CommandError> {
+        let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+        let prepared = self
+            .remote_provider()?
+            .prepare(&selector, direct)
+            .map_err(CommandError::remote)?;
+        let staged = materialize_remote(&prepared.files)?;
+        let name = self
+            .store(scope)
+            .install_from_with_status(
+                staged.path(),
+                prepared.locked_source,
+                prepared.source_status,
+                targets,
+                known,
+            )
+            .map_err(CommandError::store)?;
+        Ok(name.to_string())
     }
 
     fn restore(&self, request: &InstallRequest) -> Result<Vec<String>, CommandError> {
@@ -673,15 +787,63 @@ impl LocalHost {
                     }
                 })
                 .collect::<Vec<_>>();
-            let source = match view.skill.source {
-                LockedSource::Local { path } => InstallSource::Local(PathBuf::from(path)),
-                LockedSource::BundledSkilld => InstallSource::BundledSkilld,
-                LockedSource::Remote { source } => InstallSource::Remote(source),
-            };
-            let (source, locked_source) = self.resolve_source(source)?;
-            store
-                .install_from(&source, locked_source, &restored_targets, &known)
-                .map_err(CommandError::store)?;
+            match view.skill.source {
+                LockedSource::Local { path } => {
+                    let (source, locked_source) =
+                        self.resolve_source(InstallSource::Local(PathBuf::from(path)))?;
+                    store
+                        .install_from(&source, locked_source, &restored_targets, &known)
+                        .map_err(CommandError::store)?;
+                }
+                LockedSource::BundledSkilld => {
+                    let (source, locked_source) =
+                        self.resolve_source(InstallSource::BundledSkilld)?;
+                    store
+                        .install_from(&source, locked_source, &restored_targets, &known)
+                        .map_err(CommandError::store)?;
+                }
+                LockedSource::Remote {
+                    source, commit_sha, ..
+                } => {
+                    if !matches!(
+                        view.skill.source_status,
+                        skilld_core::SourceStatus::Verified { .. }
+                    ) {
+                        return Err(CommandError {
+                            code: "UNVERIFIED_SOURCE",
+                            message:
+                                "restore an unverified Skill with an explicit --direct install"
+                                    .to_owned(),
+                        });
+                    }
+                    let selector = skilld_core::RemoteSelector::parse(&source)
+                        .map_err(CommandError::remote)?;
+                    let mut exact_source = selector.source().clone();
+                    exact_source.r#ref = Some(skilld_core::SourceRef::Commit { value: commit_sha });
+                    let exact = match selector {
+                        skilld_core::RemoteSelector::Skilld(_) => {
+                            skilld_core::RemoteSelector::Skilld(exact_source)
+                        }
+                        skilld_core::RemoteSelector::Github(_) => {
+                            skilld_core::RemoteSelector::Github(exact_source)
+                        }
+                    };
+                    let prepared = self
+                        .remote_provider()?
+                        .prepare(&exact, false)
+                        .map_err(CommandError::remote)?;
+                    let staged = materialize_remote(&prepared.files)?;
+                    store
+                        .install_from_with_status(
+                            staged.path(),
+                            prepared.locked_source,
+                            prepared.source_status,
+                            &restored_targets,
+                            &known,
+                        )
+                        .map_err(CommandError::store)?;
+                }
+            }
             restored.push(name);
         }
         Ok(restored)
@@ -711,12 +873,22 @@ impl Host for LocalHost {
             return self.restore(&request);
         };
         let (targets, known) = self.select_installs(&request)?;
-        let (source, locked_source) = self.resolve_source(source)?;
-        let name = self
-            .store(request.scope)
-            .install_from(&source, locked_source, &targets, &known)
-            .map_err(CommandError::store)?;
-        Ok(vec![name.to_string()])
+        match source {
+            InstallSource::Remote(source) => self
+                .install_remote(&source, false, request.scope, &targets, &known)
+                .map(|name| vec![name]),
+            InstallSource::DirectRemote(source) => self
+                .install_remote(&source, true, request.scope, &targets, &known)
+                .map(|name| vec![name]),
+            source => {
+                let (source, locked_source) = self.resolve_source(source)?;
+                let name = self
+                    .store(request.scope)
+                    .install_from(&source, locked_source, &targets, &known)
+                    .map_err(CommandError::store)?;
+                Ok(vec![name.to_string()])
+            }
+        }
     }
 
     fn view(&self, name: &str, scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -748,6 +920,229 @@ impl Host for LocalHost {
 
     fn config_list(&self) -> Result<Vec<String>, CommandError> {
         Ok(self.config_store().read()?.entries())
+    }
+
+    fn auth_status(&self) -> Result<bool, CommandError> {
+        self.account
+            .as_deref()
+            .ok_or_else(|| CommandError::unsupported_host("credential access is unavailable"))?
+            .status()
+    }
+
+    fn auth_login(&self) -> Result<(), CommandError> {
+        self.account
+            .as_deref()
+            .ok_or_else(|| CommandError::unsupported_host("browser access is unavailable"))?
+            .login()
+    }
+
+    fn auth_logout(&self) -> Result<(), CommandError> {
+        self.account
+            .as_deref()
+            .ok_or_else(|| CommandError::unsupported_host("credential access is unavailable"))?
+            .logout()
+    }
+
+    fn search(&self, query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+        self.remote_provider()?
+            .search(query, 20)
+            .map_err(CommandError::remote)
+    }
+
+    fn verify(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        let names = selected_names(&store, &known, requested)?;
+        let mut lines = Vec::new();
+        for name in names {
+            let name = skilld_core::SkillName::parse(name).map_err(CommandError::domain)?;
+            let view = store
+                .verify_content(&name, &known)
+                .map_err(|error| match error {
+                    StoreError::Conflict(message) => CommandError {
+                        code: "CONTENT_CHANGED",
+                        message,
+                    },
+                    error => CommandError::store(error),
+                })?;
+            match (&view.skill.source, &view.skill.source_status) {
+                (
+                    LockedSource::Remote {
+                        source, commit_sha, ..
+                    },
+                    skilld_core::SourceStatus::Verified { artifact_id, .. },
+                ) => {
+                    let selector =
+                        skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+                    match self
+                        .remote_provider()?
+                        .source_state(&selector, artifact_id, commit_sha)
+                        .map_err(CommandError::remote)?
+                    {
+                        RemoteSourceState::Current => {
+                            lines.push(format!("Verified Skill {}.", name.as_str()));
+                        }
+                        RemoteSourceState::Stale { .. } => {
+                            return Err(CommandError {
+                                code: "SOURCE_STALE",
+                                message: format!(
+                                    "Skill {} has a newer or changed source",
+                                    name.as_str()
+                                ),
+                            });
+                        }
+                    }
+                }
+                (_, skilld_core::SourceStatus::Unverified { .. }) => {
+                    return Err(CommandError {
+                        code: "UNVERIFIED_SOURCE",
+                        message: format!("Skill {} has an unverified source", name.as_str()),
+                    });
+                }
+                _ => lines.push(format!("Checked local Skill {}.", name.as_str())),
+            }
+        }
+        Ok(lines)
+    }
+
+    fn upgrade(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        let names = selected_names(&store, &known, requested)?;
+        let mut upgraded = Vec::new();
+        for name in names {
+            let skill_name =
+                skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
+            let view = store
+                .view(&skill_name, &known)
+                .map_err(CommandError::store)?;
+            let LockedSource::Remote { source, .. } = &view.skill.source else {
+                continue;
+            };
+            if !matches!(
+                view.skill.source_status,
+                skilld_core::SourceStatus::Verified { .. }
+            ) {
+                return Err(CommandError {
+                    code: "UNVERIFIED_SOURCE",
+                    message: format!("Skill {name} needs another explicit --direct install"),
+                });
+            }
+            let selector =
+                skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+            let prepared = self
+                .remote_provider()?
+                .prepare(&selector, false)
+                .map_err(CommandError::remote)?;
+            let staged = materialize_remote(&prepared.files)?;
+            let staged_name =
+                skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
+            if staged_name != skill_name {
+                return Err(CommandError {
+                    code: "SOURCE_MISMATCH",
+                    message: format!("the upgraded Skill name changed from {name}"),
+                });
+            }
+            let targets = view
+                .skill
+                .targets
+                .iter()
+                .map(|locked| {
+                    known
+                        .iter()
+                        .find(|target| target.agent == locked.agent)
+                        .cloned()
+                        .map(|target| TargetInstall {
+                            target,
+                            mode: locked.mode,
+                        })
+                        .ok_or_else(|| {
+                            CommandError::domain(DomainError::InvalidTarget(
+                                locked.agent.to_string(),
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            store
+                .install_from_with_status(
+                    staged.path(),
+                    prepared.locked_source,
+                    prepared.source_status,
+                    &targets,
+                    &known,
+                )
+                .map_err(CommandError::store)?;
+            upgraded.push(format!("Upgraded Skill {name}."));
+        }
+        Ok(upgraded)
+    }
+}
+
+struct StagedRemote {
+    _directory: tempfile::TempDir,
+    skill: PathBuf,
+}
+
+impl StagedRemote {
+    fn path(&self) -> &Path {
+        &self.skill
+    }
+}
+
+fn materialize_remote(files: &[skilld_core::PreparedFile]) -> Result<StagedRemote, CommandError> {
+    let (name, _, files) =
+        skilld_core::prepare_unverified_files(files.to_vec()).map_err(CommandError::remote)?;
+    let directory = tempfile::Builder::new()
+        .prefix("skilld-remote-")
+        .tempdir()
+        .map_err(|error| CommandError::filesystem(format!("cannot stage the Skill: {error}")))?;
+    let skill = directory.path().join(name.as_str());
+    fs::create_dir(&skill)
+        .map_err(|error| CommandError::filesystem(format!("cannot stage the Skill: {error}")))?;
+    for file in files {
+        let path = skill.join(&file.path);
+        let parent = path
+            .parent()
+            .ok_or_else(|| CommandError::filesystem("cannot resolve a staged Skill file parent"))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            CommandError::filesystem(format!("cannot stage a Skill directory: {error}"))
+        })?;
+        let mut destination = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                CommandError::filesystem(format!("cannot stage a Skill file: {error}"))
+            })?;
+        destination.write_all(&file.bytes).map_err(|error| {
+            CommandError::filesystem(format!("cannot write a staged Skill file: {error}"))
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(file.mode)).map_err(|error| {
+                CommandError::filesystem(format!("cannot set a staged Skill mode: {error}"))
+            })?;
+        }
+    }
+    Ok(StagedRemote {
+        _directory: directory,
+        skill,
+    })
+}
+
+fn selected_names(
+    store: &LocalStore,
+    known: &[ResolvedTarget],
+    requested: Option<&str>,
+) -> Result<Vec<String>, CommandError> {
+    if let Some(name) = requested {
+        skilld_core::SkillName::parse(name.to_owned()).map_err(CommandError::domain)?;
+        Ok(vec![name.to_owned()])
+    } else {
+        store.list(known).map_err(CommandError::store)
     }
 }
 

@@ -12,6 +12,7 @@ pub enum SourceStatus {
     Verified {
         artifact_id: String,
         content_sha256: String,
+        installed_sha256: String,
         attestation_key_id: String,
     },
     Local {
@@ -19,6 +20,7 @@ pub enum SourceStatus {
     },
     Unverified {
         content_sha256: String,
+        installed_sha256: String,
     },
 }
 
@@ -35,9 +37,15 @@ impl SourceStatus {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "camelCase")]
 pub enum LockedSource {
-    Local { path: String },
+    Local {
+        path: String,
+    },
     BundledSkilld,
-    Remote { source: String },
+    Remote {
+        source: String,
+        commit_sha: String,
+        skill_path: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

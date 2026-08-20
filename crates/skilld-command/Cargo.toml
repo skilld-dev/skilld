@@ -12,6 +12,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22.1"
+
 clap.workspace = true
 
 serde.workspace = true
@@ -22,11 +24,15 @@ sha2.workspace = true
 
 skilld-core.workspace = true
 
+tempfile.workspace = true
+
+url = "2.5.7"
+
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 fs4.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+ed25519-dalek = "2.2.0"
 
 [lib]
 path = "src/lib.rs"

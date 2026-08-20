@@ -1,4 +1,5 @@
 mod embedded_skill;
+mod native_auth;
 
 use std::env;
 use std::path::PathBuf;
@@ -6,7 +7,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use embedded_skill::EmbeddedSkilld;
-use skilld_command::{DetectionEnvironment, LocalHost, TargetRoots, run, run_stdio_probe};
+use native_auth::NativeAccount;
+use skilld_command::{
+    DetectionEnvironment, LocalHost, NativeRemoteConfig, SkilldRemote, TargetRoots, run,
+    run_stdio_probe,
+};
+use skilld_core::TrustedRootPin;
+use skilld_native::NativeHttpAdapter;
 
 fn main() -> ExitCode {
     if env::var_os("SKILLD_PROBE_STDIO").as_deref() == Some(std::ffi::OsStr::new("1")) {
@@ -25,15 +32,35 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
+    let account = Arc::new(NativeAccount::new());
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
         .with_detection_environment(detection_environment())
-        .with_bundled_provider(Arc::new(EmbeddedSkilld::new()));
+        .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
+        .with_account_provider(account.clone())
+        .with_remote_provider(Arc::new(SkilldRemote::new(
+            Arc::new(NativeHttpAdapter::new()),
+            account,
+            native_remote_config(),
+        )));
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
     let result = run(env::args_os(), &host, &mut stdout, &mut stderr);
     ExitCode::from(result.exit_code)
+}
+
+fn native_remote_config() -> NativeRemoteConfig {
+    match (
+        option_env!("SKILLD_ROOT_KEY_ID"),
+        option_env!("SKILLD_ROOT_PUBLIC_KEY"),
+    ) {
+        (Some(key_id), Some(public_key)) => NativeRemoteConfig::Pinned(TrustedRootPin {
+            key_id: key_id.to_owned(),
+            public_key: public_key.to_owned(),
+        }),
+        _ => NativeRemoteConfig::Unconfigured,
+    }
 }
 
 fn target_roots() -> TargetRoots {
