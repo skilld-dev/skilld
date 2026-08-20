@@ -1,0 +1,16 @@
+{
+  "state": "blocked",
+  "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+  "checkResults": [
+    {
+      "name": "path-policy",
+      "version": "1",
+      "outcome": "fail",
+      "required": true,
+      "summary": "The Skill contains a symbolic link.",
+      "findings": [
+        "references/latest"
+      ]
+    }
+  ]
+}

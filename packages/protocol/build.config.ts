@@ -6,6 +6,7 @@ export default defineBuildConfig({
       type: 'bundle',
       input: [
         './src/wire.ts',
+        './src/v1.ts',
         './src/constants.ts',
         './src/test-fixtures.ts',
       ],

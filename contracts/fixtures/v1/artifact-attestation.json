@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "artifactId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "createdAt": "2026-08-20T00:00:00.000Z",
+  "source": {
+    "provider": "github",
+    "repositoryId": 123456789,
+    "owner": "skilld-dev",
+    "repository": "skilld",
+    "visibility": "public",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567",
+    "treeSha": "89abcdef0123456789abcdef0123456789abcdef",
+    "skillPath": "skills/skilld"
+  },
+  "sourceStatus": "verified",
+  "format": "skilld-tar-v1",
+  "contentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contentBytes": 5120,
+  "policyVersion": "2026-08-20",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "mode": 420,
+      "size": 320,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "checkResults": [
+    {
+      "name": "path-policy",
+      "version": "1",
+      "outcome": "pass",
+      "required": true
+    }
+  ],
+  "signature": {
+    "algorithm": "Ed25519",
+    "keyId": "skilld-production-2026-03",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

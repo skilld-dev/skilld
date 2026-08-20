@@ -16,6 +16,7 @@ catalog:
   '@earendil-works/pi-ai': ^0.84.1
   '@mdream/crawl': ^1.6.1
   '@napi-rs/keyring': ^1.3.0
+  '@redocly/cli': ^2.46.2
   '@typescript/native': npm:typescript@7.0.2
   bumpp: ^12.2.0
   giget: ^3.3.1
@@ -23,6 +24,7 @@ catalog:
   jsonc-parser: ^3.3.1
   mdream: ^1.6.1
   ofetch: ^1.5.1
+  openapi-typescript: ^7.13.0
   pathe: ^2.0.3
   publint: ^0.3.23
   retriv: ^0.15.0

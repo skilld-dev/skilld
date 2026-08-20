@@ -1,0 +1,8 @@
+{
+  "type": "https://skilld.dev/problems/check-blocked",
+  "title": "Artifact checks blocked installation",
+  "status": 409,
+  "detail": "Review the check results before choosing direct access.",
+  "instance": "/api/v1/resolutions/018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+  "code": "CHECK_BLOCKED"
+}
