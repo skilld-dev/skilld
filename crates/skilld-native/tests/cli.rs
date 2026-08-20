@@ -261,22 +261,37 @@ fn an_existing_project_signal_selects_its_agent_target() {
     assert!(project.join(".cursor/skills/local-skill/SKILL.md").exists());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn native_auth_status_uses_the_os_credential_store() {
+fn native_auth_status_surfaces_an_unavailable_os_credential_store() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     let data = temporary.path().join("data");
     let home = temporary.path().join("home");
     fs::create_dir_all(&project).unwrap();
     fs::create_dir_all(&home).unwrap();
-    let output = run(&project, &data, &home, &["auth", "status"]);
+    let output = Command::new(binary())
+        .current_dir(&project)
+        .env("SKILLD_DATA_DIR", &data)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!(
+                "unix:path={}",
+                temporary.path().join("missing-bus").display()
+            ),
+        )
+        .args(["auth", "status"])
+        .output()
+        .unwrap();
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "Not authenticated.\n"
+        String::from_utf8(output.stderr).unwrap(),
+        "SERVICE_UNAVAILABLE: The OS keychain operation failed.\n"
     );
-    assert!(output.stderr.is_empty());
+    assert!(output.stdout.is_empty());
 }
 
 #[test]
