@@ -1,0 +1,23 @@
+{
+  "name": "@skilld/cli-wasm32-wasi",
+  "version": "3.0.0-alpha.1",
+  "description": "WASIp2 fallback host for the skilld CLI",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "component",
+    "host-imports.mjs",
+    "run-component.mjs"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./runner": "./run-component.mjs"
+  },
+  "dependencies": {
+    "@bytecodealliance/preview2-shim": "0.20.2"
+  }
+}

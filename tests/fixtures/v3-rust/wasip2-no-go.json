@@ -1,0 +1,14 @@
+{
+  "target": "wasm32-wasip2",
+  "host": {
+    "node": "24.18.0",
+    "jco": "1.30.0",
+    "preview2Shim": "0.20.2"
+  },
+  "operation": "create the transaction journal file",
+  "result": {
+    "type": "unsupported",
+    "message": "Not supported (os error 58)"
+  },
+  "decision": "Keep WASIp2 unpublished until Skill install parity passes."
+}

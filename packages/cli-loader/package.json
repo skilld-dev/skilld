@@ -1,0 +1,14 @@
+{
+  "name": "@skilld/cli-loader-proof",
+  "version": "3.0.0-alpha.1",
+  "description": "Artifact selection proof for the skilld CLI",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "skilld-rust-proof": "./bin/skilld.mjs"
+  }
+}
