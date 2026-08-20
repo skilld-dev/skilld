@@ -55,7 +55,7 @@ skilld upgrade vue
 skilld remove vue
 ```
 
-Project installs update `skilld.lock` and the selected Agent targets.
+Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
 Use `--global` for account level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
 
