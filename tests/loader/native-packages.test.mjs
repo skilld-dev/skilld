@@ -10,6 +10,7 @@ import { afterEach, it } from 'vitest'
 import {
   independentPackagePublishDecision,
   nativePackageSpecs,
+  packagePublishDecision,
   verifyNativePackages,
   verifyPackedNativePackage,
   verifyReleaseVersions,
@@ -168,6 +169,23 @@ it('fails when the registry returns another package version', () => {
     }),
     /different package version/,
   )
+})
+
+it('skips a shared package that a partial release already published', () => {
+  const decision = packagePublishDecision({
+    packageName: '@skilld/cli-linux-x64-gnu',
+    response: {
+      body: { name: '@skilld/cli-linux-x64-gnu', version: '3.0.0-alpha.1' },
+      status: 200,
+    },
+    version: '3.0.0-alpha.1',
+  })
+
+  assert.deepEqual(decision, {
+    _tag: 'Skip',
+    packageName: '@skilld/cli-linux-x64-gnu',
+    version: '3.0.0-alpha.1',
+  })
 })
 
 async function temporaryDirectory() {

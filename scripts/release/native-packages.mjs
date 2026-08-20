@@ -133,7 +133,7 @@ export async function verifyReleaseVersions(repositoryRoot, tag) {
   }
 }
 
-export function independentPackagePublishDecision({ packageName, response, version }) {
+export function packagePublishDecision({ packageName, response, version }) {
   if (response.status === 404) {
     return {
       _tag: 'Publish',
@@ -152,6 +152,8 @@ export function independentPackagePublishDecision({ packageName, response, versi
   }
 }
 
+export const independentPackagePublishDecision = packagePublishDecision
+
 export async function lookupIndependentPackage({
   fetch: fetchRegistry = globalThis.fetch,
   packageName,
@@ -165,7 +167,7 @@ export async function lookupIndependentPackage({
     signal: AbortSignal.timeout(10_000),
   })
   if (response.status !== 200) {
-    return independentPackagePublishDecision({
+    return packagePublishDecision({
       packageName,
       response: { status: response.status },
       version,
@@ -179,7 +181,7 @@ export async function lookupIndependentPackage({
   if (Buffer.byteLength(text) > REGISTRY_RESPONSE_LIMIT)
     throw new Error('npm registry response is too large')
   const body = JSON.parse(text)
-  return independentPackagePublishDecision({
+  return packagePublishDecision({
     packageName,
     response: { body, status: response.status },
     version,
@@ -282,7 +284,18 @@ async function main([command, argument]) {
     process.stdout.write(`${decision._tag === 'Publish'}\n`)
     return
   }
-  throw new Error('Expected directories, matrix, protocol-publish, verify, verify-packed, or versions')
+  if (command === 'package-publish') {
+    const directory = resolve(argument ?? '.')
+    const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+    const decision = await lookupIndependentPackage({
+      packageName: manifest.name,
+      version: manifest.version,
+    })
+    process.stderr.write(`${decision.packageName}@${decision.version}: ${decision._tag.toLowerCase()}\n`)
+    process.stdout.write(`${decision._tag === 'Publish'}\n`)
+    return
+  }
+  throw new Error('Expected directories, matrix, package-publish, protocol-publish, verify, verify-packed, or versions')
 }
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {

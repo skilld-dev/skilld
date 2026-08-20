@@ -20,16 +20,16 @@ Refine the query when several Skills cover different tasks.
 
 ## Install a Skill
 
-Install into the detected Agent target:
+Install the selector returned by search into the detected Agent target:
 
 ```sh
-skilld install <skill>
+skilld install <selector>
 ```
 
 Install into global Agent targets:
 
 ```sh
-skilld install <skill> --global
+skilld install <selector> --global
 ```
 
 Install this skilld-maintained Skill globally:
@@ -38,7 +38,7 @@ Install this skilld-maintained Skill globally:
 skilld install skilld --global
 ```
 
-Use the source selector shown by `skilld search` when names are ambiguous.
+Always use the source selector shown by `skilld search`.
 If private repository access is required, run `skilld auth login`.
 Do not print access tokens or copy them into project files.
 
@@ -52,7 +52,7 @@ skilld view <skill>
 ```
 
 Use `list` to show installed Skills.
-Use `view` to show one Skill's source, version, files, and check results.
+Use `view` to show one Skill's path, source status, and Agent targets.
 
 ## Maintain installed Skills
 

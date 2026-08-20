@@ -141,16 +141,26 @@ jobs:
         shell: bash
         run: |
           while IFS= read -r directory; do
-            pnpm --dir "packages/$directory" publish --access public --no-git-checks
+            if test "$(node scripts/release/native-packages.mjs package-publish "packages/$directory")" = true; then
+              pnpm --dir "packages/$directory" publish --access public --no-git-checks
+            fi
           done < <(node scripts/release/native-packages.mjs directories)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish root CLI
-        run: pnpm publish --access public --no-git-checks
+        shell: bash
+        run: |
+          if test "$(node scripts/release/native-packages.mjs package-publish .)" = true; then
+            pnpm publish --access public --no-git-checks
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish Harness
-        run: pnpm --dir packages/harness publish --access public --no-git-checks
+        shell: bash
+        run: |
+          if test "$(node scripts/release/native-packages.mjs package-publish packages/harness)" = true; then
+            pnpm --dir packages/harness publish --access public --no-git-checks
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish independent protocol

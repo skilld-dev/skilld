@@ -41,7 +41,7 @@ skilld install skilld --global --agent codex
 skilld search vue
 
 # Install a Skill in the current project
-skilld install vue
+skilld install skilld:skilld-dev/skills/vue
 
 # Inspect installed Skills
 skilld list
@@ -102,8 +102,8 @@ skilld auth login
 skilld auth status
 skilld auth logout
 
-skilld config get targets
-skilld config set targets codex,claude-code
+skilld config get agent.targets
+skilld config set agent.targets codex,claude-code
 skilld config list
 ```
 
@@ -144,6 +144,14 @@ const result = await skillHarness.run({
 ```
 
 See the [`@skilld/harness` guide](./packages/harness/README.md) for its full contract.
+
+## Upgrade from v2
+
+v3 does not import v2 configuration or lockfiles.
+Back up v2 state before replacing the CLI.
+
+Follow the [v2 to v3 migration guide](./docs/migrate-v2-to-v3.md).
+It maps removed commands and explains rollback limits.
 
 ## v3 development
 
