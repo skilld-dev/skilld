@@ -9,9 +9,83 @@ on:
     tags:
       - 'v*'
 
+env:
+  SKILLD_ROOT_KEY_ID: ${{ vars.SKILLD_ROOT_KEY_ID }}
+  SKILLD_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_ROOT_PUBLIC_KEY }}
+
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  release-plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Require the trusted root
+        shell: bash
+        run: |
+          test -n "$SKILLD_ROOT_KEY_ID" || {
+            echo 'SKILLD_ROOT_KEY_ID is required.' >&2
+            exit 1
+          }
+          test -n "$SKILLD_ROOT_PUBLIC_KEY" || {
+            echo 'SKILLD_ROOT_PUBLIC_KEY is required.' >&2
+            exit 1
+          }
+      - id: matrix
+        name: Read native package matrix
+        shell: bash
+        run: |
+          node scripts/release/native-packages.mjs versions "$GITHUB_REF_NAME"
+          echo "value=$(node scripts/release/native-packages.mjs matrix)" >> "$GITHUB_OUTPUT"
+
+  build-native:
+    needs: release-plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.libc == 'musl'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+      - name: Build native CLI
+        run: cargo build --locked --release --package skilld-native --target ${{ matrix.target }}
+      - name: Stage native CLI
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          install -d "staging/${{ matrix.directory }}/bin"
+          install -m 755 \
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}" \
+            "staging/${{ matrix.directory }}/bin/${{ matrix.executable }}"
+          "staging/${{ matrix.directory }}/bin/${{ matrix.executable }}" --version
+          tar -cf "${{ matrix.directory }}.tar" -C staging "${{ matrix.directory }}"
+      - name: Stage native CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = "staging/${{ matrix.directory }}/bin/${{ matrix.executable }}"
+          New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.executable }}" $destination
+          & $destination --version
+          tar -cf "${{ matrix.directory }}.tar" -C staging "${{ matrix.directory }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          path: ${{ matrix.directory }}.tar
+
+  publish:
+    needs: build-native
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -22,15 +96,57 @@ jobs:
           node-version: lts/*
           cache: pnpm
           registry-url: https://registry.npmjs.org
-
+      - uses: actions/download-artifact@v7
+        with:
+          path: native-artifacts
+      - name: Restore native packages
+        shell: bash
+        run: |
+          while IFS= read -r archive; do
+            tar -xf "$archive" -C packages
+          done < <(find native-artifacts -type f -name '*.tar' | sort)
+      - run: pnpm install --frozen-lockfile
+      - name: Build JavaScript packages
+        run: |
+          pnpm --filter skilld-protocol build
+          pnpm --filter @skilld/harness build
+      - name: Check native package artifacts
+        shell: bash
+        run: |
+          node scripts/release/native-packages.mjs verify packages
+          mkdir -p artifacts/native-packages
+          while IFS= read -r directory; do
+            pnpm --dir "packages/$directory" pack \
+              --pack-destination "$GITHUB_WORKSPACE/artifacts/native-packages"
+          done < <(node scripts/release/native-packages.mjs directories)
+          node scripts/release/native-packages.mjs verify-packed artifacts/native-packages
+      - name: Smoke test the installed loader
+        shell: bash
+        run: |
+          expected="skilld $(node -p "require('./package.json').version")"
+          actual="$(node bin/skilld.mjs --version)"
+          test "$actual" = "$expected"
+      - name: Pack the root CLI
+        run: pnpm pack --pack-destination artifacts
       - run: npx changelogithub
         env:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-
-      - run: pnpm i
-
-      - run: pnpm -r build
-
-      - run: pnpm publish -r --access public --no-git-checks
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish native packages
+        shell: bash
+        run: |
+          while IFS= read -r directory; do
+            pnpm --dir "packages/$directory" publish --access public --no-git-checks
+          done < <(node scripts/release/native-packages.mjs directories)
         env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish root CLI
+        run: pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish Harness and independent protocol
+        shell: bash
+        run: |
+          pnpm --dir packages/harness publish --access public --no-git-checks
+          pnpm --dir packages/protocol publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

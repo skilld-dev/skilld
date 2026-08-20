@@ -18,19 +18,55 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04-arm
+  quality:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: pnpm
-      - run: pnpm i
-      - run: pnpm --filter skilld-protocol build
+      - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
-      - run: pnpm test:run --project unit
+      - run: pnpm test:run
+      - run: pnpm --filter skilld-protocol check:v1
+      - run: pnpm --filter skilld-protocol publint
+      - run: pnpm --filter skilld-protocol attw
+      - run: pnpm --filter @skilld/harness publint
+      - run: pnpm --filter @skilld/harness attw
+      - name: Pack root CLI
+        run: |
+          mkdir -p artifacts
+          pnpm pack --pack-destination artifacts
+
+  native-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            executable: target/release/skilld
+          - runner: ubuntu-24.04-arm
+            executable: target/release/skilld
+          - runner: macos-15
+            executable: target/release/skilld
+          - runner: macos-15-intel
+            executable: target/release/skilld
+          - runner: windows-2025
+            executable: target/release/skilld.exe
+          - runner: windows-11-arm
+            executable: target/release/skilld.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo build --locked --release --package skilld-native
+      - name: Smoke test native CLI
+        if: runner.os != 'Windows'
+        run: ${{ matrix.executable }} --version
+      - name: Smoke test native CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& ${{ matrix.executable }} --version'
