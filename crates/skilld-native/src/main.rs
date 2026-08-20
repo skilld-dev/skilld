@@ -1,7 +1,11 @@
+mod embedded_skill;
+
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use embedded_skill::EmbeddedSkilld;
 use skilld_command::{DetectionEnvironment, LocalHost, TargetRoots, run, run_stdio_probe};
 
 fn main() -> ExitCode {
@@ -21,12 +25,10 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
-    let mut host = LocalHost::new(project_root, global_root)
+    let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
-        .with_detection_environment(detection_environment());
-    if let Some(path) = env::var_os("SKILLD_BUNDLED_SKILL_DIR") {
-        host = host.with_bundled_skill(PathBuf::from(path));
-    }
+        .with_detection_environment(detection_environment())
+        .with_bundled_provider(Arc::new(EmbeddedSkilld::new()));
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();

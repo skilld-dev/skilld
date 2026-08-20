@@ -17,6 +17,4 @@ path = "src/main.rs"
 
 [dependencies]
 skilld-command.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true

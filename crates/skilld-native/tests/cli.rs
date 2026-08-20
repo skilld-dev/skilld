@@ -284,16 +284,11 @@ fn global_skilld_install_uses_the_global_agent_target() {
     let project = temporary.path().join("project");
     let data = temporary.path().join("data");
     let home = temporary.path().join("home");
-    let bundled = temporary.path().join("assets/skilld");
     fs::create_dir_all(&project).unwrap();
     fs::create_dir_all(&home).unwrap();
-    fs::create_dir_all(&bundled).unwrap();
-    let bundled_skill = "---\nname: skilld\ndescription: Test fixture.\n---\n\nfixture\n";
-    fs::write(bundled.join("SKILL.md"), bundled_skill).unwrap();
     let output = Command::new(binary())
         .current_dir(&project)
         .env("SKILLD_DATA_DIR", &data)
-        .env("SKILLD_BUNDLED_SKILL_DIR", &bundled)
         .env("HOME", &home)
         .args(["install", "skilld", "--global", "--agent", "codex"])
         .output()
@@ -306,11 +301,11 @@ fn global_skilld_install_uses_the_global_agent_target() {
     );
     assert_eq!(
         fs::read_to_string(data.join("skills/skilld/SKILL.md")).unwrap(),
-        bundled_skill
+        include_str!("../../../skills/skilld/SKILL.md")
     );
     assert_eq!(
         fs::read_to_string(home.join(".agents/skills/skilld/SKILL.md")).unwrap(),
-        bundled_skill
+        include_str!("../../../skills/skilld/SKILL.md")
     );
     assert!(!project.join(".skills/skilld").exists());
 }
