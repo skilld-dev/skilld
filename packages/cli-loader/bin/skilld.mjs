@@ -1,13 +1,13 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { constants } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createRequire } from 'node:module'
-import { spawn } from 'node:child_process'
 
 import { detectLibc, selectArtifact } from '../src/resolve-artifact.mjs'
 
 const require = createRequire(import.meta.url)
-const resolvePackage = (packageName, file) => {
+function resolvePackage(packageName, file) {
   try {
     return join(dirname(require.resolve(`${packageName}/package.json`)), file)
   }
@@ -20,9 +20,7 @@ const resolvePackage = (packageName, file) => {
 
 const artifact = selectArtifact({
   arch: process.arch,
-  forceWasi: process.env.SKILLD_FORCE_WASI === '1',
   libc: process.platform === 'linux' ? detectLibc() : undefined,
-  node: process.execPath,
   platform: process.platform,
 }, resolvePackage)
 
@@ -31,10 +29,7 @@ if (artifact._tag === 'Unavailable') {
   process.exitCode = 2
 }
 else {
-  const args = artifact._tag === 'Wasi'
-    ? [artifact.runner, ...process.argv.slice(2)]
-    : process.argv.slice(2)
-  const child = spawn(artifact.executable, args, {
+  const child = spawn(artifact.executable, process.argv.slice(2), {
     cwd: process.cwd(),
     env: process.env,
     shell: false,

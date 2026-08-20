@@ -6,9 +6,18 @@ settings:
 
 catalogs:
   default:
+    '@ai-sdk/harness':
+      specifier: ^1.0.77
+      version: 1.0.77
+    '@ai-sdk/provider-utils':
+      specifier: ^5.0.28
+      version: 5.0.28
     '@arethetypeswrong/cli':
       specifier: ^0.18.5
       version: 0.18.5
+    '@bytecodealliance/preview2-shim':
+      specifier: 0.20.2
+      version: 0.20.2
     '@earendil-works/pi-ai':
       specifier: ^0.84.1
       version: 0.84.1
@@ -72,6 +81,12 @@ catalogs:
     verkit:
       specifier: ^0.3.2
       version: 0.3.2
+    ws:
+      specifier: ^8.21.0
+      version: 8.21.2
+    yaml:
+      specifier: ^2.9.0
+      version: 2.9.0
     zod:
       specifier: ^4.4.3
       version: 4.4.3
@@ -176,7 +191,7 @@ importers:
         version: 2.0.3
       retriv:
         specifier: 'catalog:'
-        version: 0.15.0(@huggingface/transformers@4.2.0)(@typescript/typescript6@6.0.2)(sqlite-vec@0.1.9)
+        version: 0.15.0(@huggingface/transformers@4.2.0)(@typescript/typescript6@6.0.2)(ai@7.0.70(zod@4.4.3))(sqlite-vec@0.1.9)
       skilld-protocol:
         specifier: workspace:*
         version: link:packages/protocol
@@ -194,7 +209,7 @@ importers:
         version: '@typescript/typescript6@6.0.2'
       unagent:
         specifier: 'catalog:'
-        version: 0.0.8(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9)
+        version: 0.0.8(@huggingface/transformers@4.2.0)(ai@7.0.70(zod@4.4.3))(sqlite-vec@0.1.9)
       verkit:
         specifier: 'catalog:'
         version: 0.3.2
@@ -230,6 +245,64 @@ importers:
       '@napi-rs/keyring':
         specifier: 'catalog:'
         version: 1.3.0
+
+  packages/cli-linux-x64-gnu: {}
+
+  packages/cli-loader:
+    devDependencies:
+      vitest:
+        specifier: catalog:dev-test
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@7.3.1(@types/node@26.2.0)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+    optionalDependencies:
+      '@skilld/cli-linux-x64-gnu':
+        specifier: workspace:3.0.0-alpha.1
+        version: link:../cli-linux-x64-gnu
+
+  packages/cli-wasm32-wasi:
+    dependencies:
+      '@bytecodealliance/preview2-shim':
+        specifier: 'catalog:'
+        version: 0.20.2
+
+  packages/harness:
+    dependencies:
+      '@ai-sdk/harness':
+        specifier: 'catalog:'
+        version: 1.0.77(ws@8.21.2)(zod@4.4.3)
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
+    devDependencies:
+      '@ai-sdk/provider-utils':
+        specifier: 'catalog:'
+        version: 5.0.28(zod@4.4.3)
+      '@antfu/eslint-config':
+        specifier: catalog:dev-lint
+        version: 9.3.0(@typescript-eslint/typescript-estree@8.66.0(@typescript/typescript6@6.0.2)(supports-color@10.2.2))(@typescript-eslint/utils@8.66.0(@typescript/typescript6@6.0.2)(eslint@10.8.1(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2))(@typescript/typescript6@6.0.2)(@vue/compiler-sfc@3.5.27)(eslint@10.8.1(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(vitest@4.1.10)
+      '@types/node':
+        specifier: catalog:dev-build
+        version: 26.2.0
+      '@typescript/native':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      eslint:
+        specifier: catalog:dev-lint
+        version: 10.8.1(jiti@2.7.0)(supports-color@10.2.2)
+      obuild:
+        specifier: catalog:dev-build
+        version: 0.4.38(@typescript/typescript6@6.0.2)(chokidar@5.0.0)(dotenv@17.4.2)(giget@3.3.1)(jiti@2.7.0)(magicast@0.5.4)
+      typescript:
+        specifier: 'catalog:'
+        version: '@typescript/typescript6@6.0.2'
+      vitest:
+        specifier: catalog:dev-test
+        version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@7.3.1(@types/node@26.2.0)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
 
   packages/protocol:
     dependencies:
@@ -272,6 +345,32 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@7.3.1(@types/node@26.2.0)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
 packages:
+
+  '@ai-sdk/gateway@4.0.56':
+    resolution: {integrity: sha512-fc7tq+v7WrzCV+aXegbq/EOs68tFDJYLEwnCOnVYcB/Y5ZTjUIHzyJlrqdoJUlMTkc/qmKsXb1ovVvdUYPmxIA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/harness@1.0.77':
+    resolution: {integrity: sha512-4ePNDsdeNHavXfrtiORFf9M/qydn9PpfGh0Lxci5XBAxHW6rgcFHVNBLKVP/1GrrA6e/w8GRMhZ2XRDdxUyeAA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      ws: ^8.21.0
+      zod: ^3.25.76 || ^4.1.8
+    peerDependenciesMeta:
+      ws:
+        optional: true
+
+  '@ai-sdk/provider-utils@5.0.28':
+    resolution: {integrity: sha512-TnHUyd/rCYQqHg5RuiOaz/hUql6U+kbUaBW0Rp+0N5UhnAInA9CzzV0HXvuAAPwppDsK6fAx9Rd+tRawpJ/3pg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider@4.0.7':
+    resolution: {integrity: sha512-6or44XprPzKbr8zkmzosowSE0pxkvJcoojBL+mCZvPUt3kvXp3XSNqeVun9golb1acEfSo6yaEBRT18h2VU+1Q==}
+    engines: {node: '>=22'}
 
   '@andrewbranch/untar.js@1.0.4':
     resolution: {integrity: sha512-pVXSwPsLuw8IGLo2Di0EaOfsk+ntVvpkk942J/sHYIkwvtKUakEcPh7HBgZ6tuimgzKSEHgCvO4XgQ05DEbwDw==}
@@ -489,6 +588,9 @@ packages:
 
   '@braidai/lang@1.1.2':
     resolution: {integrity: sha512-qBcknbBufNHlui137Hft8xauQMTZDKdophmLFv05r2eNmdIv/MlPuP4TdUknHG68UdWLgVZwgxVe735HzJNIwA==}
+
+  '@bytecodealliance/preview2-shim@0.20.2':
+    resolution: {integrity: sha512-Bp1cer1jztaQamLv1YKdc4MimI9LNAAKM2lNxOtGTLs7/At5KlA0fW1HWTi3ZJ5McaWNwJUDWSe5Lr0EgUpsnA==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -1818,9 +1920,6 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
-  '@types/node@26.1.2':
-    resolution: {integrity: sha512-Vu4a5UFA9rIIFJ7rB/Vaafh9lrCQszopTCx6KjFboXTGQbPNasehVR5TEiithSDGyd1DEiUByggTZsg8jukeIg==}
-
   '@types/node@26.2.0':
     resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
@@ -2013,6 +2112,10 @@ packages:
     resolution: {integrity: sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w==}
     hasBin: true
 
+  '@vercel/oidc@3.2.0':
+    resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
+    engines: {node: '>= 20'}
+
   '@vitest/coverage-v8@4.1.10':
     resolution: {integrity: sha512-IM49HmthevbgAO4anp1hwtoT9wYe59w0LR00gr+eagHE+ZJ5lK4sLPeO0ubgoJcwLk6dehU3R24N+FbEEKDc8g==}
     peerDependencies:
@@ -2081,6 +2184,9 @@ packages:
 
   '@vue/shared@3.5.27':
     resolution: {integrity: sha512-dXr/3CgqXsJkZ0n9F3I4elY8wM9jMJpP3pvRG52r6m0tu/MsAFIe6JpXVGeNMd/D9F4hQynWT8Rfuj0bdm9kFQ==}
+
+  '@workflow/serde@4.1.0':
+    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
 
   '@yuku-codegen/binding-android-arm64@0.8.3':
     resolution: {integrity: sha512-/EKnnqwvN7xYoVDhQEIEJTdPDwGW1wkFz/2Eku3ES/IJd4lcQh/OaIDFBmoJKvpe12enrb1TIoYh1fxasGXolA==}
@@ -2234,6 +2340,12 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
+
+  ai@7.0.70:
+    resolution: {integrity: sha512-r7Y0alVQqairf0WvT3puyjz5wPMjRV5zYSHiGz87K3uoqkCeK1EaN6O8lLqduSszLcfqC6XVJAIdy3/RkPwPHg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   ajv@6.15.0:
     resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
@@ -2814,6 +2926,10 @@ packages:
     resolution: {integrity: sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==}
     engines: {node: '>=0.10.0'}
 
+  eventsource-parser@3.1.1:
+    resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
+    engines: {node: '>=18.0.0'}
+
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
@@ -3115,6 +3231,9 @@ packages:
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
+
+  json-schema@0.4.0:
+    resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
   json-stable-stringify-without-jsonify@1.0.1:
     resolution: {integrity: sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw==}
@@ -4021,6 +4140,10 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
+  undici@7.29.0:
+    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+    engines: {node: '>=20.18.1'}
+
   unicode-emoji-modifier-base@1.0.0:
     resolution: {integrity: sha512-yLSH4py7oFH3oG/9K+XWrz1pSi3dfUrWEnInbxMfArOfc1+33BlGPQtLsOYwvdMy11AwUBetYuaRxSPqgkq+8g==}
     engines: {node: '>=4'}
@@ -4252,6 +4375,35 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@ai-sdk/gateway@4.0.56(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.7
+      '@ai-sdk/provider-utils': 5.0.28(zod@4.4.3)
+      '@vercel/oidc': 3.2.0
+      zod: 4.4.3
+
+  '@ai-sdk/harness@1.0.77(ws@8.21.2)(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.7
+      '@ai-sdk/provider-utils': 5.0.28(zod@4.4.3)
+      ai: 7.0.70(zod@4.4.3)
+      zod: 4.4.3
+    optionalDependencies:
+      ws: 8.21.2
+
+  '@ai-sdk/provider-utils@5.0.28(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.7
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.1
+      undici: 7.29.0
+      zod: 4.4.3
+
+  '@ai-sdk/provider@4.0.7':
+    dependencies:
+      json-schema: 0.4.0
 
   '@andrewbranch/untar.js@1.0.4': {}
 
@@ -4625,6 +4777,8 @@ snapshots:
   '@bcoe/v8-coverage@1.0.2': {}
 
   '@braidai/lang@1.1.2': {}
+
+  '@bytecodealliance/preview2-shim@0.20.2': {}
 
   '@clack/core@1.4.3':
     dependencies:
@@ -5575,10 +5729,6 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
-  '@types/node@26.1.2':
-    dependencies:
-      undici-types: 8.3.0
-
   '@types/node@26.2.0':
     dependencies:
       undici-types: 8.3.0
@@ -5793,6 +5943,8 @@ snapshots:
     dependencies:
       '@typescript/old': typescript@6.0.3
 
+  '@vercel/oidc@3.2.0': {}
+
   '@vitest/coverage-v8@4.1.10(vitest@4.1.10)':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
@@ -5904,6 +6056,8 @@ snapshots:
 
   '@vue/shared@3.5.27': {}
 
+  '@workflow/serde@4.1.0': {}
+
   '@yuku-codegen/binding-android-arm64@0.8.3':
     optional: true
 
@@ -5987,6 +6141,13 @@ snapshots:
   adm-zip@0.5.18: {}
 
   agent-base@7.1.4: {}
+
+  ai@7.0.70(zod@4.4.3):
+    dependencies:
+      '@ai-sdk/gateway': 4.0.56(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.7
+      '@ai-sdk/provider-utils': 5.0.28(zod@4.4.3)
+      zod: 4.4.3
 
   ajv@6.15.0:
     dependencies:
@@ -6856,6 +7017,8 @@ snapshots:
 
   esutils@2.0.3: {}
 
+  eventsource-parser@3.1.1: {}
+
   expect-type@1.4.0: {}
 
   exsolve@1.1.1: {}
@@ -7113,6 +7276,8 @@ snapshots:
   json-schema-traverse@0.4.1: {}
 
   json-schema-traverse@1.0.0: {}
+
+  json-schema@0.4.0: {}
 
   json-stable-stringify-without-jsonify@1.0.1: {}
 
@@ -7881,7 +8046,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 26.1.2
+      '@types/node': 26.2.0
       long: 5.3.2
 
   publint@0.3.23:
@@ -7932,9 +8097,10 @@ snapshots:
       onetime: 7.0.0
       signal-exit: 4.1.0
 
-  retriv@0.15.0(@huggingface/transformers@4.2.0)(@typescript/typescript6@6.0.2)(sqlite-vec@0.1.9):
+  retriv@0.15.0(@huggingface/transformers@4.2.0)(@typescript/typescript6@6.0.2)(ai@7.0.70(zod@4.4.3))(sqlite-vec@0.1.9):
     optionalDependencies:
       '@huggingface/transformers': 4.2.0
+      ai: 7.0.70(zod@4.4.3)
       sqlite-vec: 0.1.9
       typescript: '@typescript/typescript6@6.0.2'
 
@@ -8252,7 +8418,7 @@ snapshots:
 
   ufo@1.6.4: {}
 
-  unagent@0.0.8(@huggingface/transformers@4.2.0)(sqlite-vec@0.1.9):
+  unagent@0.0.8(@huggingface/transformers@4.2.0)(ai@7.0.70(zod@4.4.3))(sqlite-vec@0.1.9):
     dependencies:
       croner: 9.1.0
       hookable: 6.1.1
@@ -8261,6 +8427,7 @@ snapshots:
       yaml: 2.9.0
     optionalDependencies:
       '@huggingface/transformers': 4.2.0
+      ai: 7.0.70(zod@4.4.3)
       sqlite-vec: 0.1.9
 
   unconfig-core@7.5.0:
@@ -8277,6 +8444,8 @@ snapshots:
       unconfig-core: 7.5.0
 
   undici-types@8.3.0: {}
+
+  undici@7.29.0: {}
 
   unicode-emoji-modifier-base@1.0.0: {}
 

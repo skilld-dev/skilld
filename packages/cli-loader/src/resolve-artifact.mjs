@@ -22,18 +22,12 @@ export function nativePackage(runtime) {
 }
 
 export function selectArtifact(runtime, resolvePackage) {
-  if (!runtime.forceWasi) {
-    const packageName = nativePackage(runtime)
-    if (packageName) {
-      const executable = resolvePackage(packageName, runtime.platform === 'win32' ? 'bin/skilld.exe' : 'bin/skilld')
-      if (executable)
-        return { _tag: 'Native', executable }
-    }
+  const packageName = nativePackage(runtime)
+  if (packageName) {
+    const executable = resolvePackage(packageName, runtime.platform === 'win32' ? 'bin/skilld.exe' : 'bin/skilld')
+    if (executable)
+      return { _tag: 'Native', executable }
   }
-
-  const runner = resolvePackage('@skilld/cli-wasm32-wasi', 'run-component.mjs')
-  if (runner)
-    return { _tag: 'Wasi', executable: runtime.node, runner }
 
   return {
     _tag: 'Unavailable',
