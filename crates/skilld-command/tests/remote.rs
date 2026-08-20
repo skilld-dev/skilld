@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use skilld_command::{
     Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, LocalHost,
     NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteProvider, RemoteSourceState,
-    SecretValue, SkilldRemote, Sleeper, run,
+    SecretValue, SkilldRemote, Sleeper, TokenProvider, run,
 };
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
@@ -71,6 +71,14 @@ impl Sleeper for NoSleep {
         } else {
             Ok(())
         }
+    }
+}
+
+struct FixedToken;
+
+impl TokenProvider for FixedToken {
+    fn access_token(&self) -> Result<Option<SecretValue>, RemoteError> {
+        Ok(Some(SecretValue::new("account-token").unwrap()))
     }
 }
 
@@ -424,6 +432,50 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     assert!(requests[2].url.contains("/api/v1/artifacts/"));
     assert!(requests[2].url.ends_with("/grants"));
     assert!(requests[3].url.ends_with("/content"));
+}
+
+#[test]
+fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
+    let (pin, mut responses) = verified_remote_responses();
+    let public_grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
+    responses[2] = response(
+        200,
+        serde_json::to_vec(&json!({
+            "kind": "private",
+            "artifactId": public_grant["artifactId"],
+            "contentUrl": public_grant["contentUrl"],
+            "expiresAt": public_grant["expiresAt"],
+            "downloadToken": "private-grant-token-with-enough-bytes",
+            "attestation": public_grant["attestation"]
+        }))
+        .unwrap(),
+    );
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(FixedToken),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    remote
+        .prepare(
+            &RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap();
+
+    let requests = http.requests.lock().unwrap();
+    let content = requests.last().unwrap();
+    assert!(content.headers.iter().any(|header| {
+        header.name == "authorization" && header.value.expose() == "Bearer account-token"
+    }));
+    assert!(content.headers.iter().any(|header| {
+        header.name == "x-skilld-grant"
+            && header.value.expose() == "private-grant-token-with-enough-bytes"
+    }));
 }
 
 #[test]

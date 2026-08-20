@@ -518,15 +518,32 @@ impl SkilldRemote {
                 download_token,
                 attestation,
                 ..
-            } => (
-                artifact_id,
-                content_url,
-                attestation,
-                vec![HttpHeader {
-                    name: "x-skilld-grant".to_owned(),
-                    value: HeaderValue::Secret(SecretValue::new(download_token)?),
-                }],
-            ),
+            } => {
+                let account = self.tokens.access_token()?.ok_or_else(|| {
+                    RemoteError::new(
+                        "AUTH_REQUIRED",
+                        "private Artifact delivery needs an account",
+                    )
+                })?;
+                (
+                    artifact_id,
+                    content_url,
+                    attestation,
+                    vec![
+                        HttpHeader {
+                            name: "authorization".to_owned(),
+                            value: HeaderValue::Secret(SecretValue::new(format!(
+                                "Bearer {}",
+                                account.expose()
+                            ))?),
+                        },
+                        HttpHeader {
+                            name: "x-skilld-grant".to_owned(),
+                            value: HeaderValue::Secret(SecretValue::new(download_token)?),
+                        },
+                    ],
+                )
+            }
         };
         if artifact_id != descriptor.artifact_id || attestation != descriptor.attestation {
             return Err(RemoteError::new(
