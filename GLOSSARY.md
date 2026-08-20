@@ -31,8 +31,12 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld upgrade` | Skill upgrade |
 | `skilld verify` | source verification |
 | `skilld install skilld --global` | global skilld Skill install |
-| `skilld auth login|status|logout` | account authentication |
-| `skilld config get|set|list` | configuration |
+| `skilld auth login` | account login |
+| `skilld auth status` | account authentication status |
+| `skilld auth logout` | account logout |
+| `skilld config get` | configuration read |
+| `skilld config set` | configuration write |
+| `skilld config list` | configuration list |
 
 ```mermaid
 flowchart LR
