@@ -30,7 +30,8 @@ wasi_install_status=$?
 set -e
 
 test "$wasi_install_status" -eq 2
-rg -q 'cannot open the transaction journal: Not supported' "$wasi_project/install.err"
+rg -q 'WASIp2 Skill store locking is unavailable' "$wasi_project/install.err"
+mkdir -p "$wasi_project/.skills"
 cp -R "$fixture" "$wasi_project/.skills/local-skill"
 
 (
@@ -68,7 +69,11 @@ rg -q '^UNSUPPORTED_HOST: process capability' "$wasi_project/login.err"
 
 SKILLD_WASI_MEMORY_CREDENTIAL=1 node "$runner" auth status \
   > "$wasi_project/auth-memory.out"
-test "$(cat "$wasi_project/auth-memory.out")" = 'Authenticated.'
+test "$(cat "$wasi_project/auth-memory.out")" = 'Not authenticated.'
+
+SKILLD_PROBE_CREDENTIALS=1 SKILLD_WASI_MEMORY_CREDENTIAL=1 node "$runner" \
+  > "$wasi_project/credential-proof.out"
+test "$(cat "$wasi_project/credential-proof.out")" = 'Credential host operations passed.'
 
 set +e
 SKILLD_PROBE_GIT=1 node "$runner" \
@@ -83,4 +88,4 @@ SKILLD_PROBE_GIT=1 SKILLD_WASI_ENABLE_GIT=1 node "$runner" \
 rg -q '^git version ' "$wasi_project/git.out"
 
 echo 'Native and WASIp2 read behavior matches.'
-echo 'WASIp2 write parity is blocked by preview2-shim file creation.'
+echo 'WASIp2 write parity is blocked by exclusive Skill store locking.'

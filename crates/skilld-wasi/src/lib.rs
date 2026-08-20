@@ -13,6 +13,9 @@ struct SkilldComponent;
 
 impl Guest for SkilldComponent {
     fn run() -> u32 {
+        if env::var_os("SKILLD_PROBE_CREDENTIALS").as_deref() == Some(std::ffi::OsStr::new("1")) {
+            return run_credential_probe();
+        }
         if env::var_os("SKILLD_PROBE_GIT").as_deref() == Some(std::ffi::OsStr::new("1")) {
             return run_git_probe();
         }
@@ -36,6 +39,50 @@ impl Guest for SkilldComponent {
         let mut stderr = std::io::stderr().lock();
         let result = run(env::args_os(), &host, &mut stdout, &mut stderr);
         result.exit_code.into()
+    }
+}
+
+fn run_credential_probe() -> u32 {
+    use skilld::host::credentials;
+
+    let service = "skilld.dev";
+    let account = "proof";
+    let secret = "credential-boundary-proof";
+    let result = credentials::set(service, account, secret)
+        .and_then(|()| credentials::get(service, account))
+        .and_then(|stored| {
+            if stored.as_deref() == Some(secret) {
+                Ok(())
+            } else {
+                Err(credentials::ErrorCode::Invalid)
+            }
+        })
+        .and_then(|()| credentials::delete(service, account))
+        .and_then(|deleted| {
+            if deleted {
+                Ok(())
+            } else {
+                Err(credentials::ErrorCode::NotFound)
+            }
+        })
+        .and_then(|()| credentials::get(service, account))
+        .and_then(|stored| {
+            if stored.is_none() {
+                Ok(())
+            } else {
+                Err(credentials::ErrorCode::Invalid)
+            }
+        });
+
+    match result {
+        Ok(()) => {
+            println!("Credential host operations passed.");
+            0
+        }
+        Err(error) => {
+            eprintln!("UNSUPPORTED_HOST: credential capability probe failed: {error:?}");
+            2
+        }
     }
 }
 

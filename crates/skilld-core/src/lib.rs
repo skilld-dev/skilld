@@ -35,7 +35,8 @@ impl SkillName {
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
             && !value.starts_with('-')
-            && !value.ends_with('-');
+            && !value.ends_with('-')
+            && !value.as_bytes().windows(2).any(|pair| pair == b"--");
 
         if valid {
             Ok(Self(value))

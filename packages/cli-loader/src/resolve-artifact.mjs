@@ -25,7 +25,7 @@ export function selectArtifact(runtime, resolvePackage) {
   if (!runtime.forceWasi) {
     const packageName = nativePackage(runtime)
     if (packageName) {
-      const executable = resolvePackage(packageName, runtime.platform === 'win32' ? 'skilld.exe' : 'skilld')
+      const executable = resolvePackage(packageName, runtime.platform === 'win32' ? 'bin/skilld.exe' : 'bin/skilld')
       if (executable)
         return { _tag: 'Native', executable }
     }

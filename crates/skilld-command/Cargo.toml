@@ -10,6 +10,9 @@ rust-version.workspace = true
 clap.workspace = true
 skilld-core.workspace = true
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+fs4.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

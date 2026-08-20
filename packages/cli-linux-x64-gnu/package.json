@@ -4,6 +4,9 @@
   "description": "Linux x64 GNU executable for the skilld CLI",
   "license": "MIT",
   "private": true,
+  "bin": {
+    "skilld-linux-x64-gnu": "bin/skilld"
+  },
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["glibc"],

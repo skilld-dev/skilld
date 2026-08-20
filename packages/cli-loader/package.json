@@ -5,10 +5,20 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "files": [
+    "bin",
+    "src"
+  ],
   "engines": {
     "node": ">=22.0.0"
   },
   "bin": {
     "skilld-rust-proof": "./bin/skilld.mjs"
+  },
+  "dependencies": {
+    "@skilld/cli-wasm32-wasi": "3.0.0-alpha.1"
+  },
+  "optionalDependencies": {
+    "@skilld/cli-linux-x64-gnu": "3.0.0-alpha.1"
   }
 }

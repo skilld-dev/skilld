@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -7,8 +8,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use skilld_core::{InstallPlan, SkillName};
 
+#[cfg(not(target_os = "wasi"))]
+use std::fs::OpenOptions;
+
 const JOURNAL_NAME: &str = ".skilld-transaction";
+#[cfg(not(target_os = "wasi"))]
+const LOCK_NAME: &str = ".skilld-store-lock";
 static TRANSACTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(not(target_os = "wasi"))]
+struct StoreLock {
+    _file: File,
+}
+
+#[cfg(target_os = "wasi")]
+struct StoreLock;
 
 pub trait PromotionGate {
     fn before_promote(&self, destination: &Path) -> io::Result<()>;
@@ -62,15 +76,24 @@ impl LocalStore {
         source: &Path,
         gate: &G,
     ) -> io::Result<SkillName> {
-        validate_source(source)?;
+        let source = absolute_normalized(source)?;
+        validate_source(&source)?;
+        let source = resolve_path(&source)?;
         reject_symlink_ancestors(&self.root)?;
+        let store = resolve_path(&self.root)?;
+        if source.starts_with(&store) || store.starts_with(&source) {
+            return Err(invalid_input(
+                "the local Skill source and store cannot overlap",
+            ));
+        }
+        ensure_write_capability()?;
         fs::create_dir_all(&self.root)
             .map_err(|error| with_context("create the Skill store", error))?;
         reject_symlink_ancestors(&self.root)?;
         reject_symlink(&self.root, "Skill store")?;
+        let _lock = acquire_store_lock(&self.root)?;
         self.recover()?;
 
-        let source = normalize_path(source);
         let plan = InstallPlan::local(source, self.root.clone()).map_err(invalid_input)?;
         let destination = plan.destination();
         if normalize_path(&destination) == plan.source {
@@ -243,6 +266,37 @@ fn write_journal(path: &Path, name: &SkillName, transaction: &str) -> io::Result
         .map_err(|error| with_context("write the transaction journal", error))
 }
 
+#[cfg(not(target_os = "wasi"))]
+fn ensure_write_capability() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "wasi")]
+fn ensure_write_capability() -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "WASIp2 Skill store locking is unavailable",
+    ))
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn acquire_store_lock(root: &Path) -> io::Result<StoreLock> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join(LOCK_NAME))
+        .map_err(|error| with_context("open the Skill store lock", error))?;
+    fs4::FileExt::lock(&lock).map_err(|error| with_context("lock the Skill store", error))?;
+    Ok(StoreLock { _file: lock })
+}
+
+#[cfg(target_os = "wasi")]
+fn acquire_store_lock(_root: &Path) -> io::Result<StoreLock> {
+    Ok(StoreLock)
+}
+
 fn transaction_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -327,15 +381,63 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+fn absolute_normalized(path: &Path) -> io::Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(normalize_path(path));
+    }
+    std::env::current_dir()
+        .map(|current| normalize_path(&current.join(path)))
+        .map_err(|error| with_context("resolve the path", error))
+}
+
+fn resolve_path(path: &Path) -> io::Result<PathBuf> {
+    let mut existing = absolute_normalized(path)?;
+    let mut missing = Vec::<OsString>::new();
+    loop {
+        match fs::canonicalize(&existing) {
+            Ok(mut resolved) => {
+                for component in missing.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(normalize_path(&resolved));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(component) = existing.file_name().map(ToOwned::to_owned) else {
+                    return Err(with_context("resolve the path", error));
+                };
+                existing.pop();
+                missing.push(component);
+            }
+            Err(error) => return Err(with_context("resolve the path", error)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     struct RejectPromotion;
 
     impl PromotionGate for RejectPromotion {
         fn before_promote(&self, _destination: &Path) -> io::Result<()> {
             Err(io::Error::other("injected promotion failure"))
+        }
+    }
+
+    struct BlockingPromotion {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl PromotionGate for BlockingPromotion {
+        fn before_promote(&self, _destination: &Path) -> io::Result<()> {
+            self.entered.send(()).unwrap();
+            self.release.recv().unwrap();
+            Ok(())
         }
     }
 
@@ -413,5 +515,101 @@ mod tests {
                 .starts_with("Skill store path contains a link:")
         );
         assert!(!actual_store.join("skills").exists());
+    }
+
+    #[test]
+    fn source_and_store_cannot_overlap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("example");
+        let store_root = source.join(".skills");
+        let journal = store_root.join(JOURNAL_NAME);
+        fs::create_dir_all(&journal).unwrap();
+        fs::write(source.join("SKILL.md"), "fixture").unwrap();
+        fs::write(journal.join("state"), "invalid").unwrap();
+
+        let error = LocalStore::new(store_root)
+            .install_from(&source)
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "the local Skill source and store cannot overlap"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_and_store_aliases_cannot_overlap() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let actual_parent = temporary.path().join("actual");
+        let alias_parent = temporary.path().join("alias");
+        let source = actual_parent.join("example");
+        let alias = alias_parent.join("example");
+        let store_root = source.join(".skills");
+        let journal = store_root.join(JOURNAL_NAME);
+        fs::create_dir_all(&journal).unwrap();
+        fs::write(source.join("SKILL.md"), "fixture").unwrap();
+        fs::write(journal.join("state"), "invalid").unwrap();
+        symlink(&actual_parent, &alias_parent).unwrap();
+
+        let error = LocalStore::new(store_root)
+            .install_from(&alias)
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "the local Skill source and store cannot overlap"
+        );
+    }
+
+    #[test]
+    fn concurrent_installs_are_serialized() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(temporary.path().join(".skills"));
+        let first = temporary.path().join("first/example");
+        let second = temporary.path().join("second/example");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("SKILL.md"), "first").unwrap();
+        fs::write(second.join("SKILL.md"), "second").unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_store = store.clone();
+        let first_install = thread::spawn(move || {
+            first_store.install_from_with_gate(
+                &first,
+                &BlockingPromotion {
+                    entered: entered_tx,
+                    release: release_rx,
+                },
+            )
+        });
+        entered_rx.recv().unwrap();
+        let second_store = store.clone();
+        let (second_tx, second_rx) = mpsc::channel();
+        let second_install = thread::spawn(move || {
+            second_tx.send(second_store.install_from(&second)).unwrap();
+        });
+
+        assert!(matches!(
+            second_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release_tx.send(()).unwrap();
+
+        assert!(first_install.join().unwrap().is_ok());
+        assert!(
+            second_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        second_install.join().unwrap();
+        assert_eq!(
+            fs::read_to_string(store.root.join("example/SKILL.md")).unwrap(),
+            "second"
+        );
     }
 }

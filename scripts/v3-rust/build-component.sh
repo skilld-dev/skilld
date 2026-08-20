@@ -7,7 +7,7 @@ component_package="$repository_root/packages/cli-wasm32-wasi"
 component_output="$component_package/component"
 
 cargo build --manifest-path "$repository_root/Cargo.toml" --release --target wasm32-wasip2 -p skilld-wasi
-npm install --prefix "$component_package" --ignore-scripts --no-audit --no-fund
+npm install --prefix "$component_package" --ignore-scripts --no-audit --no-fund --package-lock=false
 mkdir -p "$component_output"
 npm exec --yes --package=@bytecodealliance/jco@1.30.0 -- jco transpile \
   "$repository_root/target/wasm32-wasip2/release/skilld_wasi.wasm" \

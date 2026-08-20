@@ -11,6 +11,23 @@ test('selects the Linux GNU native artifact', () => {
   assert.equal(detectLibc({ getReport: () => ({ header: { glibcVersionRuntime: '2.39' } }) }), 'gnu')
 })
 
+test('resolves the executable stored by the native package', () => {
+  const requests = []
+  const result = selectArtifact({
+    arch: 'x64',
+    forceWasi: false,
+    libc: 'gnu',
+    node: '/usr/bin/node',
+    platform: 'linux',
+  }, (packageName, file) => {
+    requests.push([packageName, file])
+    return '/native/skilld'
+  })
+
+  assert.deepEqual(requests, [['@skilld/cli-linux-x64-gnu', 'bin/skilld']])
+  assert.deepEqual(result, { _tag: 'Native', executable: '/native/skilld' })
+})
+
 test('falls back to WASIp2 when the native artifact is missing', () => {
   const result = selectArtifact({
     arch: 'x64',

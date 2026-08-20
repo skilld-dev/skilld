@@ -5,10 +5,11 @@
     "jco": "1.30.0",
     "preview2Shim": "0.20.2"
   },
-  "operation": "create the transaction journal file",
+  "operation": "lock the Skill store before a filesystem transaction",
   "result": {
     "type": "unsupported",
-    "message": "Not supported (os error 58)"
+    "message": "WASIp2 Skill store locking is unavailable"
   },
+  "additionalEvidence": "preview2-shim file creation returned Not supported (os error 58)",
   "decision": "Keep WASIp2 unpublished until Skill install parity passes."
 }

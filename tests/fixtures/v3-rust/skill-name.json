@@ -1,5 +1,5 @@
 {
   "valid": ["skilld", "search-install", "skill-2"],
-  "invalid": ["Search", "search_install", "-search", "search-"],
+  "invalid": ["Search", "search_install", "-search", "search-", "search--install"],
   "maximumLength": 64
 }

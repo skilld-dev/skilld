@@ -10,7 +10,7 @@ export const credentials = {
     if (globalThis.process.env.SKILLD_WASI_MEMORY_CREDENTIAL !== '1')
       return err('unsupported-host')
 
-    return ok(credentialProof.get(`${service}\0${account}`) ?? 'proof-token')
+    return ok(credentialProof.get(`${service}\0${account}`))
   },
 
   set(service, account, secret) {
