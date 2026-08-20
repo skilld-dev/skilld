@@ -35,7 +35,7 @@ They are your rollback copy.
 Install the v3 CLI:
 
 ```sh
-npm install --global skilld@3.0.0-alpha.1
+npm install --global skilld@3.0.0-beta.0
 skilld --version
 ```
 

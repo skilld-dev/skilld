@@ -112,6 +112,10 @@ jobs:
             tar -xf "$archive" -C packages
           done < <(find native-artifacts -type f -name '*.tar' | sort)
       - run: pnpm install --frozen-lockfile
+      - id: npm_tag
+        name: Resolve shared npm tag
+        shell: bash
+        run: echo "value=$(node scripts/release/native-packages.mjs npm-tag)" >> "$GITHUB_OUTPUT"
       - name: Build JavaScript packages
         run: |
           pnpm --filter skilld-protocol build
@@ -142,29 +146,21 @@ jobs:
         run: |
           while IFS= read -r directory; do
             if test "$(node scripts/release/native-packages.mjs package-publish "packages/$directory")" = true; then
-              pnpm --dir "packages/$directory" publish --access public --no-git-checks
+              pnpm --dir "packages/$directory" publish --access public --no-git-checks --tag "${{ steps.npm_tag.outputs.value }}"
             fi
           done < <(node scripts/release/native-packages.mjs directories)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish root CLI
         shell: bash
         run: |
           if test "$(node scripts/release/native-packages.mjs package-publish .)" = true; then
-            pnpm publish --access public --no-git-checks
+            pnpm publish --access public --no-git-checks --tag "${{ steps.npm_tag.outputs.value }}"
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish Harness
         shell: bash
         run: |
           if test "$(node scripts/release/native-packages.mjs package-publish packages/harness)" = true; then
-            pnpm --dir packages/harness publish --access public --no-git-checks
+            pnpm --dir packages/harness publish --access public --no-git-checks --tag "${{ steps.npm_tag.outputs.value }}"
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish independent protocol
         if: steps.protocol_release.outputs.publish == 'true'
         run: pnpm --dir packages/protocol publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
