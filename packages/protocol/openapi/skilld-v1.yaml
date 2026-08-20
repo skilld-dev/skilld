@@ -408,6 +408,7 @@ components:
           $ref: '#/components/schemas/Sha256'
     AttestationSignature:
       type: object
+      description: Ed25519 over skilld-attestation-v1 NUL followed by SHA-256 of decoded statement bytes.
       additionalProperties: false
       required: [algorithm, keyId, value]
       properties:
@@ -437,6 +438,7 @@ components:
         - policyVersion
         - files
         - checkResults
+        - statement
         - signature
       properties:
         version:
@@ -478,6 +480,12 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/CheckResult'
+        statement:
+          type: string
+          description: Base64url exact statement bytes. Parsed fields must match the outer attestation fields.
+          pattern: '^[A-Za-z0-9_-]+$'
+          minLength: 2
+          maxLength: 8388608
         signature:
           $ref: '#/components/schemas/AttestationSignature'
     ArtifactDescriptor:

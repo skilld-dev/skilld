@@ -107,6 +107,8 @@ export interface components {
             signature: components["schemas"]["AttestationSignature"];
             source: components["schemas"]["ResolvedSource"];
             sourceStatus: components["schemas"]["SourceStatus"] & "verified";
+            /** @description Base64url exact statement bytes. Parsed fields must match the outer attestation fields. */
+            statement: string;
             /** @constant */
             version: 1;
         };
@@ -124,6 +126,7 @@ export interface components {
         };
         ArtifactGrant: components["schemas"]["PublicArtifactGrant"] | components["schemas"]["PrivateArtifactGrant"];
         ArtifactId: string;
+        /** @description Ed25519 over skilld-attestation-v1 NUL followed by SHA-256 of decoded statement bytes. */
         AttestationSignature: {
             /** @constant */
             algorithm: "Ed25519";
