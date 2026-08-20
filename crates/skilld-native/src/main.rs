@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use skilld_command::{LocalHost, run, run_stdio_probe};
+use skilld_command::{DetectionEnvironment, LocalHost, TargetRoots, run, run_stdio_probe};
 
 fn main() -> ExitCode {
     if env::var_os("SKILLD_PROBE_STDIO").as_deref() == Some(std::ffi::OsStr::new("1")) {
@@ -21,7 +21,9 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
-    let mut host = LocalHost::new(project_root, global_root);
+    let mut host = LocalHost::new(project_root, global_root)
+        .with_target_roots(target_roots())
+        .with_detection_environment(detection_environment());
     if let Some(path) = env::var_os("SKILLD_BUNDLED_SKILL_DIR") {
         host = host.with_bundled_skill(PathBuf::from(path));
     }
@@ -30,6 +32,49 @@ fn main() -> ExitCode {
     let mut stderr = std::io::stderr().lock();
     let result = run(env::args_os(), &host, &mut stdout, &mut stderr);
     ExitCode::from(result.exit_code)
+}
+
+fn target_roots() -> TargetRoots {
+    let home = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let config_home = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let claude_home = env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".claude"));
+    TargetRoots::new(home, config_home, claude_home)
+}
+
+fn detection_environment() -> DetectionEnvironment {
+    const SIGNALS: [&str; 18] = [
+        "CLAUDE_CODE",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CONFIG_DIR",
+        "CURSOR_SESSION",
+        "CURSOR_TRACE_ID",
+        "WINDSURF_SESSION",
+        "CLINE_TASK_ID",
+        "CLINE_ACTIVE",
+        "COPILOT_RUN_APP",
+        "GEMINI_CLI",
+        "GOOSE_SESSION",
+        "AGENT_SESSION_ID",
+        "AMP_SESSION",
+        "OPENCODE_SESSION",
+        "OPENCODE_SESSION_ID",
+        "ROO_SESSION",
+        "ANTIGRAVITY_CLI_ALIAS",
+    ];
+    DetectionEnvironment::new(
+        SIGNALS
+            .iter()
+            .filter(|name| env::var_os(name).is_some())
+            .map(|name| (*name).to_owned()),
+    )
 }
 
 fn global_root() -> PathBuf {

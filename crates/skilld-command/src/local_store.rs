@@ -1,19 +1,22 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use skilld_core::{InstallPlan, SkillName};
-
-#[cfg(not(target_os = "wasi"))]
-use std::fs::OpenOptions;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use skilld_core::{
+    AgentTargetId, InstallMode, LockDocument, LockedSkill, LockedSource, LockedTarget, SkillName,
+    SourceStatus,
+};
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
-#[cfg(not(target_os = "wasi"))]
 const LOCK_NAME: &str = ".skilld-store-lock";
+const LOCKFILE_NAME: &str = "skilld-lock.yaml";
 static TRANSACTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(not(target_os = "wasi"))]
@@ -24,18 +27,101 @@ struct StoreLock {
 #[cfg(target_os = "wasi")]
 struct StoreLock;
 
-pub trait PromotionGate {
-    fn before_promote(&self, destination: &Path) -> io::Result<()>;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedTarget {
+    pub agent: AgentTargetId,
+    pub root: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AllowPromotion;
+impl ResolvedTarget {
+    pub fn new(agent: AgentTargetId, root: PathBuf) -> Result<Self, StoreError> {
+        if !root.is_absolute() || root.components().any(|part| part == Component::ParentDir) {
+            return Err(StoreError::InvalidTargetPath(root));
+        }
+        Ok(Self {
+            agent,
+            root: normalize_path(&root),
+        })
+    }
 
-impl PromotionGate for AllowPromotion {
-    fn before_promote(&self, _destination: &Path) -> io::Result<()> {
+    fn destination(&self, name: &SkillName) -> PathBuf {
+        self.root.join(name.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetInstall {
+    pub target: ResolvedTarget,
+    pub mode: InstallMode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkillView {
+    pub name: String,
+    pub canonical_path: PathBuf,
+    pub skill: LockedSkill,
+}
+
+#[derive(Debug)]
+pub enum StoreError {
+    CommittedCleanupPending(String),
+    Conflict(String),
+    Filesystem(String),
+    InvalidLockfile(String),
+    InvalidSource(String),
+    InvalidTargetPath(PathBuf),
+    NotFound(String),
+    Unsupported(String),
+}
+
+impl StoreError {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::CommittedCleanupPending(_) => "COMMITTED_CLEANUP_PENDING",
+            Self::Conflict(_) => "TARGET_CONFLICT",
+            Self::Filesystem(_) => "SERVICE_UNAVAILABLE",
+            Self::InvalidLockfile(_) => "INVALID_LOCKFILE",
+            Self::InvalidSource(_) => "INVALID_SOURCE",
+            Self::InvalidTargetPath(_) => "INVALID_TARGET",
+            Self::NotFound(_) => "SKILL_NOT_FOUND",
+            Self::Unsupported(_) => "UNSUPPORTED_HOST",
+        }
+    }
+}
+
+impl fmt::Display for StoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CommittedCleanupPending(message)
+            | Self::Conflict(message)
+            | Self::Filesystem(message)
+            | Self::InvalidLockfile(message)
+            | Self::InvalidSource(message)
+            | Self::NotFound(message)
+            | Self::Unsupported(message) => formatter.write_str(message),
+            Self::InvalidTargetPath(path) => {
+                write!(
+                    formatter,
+                    "Agent target path is not confined: {}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+pub trait TransactionGate {
+    fn before_lock_commit(&self, _lockfile: &Path) -> Result<(), StoreError> {
         Ok(())
     }
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AllowTransaction;
+
+impl TransactionGate for AllowTransaction {}
 
 #[derive(Clone, Debug)]
 pub struct LocalStore {
@@ -44,257 +130,991 @@ pub struct LocalStore {
 
 impl LocalStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root: normalize_path(&root),
+        }
     }
 
-    pub fn list(&self) -> io::Result<Vec<String>> {
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn list(&self, known_targets: &[ResolvedTarget]) -> Result<Vec<String>, StoreError> {
         if !self.root.exists() {
             return Ok(vec![]);
         }
-        match fs::read_dir(&self.root) {
-            Ok(entries) => {
-                let mut skills = Vec::new();
-                for entry in entries {
-                    if let Some(name) = installed_skill_name(&entry?.path())? {
-                        skills.push(name);
-                    }
-                }
-                skills.sort();
-                Ok(skills)
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(vec![]),
-            Err(error) => Err(error),
+        let _lock = self.lock_existing()?;
+        self.recover_locked(known_targets)?;
+        Ok(self.read_lock()?.skills.into_keys().collect())
+    }
+
+    pub fn view(
+        &self,
+        name: &SkillName,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<SkillView, StoreError> {
+        if !self.root.exists() {
+            return Err(StoreError::NotFound(format!(
+                "Skill {} is not installed",
+                name.as_str()
+            )));
         }
+        let _lock = self.lock_existing()?;
+        self.recover_locked(known_targets)?;
+        let document = self.read_lock()?;
+        let skill = document
+            .skills
+            .get(name.as_str())
+            .cloned()
+            .ok_or_else(|| StoreError::NotFound(format!("Skill {name} is not installed")))?;
+        Ok(SkillView {
+            name: name.to_string(),
+            canonical_path: self.root.join(name.as_str()),
+            skill,
+        })
     }
 
-    pub fn install_from(&self, source: &Path) -> io::Result<SkillName> {
-        self.install_from_with_gate(source, &AllowPromotion)
-    }
-
-    pub fn install_from_with_gate<G: PromotionGate>(
+    pub fn install_from(
         &self,
         source: &Path,
-        gate: &G,
-    ) -> io::Result<SkillName> {
-        let source = absolute_normalized(source)?;
-        validate_source(&source)?;
-        let source = resolve_path(&source)?;
-        reject_symlink_ancestors(&self.root)?;
-        let store = resolve_path(&self.root)?;
-        if source.starts_with(&store) || store.starts_with(&source) {
-            return Err(invalid_input(
-                "the local Skill source and store cannot overlap",
-            ));
-        }
-        ensure_write_capability()?;
-        fs::create_dir_all(&self.root)
-            .map_err(|error| with_context("create the Skill store", error))?;
-        reject_symlink_ancestors(&self.root)?;
-        reject_symlink(&self.root, "Skill store")?;
-        let _lock = acquire_store_lock(&self.root)?;
-        self.recover()?;
+        locked_source: LockedSource,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+    ) -> Result<SkillName, StoreError> {
+        self.install_from_with_gate(
+            source,
+            locked_source,
+            targets,
+            known_targets,
+            &AllowTransaction,
+        )
+    }
 
-        let plan = InstallPlan::local(source, self.root.clone()).map_err(invalid_input)?;
-        let destination = plan.destination();
-        if normalize_path(&destination) == plan.source {
-            return Err(invalid_input("the local Skill is already the destination"));
-        }
-        if let Ok(metadata) = fs::symlink_metadata(&destination) {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(invalid_input(
-                    "the managed Skill destination must be a directory",
-                ));
-            }
-        }
+    pub fn install_from_with_gate<G: TransactionGate>(
+        &self,
+        source: &Path,
+        locked_source: LockedSource,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+        gate: &G,
+    ) -> Result<SkillName, StoreError> {
+        ensure_write_capability()?;
+        let source = absolute_normalized(source).map_err(fs_error)?;
+        validate_skill_source(&source)?;
+        let digest = hash_skill_tree(&source)?;
+        let source = resolve_path(&source).map_err(fs_error)?;
+        let name = SkillName::from_source(&source)
+            .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+        self.reject_overlap(&source)?;
+        self.prepare_root()?;
+        let _lock = acquire_store_lock(&self.root)?;
+        self.recover_locked(known_targets)?;
+
+        let old_lock = self.read_lock()?;
+        let old_skill = old_lock.skills.get(name.as_str());
+        self.verify_managed_state(&name, old_skill, known_targets)?;
+        let selected_targets = unique_target_installs(targets);
+        self.validate_target_changes(&name, old_skill, &selected_targets, known_targets)?;
 
         let transaction = transaction_id();
-        let stage = self.root.join(format!(
-            ".skilld-stage-{}-{transaction}",
-            plan.name.as_str()
-        ));
-        let backup = self.root.join(format!(
-            ".skilld-backup-{}-{transaction}",
-            plan.name.as_str()
-        ));
-        let journal = self.root.join(JOURNAL_NAME);
-        if let Err(error) = write_journal(&journal, &plan.name, &transaction) {
-            cleanup_path(&journal);
-            return Err(error);
-        }
+        let canonical = self.root.join(name.as_str());
+        let canonical_had_existing = path_exists(&canonical)?;
+        let changes = target_changes(&name, old_skill, &selected_targets, known_targets)?;
+        let journal = Journal {
+            version: 1,
+            transaction_id: transaction.clone(),
+            operation: JournalOperation::Install,
+            skill: name.to_string(),
+            canonical_had_existing,
+            targets: changes
+                .iter()
+                .map(|change| JournalTarget {
+                    agent: change.agent,
+                    had_existing: change.had_existing,
+                    promote: change.install.is_some(),
+                })
+                .collect(),
+        };
+        self.write_journal(&journal)?;
 
-        let copied = copy_tree(&plan.source, &stage);
-        if let Err(error) = copied {
-            cleanup_path(&stage);
-            cleanup_path(&journal);
-            return Err(error);
+        let canonical_stage = stage_path(&canonical, &transaction)?;
+        let canonical_backup = backup_path(&canonical, &transaction)?;
+        if let Err(error) = copy_tree(&source, &canonical_stage) {
+            return self.rollback_error(error, known_targets);
         }
-
-        let had_destination = destination.exists();
-        if had_destination {
-            if let Err(error) = fs::rename(&destination, &backup) {
-                cleanup_path(&stage);
-                cleanup_path(&journal);
-                return Err(error);
-            }
-        }
-
-        let promoted = gate
-            .before_promote(&destination)
-            .and_then(|()| fs::rename(&stage, &destination));
-        if let Err(error) = promoted {
-            cleanup_path(&stage);
-            if had_destination {
-                if let Err(rollback_error) = fs::rename(&backup, &destination) {
-                    return Err(io::Error::other(format!(
-                        "{error}; rollback failed: {rollback_error}"
-                    )));
+        for change in &changes {
+            if let Some(install) = &change.install {
+                if let Err(error) =
+                    stage_target(install, &canonical, &canonical_stage, &transaction, &digest)
+                {
+                    return self.rollback_error(error, known_targets);
                 }
             }
-            cleanup_path(&journal);
-            return Err(error);
+        }
+        if hash_skill_tree(&canonical_stage)? != digest {
+            return self.rollback_error(
+                StoreError::InvalidSource("the local Skill changed while copying".to_owned()),
+                known_targets,
+            );
         }
 
-        remove_path(&backup)?;
-        remove_path(&journal)?;
-        Ok(plan.name)
+        if canonical_had_existing {
+            if let Err(error) = fs::rename(&canonical, &canonical_backup).map_err(fs_error) {
+                return self.rollback_error(error, known_targets);
+            }
+        }
+        if let Err(error) = fs::rename(&canonical_stage, &canonical).map_err(fs_error) {
+            return self.rollback_error(error, known_targets);
+        }
+        for change in &changes {
+            let destination = change.target.destination(&name);
+            let backup = backup_path(&destination, &transaction)?;
+            if change.had_existing {
+                if let Err(error) = fs::rename(&destination, &backup).map_err(fs_error) {
+                    return self.rollback_error(error, known_targets);
+                }
+            }
+            if change.install.is_some() {
+                let stage = stage_path(&destination, &transaction)?;
+                if let Err(error) = fs::rename(&stage, &destination).map_err(fs_error) {
+                    return self.rollback_error(error, known_targets);
+                }
+            }
+        }
+
+        if let Err(error) = gate.before_lock_commit(&self.lockfile_path()) {
+            return self.rollback_error(error, known_targets);
+        }
+        let mut new_lock = old_lock;
+        new_lock.transaction_id.clone_from(&transaction);
+        new_lock.skills.insert(
+            name.to_string(),
+            LockedSkill {
+                source: locked_source,
+                source_status: SourceStatus::Local {
+                    content_sha256: digest,
+                },
+                targets: targets
+                    .iter()
+                    .map(|target| LockedTarget {
+                        agent: target.target.agent,
+                        mode: target.mode,
+                    })
+                    .collect(),
+            },
+        );
+        if let Err(error) = self.write_lock_atomic(&new_lock, &transaction) {
+            return self.rollback_error(error, known_targets);
+        }
+        self.cleanup_committed(&journal, known_targets)
+            .map_err(|error| StoreError::CommittedCleanupPending(error.to_string()))?;
+        Ok(name)
     }
 
-    fn recover(&self) -> io::Result<()> {
-        let journal = self.root.join(JOURNAL_NAME);
-        if !journal.exists() {
-            return Ok(());
+    pub fn remove(
+        &self,
+        name: &SkillName,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<(), StoreError> {
+        ensure_write_capability()?;
+        if !self.root.exists() {
+            return Err(StoreError::NotFound(format!(
+                "Skill {name} is not installed"
+            )));
         }
-        let contents = fs::read_to_string(journal.join("state"))?;
-        let mut lines = contents.lines();
-        let name = SkillName::parse(lines.next().unwrap_or_default()).map_err(invalid_input)?;
-        let transaction = lines.next().unwrap_or_default();
-        if transaction.is_empty()
-            || transaction.len() > 96
-            || !transaction
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
-            return Err(invalid_input("invalid Skill transaction journal"));
+        let _lock = self.lock_existing()?;
+        self.recover_locked(known_targets)?;
+        let old_lock = self.read_lock()?;
+        let old_skill = old_lock
+            .skills
+            .get(name.as_str())
+            .ok_or_else(|| StoreError::NotFound(format!("Skill {name} is not installed")))?;
+        self.verify_managed_state(name, Some(old_skill), known_targets)?;
+
+        let transaction = transaction_id();
+        let canonical = self.root.join(name.as_str());
+        let canonical_had_existing = path_exists(&canonical)?;
+        let targets = unique_locked_target_paths(name, &old_skill.targets, known_targets)?;
+        let mut journal_targets = Vec::new();
+        for target in &targets {
+            journal_targets.push(JournalTarget {
+                agent: target.agent,
+                had_existing: path_exists(&target.destination(name))?,
+                promote: false,
+            });
+        }
+        let journal = Journal {
+            version: 1,
+            transaction_id: transaction.clone(),
+            operation: JournalOperation::Remove,
+            skill: name.to_string(),
+            canonical_had_existing,
+            targets: journal_targets,
+        };
+        self.write_journal(&journal)?;
+        if canonical_had_existing {
+            fs::rename(&canonical, backup_path(&canonical, &transaction)?).map_err(fs_error)?;
+        }
+        for target in &targets {
+            let destination = target.destination(name);
+            if path_exists(&destination)? {
+                if let Err(error) =
+                    fs::rename(&destination, backup_path(&destination, &transaction)?)
+                        .map_err(fs_error)
+                {
+                    return self.rollback_error(error, known_targets);
+                }
+            }
         }
 
-        let destination = self.root.join(name.as_str());
-        let stage = self
-            .root
-            .join(format!(".skilld-stage-{}-{transaction}", name.as_str()));
-        let backup = self
-            .root
-            .join(format!(".skilld-backup-{}-{transaction}", name.as_str()));
+        let mut new_lock = old_lock;
+        new_lock.transaction_id.clone_from(&transaction);
+        new_lock.skills.remove(name.as_str());
+        if let Err(error) = self.write_lock_atomic(&new_lock, &transaction) {
+            return self.rollback_error(error, known_targets);
+        }
+        self.cleanup_committed(&journal, known_targets)
+            .map_err(|error| StoreError::CommittedCleanupPending(error.to_string()))
+    }
 
-        if !destination.exists() && backup.exists() {
-            fs::rename(&backup, &destination)?;
+    fn prepare_root(&self) -> Result<(), StoreError> {
+        reject_symlink_ancestors(&self.root).map_err(fs_error)?;
+        fs::create_dir_all(&self.root).map_err(fs_error)?;
+        reject_symlink_ancestors(&self.root).map_err(fs_error)?;
+        reject_directory_symlink(&self.root, "Skill store").map_err(fs_error)
+    }
+
+    fn lock_existing(&self) -> Result<StoreLock, StoreError> {
+        reject_symlink_ancestors(&self.root).map_err(fs_error)?;
+        reject_directory_symlink(&self.root, "Skill store").map_err(fs_error)?;
+        acquire_store_lock(&self.root)
+    }
+
+    fn reject_overlap(&self, source: &Path) -> Result<(), StoreError> {
+        let store = resolve_path(&self.root).map_err(fs_error)?;
+        if source.starts_with(&store) || store.starts_with(source) {
+            return Err(StoreError::InvalidSource(
+                "the local Skill source and store cannot overlap".to_owned(),
+            ));
         }
-        remove_path(&stage)?;
-        if destination.exists() {
-            remove_path(&backup)?;
-        }
-        remove_path(&journal)?;
         Ok(())
     }
+
+    fn validate_target_changes(
+        &self,
+        name: &SkillName,
+        old_skill: Option<&LockedSkill>,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+    ) -> Result<(), StoreError> {
+        let managed = old_skill
+            .map(|skill| unique_locked_target_paths(name, &skill.targets, known_targets))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|target| target.destination(name))
+            .collect::<BTreeSet<_>>();
+        for install in targets {
+            let destination = install.target.destination(name);
+            if path_exists(&destination)? && !managed.contains(&destination) {
+                return Err(StoreError::Conflict(format!(
+                    "Agent target already contains unmanaged Skill {name}: {}",
+                    destination.display()
+                )));
+            }
+            prepare_target_root(&install.target.root)?;
+            if install.target.root.starts_with(&self.root)
+                || self.root.starts_with(&install.target.root)
+            {
+                return Err(StoreError::InvalidTargetPath(install.target.root.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_managed_state(
+        &self,
+        name: &SkillName,
+        old_skill: Option<&LockedSkill>,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<(), StoreError> {
+        let Some(skill) = old_skill else {
+            return Ok(());
+        };
+        let canonical = self.root.join(name.as_str());
+        if path_exists(&canonical)? {
+            let canonical_digest = hash_skill_tree(&canonical).map_err(|_| {
+                StoreError::Conflict(format!("canonical Skill {name} changed after installation"))
+            })?;
+            if canonical_digest != source_digest(&skill.source_status) {
+                return Err(StoreError::Conflict(format!(
+                    "canonical Skill {name} changed after installation"
+                )));
+            }
+        }
+        for locked in &skill.targets {
+            let target = find_target(known_targets, locked.agent)?;
+            let destination = target.destination(name);
+            if !path_exists(&destination)? {
+                continue;
+            }
+            match locked.mode {
+                InstallMode::Copy => {
+                    let target_digest = hash_skill_tree(&destination).map_err(|_| {
+                        StoreError::Conflict(format!(
+                            "Agent target Skill {name} changed after installation: {}",
+                            destination.display()
+                        ))
+                    })?;
+                    if target_digest != source_digest(&skill.source_status) {
+                        return Err(StoreError::Conflict(format!(
+                            "Agent target Skill {name} changed after installation: {}",
+                            destination.display()
+                        )));
+                    }
+                }
+                InstallMode::Symlink => verify_managed_link(&destination, &canonical)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn lockfile_path(&self) -> PathBuf {
+        self.root.join(LOCKFILE_NAME)
+    }
+
+    fn read_lock(&self) -> Result<LockDocument, StoreError> {
+        let path = self.lockfile_path();
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(LockDocument::default());
+            }
+            Err(error) => return Err(fs_error(error)),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(StoreError::InvalidLockfile(
+                "the Skill lockfile must be a regular file".to_owned(),
+            ));
+        }
+        let bytes = fs::read(&path).map_err(fs_error)?;
+        let document: LockDocument = serde_json::from_slice(&bytes)
+            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        if document.version != 1 {
+            return Err(StoreError::InvalidLockfile(format!(
+                "unsupported Skill lockfile version: {}",
+                document.version
+            )));
+        }
+        for name in document.skills.keys() {
+            SkillName::parse(name.clone())
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        }
+        Ok(document)
+    }
+
+    fn write_lock_atomic(
+        &self,
+        document: &LockDocument,
+        transaction: &str,
+    ) -> Result<(), StoreError> {
+        let path = self.lockfile_path();
+        let temporary = self.root.join(format!(".skilld-lock-stage-{transaction}"));
+        let backup = self.root.join(format!(".skilld-lock-backup-{transaction}"));
+        let bytes = serde_json::to_vec_pretty(document)
+            .map_err(|error| StoreError::Filesystem(error.to_string()))?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(fs_error)?;
+        file.write_all(&bytes).map_err(fs_error)?;
+        file.write_all(b"\n").map_err(fs_error)?;
+        file.sync_all().map_err(fs_error)?;
+        if path_exists(&path)? {
+            fs::rename(&path, &backup).map_err(fs_error)?;
+        }
+        fs::rename(&temporary, &path).map_err(fs_error)
+    }
+
+    fn write_journal(&self, journal: &Journal) -> Result<(), StoreError> {
+        let path = self.root.join(JOURNAL_NAME);
+        if path_exists(&path)? {
+            return Err(StoreError::InvalidLockfile(
+                "a Skill transaction is already active".to_owned(),
+            ));
+        }
+        let stage = self.root.join(format!(
+            ".skilld-transaction-stage-{}",
+            journal.transaction_id
+        ));
+        let write_result = (|| {
+            fs::create_dir(&stage).map_err(fs_error)?;
+            let state = stage.join("state.json");
+            let bytes = serde_json::to_vec_pretty(journal)
+                .map_err(|error| StoreError::Filesystem(error.to_string()))?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(state)
+                .map_err(fs_error)?;
+            file.write_all(&bytes).map_err(fs_error)?;
+            file.sync_all().map_err(fs_error)?;
+            fs::rename(&stage, &path).map_err(fs_error)
+        })();
+        if let Err(error) = write_result {
+            return match remove_path(&stage) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(StoreError::Filesystem(format!(
+                    "{error}; journal cleanup failed: {cleanup}"
+                ))),
+            };
+        }
+        Ok(())
+    }
+
+    fn read_journal(&self) -> Result<Option<Journal>, StoreError> {
+        let path = self.root.join(JOURNAL_NAME);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(fs_error(error)),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(StoreError::InvalidLockfile(
+                "the Skill transaction journal must be a directory".to_owned(),
+            ));
+        }
+        let journal: Journal =
+            serde_json::from_slice(&fs::read(path.join("state.json")).map_err(fs_error)?)
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        if journal.version != 1 || !valid_transaction_id(&journal.transaction_id) {
+            return Err(StoreError::InvalidLockfile(
+                "invalid Skill transaction journal".to_owned(),
+            ));
+        }
+        SkillName::parse(journal.skill.clone())
+            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        Ok(Some(journal))
+    }
+
+    fn recover_locked(&self, known_targets: &[ResolvedTarget]) -> Result<(), StoreError> {
+        self.cleanup_orphan_journal_stages()?;
+        let Some(journal) = self.read_journal()? else {
+            return Ok(());
+        };
+        let lock = self.read_lock()?;
+        let committed = lock.transaction_id == journal.transaction_id;
+        if committed {
+            return self.cleanup_committed(&journal, known_targets);
+        }
+        self.rollback(&journal, known_targets)
+    }
+
+    fn cleanup_orphan_journal_stages(&self) -> Result<(), StoreError> {
+        for entry in fs::read_dir(&self.root).map_err(fs_error)? {
+            let entry = entry.map_err(fs_error)?;
+            let Some(name) = entry.file_name().to_str().map(ToOwned::to_owned) else {
+                continue;
+            };
+            if name.starts_with(".skilld-transaction-stage-") {
+                remove_path(&entry.path()).map_err(fs_error)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rollback_error<T>(
+        &self,
+        error: StoreError,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<T, StoreError> {
+        match self.recover_locked(known_targets) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(StoreError::Filesystem(format!(
+                "{error}; rollback failed: {rollback}"
+            ))),
+        }
+    }
+
+    fn rollback(
+        &self,
+        journal: &Journal,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<(), StoreError> {
+        let name = SkillName::parse(journal.skill.clone())
+            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        let canonical = self.root.join(name.as_str());
+        restore_path(
+            &canonical,
+            &stage_path(&canonical, &journal.transaction_id)?,
+            &backup_path(&canonical, &journal.transaction_id)?,
+            journal.canonical_had_existing,
+        )?;
+        for target in &journal.targets {
+            let resolved = find_target(known_targets, target.agent)?;
+            let destination = resolved.destination(&name);
+            restore_path(
+                &destination,
+                &stage_path(&destination, &journal.transaction_id)?,
+                &backup_path(&destination, &journal.transaction_id)?,
+                target.had_existing,
+            )?;
+        }
+        restore_lockfile(&self.root, &journal.transaction_id)?;
+        remove_path(&self.root.join(JOURNAL_NAME)).map_err(fs_error)
+    }
+
+    fn cleanup_committed(
+        &self,
+        journal: &Journal,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<(), StoreError> {
+        let name = SkillName::parse(journal.skill.clone())
+            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        let canonical = self.root.join(name.as_str());
+        remove_path(&stage_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
+        remove_path(&backup_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
+        for target in &journal.targets {
+            let resolved = find_target(known_targets, target.agent)?;
+            let destination = resolved.destination(&name);
+            remove_path(&stage_path(&destination, &journal.transaction_id)?).map_err(fs_error)?;
+            remove_path(&backup_path(&destination, &journal.transaction_id)?).map_err(fs_error)?;
+        }
+        remove_path(
+            &self
+                .root
+                .join(format!(".skilld-lock-stage-{}", journal.transaction_id)),
+        )
+        .map_err(fs_error)?;
+        remove_path(
+            &self
+                .root
+                .join(format!(".skilld-lock-backup-{}", journal.transaction_id)),
+        )
+        .map_err(fs_error)?;
+        remove_path(&self.root.join(JOURNAL_NAME)).map_err(fs_error)
+    }
 }
 
-fn installed_skill_name(path: &Path) -> io::Result<Option<String>> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Ok(None);
+#[derive(Clone, Debug)]
+struct TargetChange {
+    agent: AgentTargetId,
+    target: ResolvedTarget,
+    had_existing: bool,
+    install: Option<TargetInstall>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct Journal {
+    version: u8,
+    transaction_id: String,
+    operation: JournalOperation,
+    skill: String,
+    canonical_had_existing: bool,
+    targets: Vec<JournalTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum JournalOperation {
+    Install,
+    Remove,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct JournalTarget {
+    agent: AgentTargetId,
+    had_existing: bool,
+    promote: bool,
+}
+
+fn target_changes(
+    name: &SkillName,
+    old_skill: Option<&LockedSkill>,
+    installs: &[TargetInstall],
+    known_targets: &[ResolvedTarget],
+) -> Result<Vec<TargetChange>, StoreError> {
+    let mut by_path = BTreeMap::<PathBuf, TargetChange>::new();
+    if let Some(skill) = old_skill {
+        for target in unique_locked_target_paths(name, &skill.targets, known_targets)? {
+            let destination = target.destination(name);
+            by_path.insert(
+                destination.clone(),
+                TargetChange {
+                    agent: target.agent,
+                    target,
+                    had_existing: path_exists(&destination)?,
+                    install: None,
+                },
+            );
+        }
     }
-    let skill_file = path.join("SKILL.md");
-    let skill_metadata = match fs::symlink_metadata(skill_file) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    for install in installs {
+        let destination = install.target.destination(name);
+        if let Some(change) = by_path.get_mut(&destination) {
+            change.install = Some(install.clone());
+        } else {
+            let had_existing = path_exists(&destination)?;
+            by_path.insert(
+                destination,
+                TargetChange {
+                    agent: install.target.agent,
+                    target: install.target.clone(),
+                    had_existing,
+                    install: Some(install.clone()),
+                },
+            );
+        }
+    }
+    Ok(by_path.into_values().collect())
+}
+
+fn unique_target_installs(targets: &[TargetInstall]) -> Vec<TargetInstall> {
+    let mut by_path = BTreeMap::new();
+    for target in targets {
+        by_path
+            .entry(target.target.root.clone())
+            .or_insert_with(|| target.clone());
+    }
+    by_path.into_values().collect()
+}
+
+fn unique_locked_target_paths(
+    _name: &SkillName,
+    targets: &[LockedTarget],
+    known_targets: &[ResolvedTarget],
+) -> Result<Vec<ResolvedTarget>, StoreError> {
+    let mut by_path = BTreeMap::new();
+    for locked in targets {
+        let target = find_target(known_targets, locked.agent)?.clone();
+        by_path.entry(target.root.clone()).or_insert(target);
+    }
+    Ok(by_path.into_values().collect())
+}
+
+fn find_target(
+    known_targets: &[ResolvedTarget],
+    agent: AgentTargetId,
+) -> Result<&ResolvedTarget, StoreError> {
+    known_targets
+        .iter()
+        .find(|target| target.agent == agent)
+        .ok_or_else(|| StoreError::InvalidTargetPath(PathBuf::from(agent.as_str())))
+}
+
+fn prepare_target_root(root: &Path) -> Result<(), StoreError> {
+    reject_symlink_ancestors(root)
+        .map_err(|_| StoreError::InvalidTargetPath(root.to_path_buf()))?;
+    fs::create_dir_all(root).map_err(fs_error)?;
+    reject_symlink_ancestors(root)
+        .map_err(|_| StoreError::InvalidTargetPath(root.to_path_buf()))?;
+    reject_directory_symlink(root, "Agent target")
+        .map_err(|_| StoreError::InvalidTargetPath(root.to_path_buf()))
+}
+
+fn stage_target(
+    install: &TargetInstall,
+    canonical: &Path,
+    canonical_stage: &Path,
+    transaction: &str,
+    expected_digest: &str,
+) -> Result<(), StoreError> {
+    prepare_target_root(&install.target.root)?;
+    let name = SkillName::from_source(canonical)
+        .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+    let destination = install.target.destination(&name);
+    let stage = stage_path(&destination, transaction)?;
+    let result = match install.mode {
+        InstallMode::Copy => copy_tree(canonical_stage, &stage),
+        InstallMode::Symlink => {
+            create_directory_symlink(&relative_path(&install.target.root, canonical)?, &stage)
+                .map_err(fs_error)
+        }
     };
-    if skill_metadata.file_type().is_symlink() || !skill_metadata.is_file() {
-        return Ok(None);
-    }
-    SkillName::from_source(path)
-        .map(|name| Some(name.to_string()))
-        .map_err(invalid_input)
-}
-
-fn validate_source(source: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .map_err(|error| with_context("read the local Skill source", error))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid_input("the local Skill source must be a directory"));
-    }
-    let skill_file = source.join("SKILL.md");
-    let metadata = fs::symlink_metadata(&skill_file)
-        .map_err(|_| invalid_input("the local Skill source must contain SKILL.md"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(invalid_input("SKILL.md must be a regular file"));
+    result?;
+    if install.mode == InstallMode::Copy && hash_skill_tree(&stage)? != expected_digest {
+        return Err(StoreError::InvalidSource(
+            "the Agent target copy does not match the canonical Skill".to_owned(),
+        ));
     }
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::create_dir(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
+fn verify_managed_link(destination: &Path, canonical: &Path) -> Result<(), StoreError> {
+    let metadata = fs::symlink_metadata(destination).map_err(fs_error)?;
+    if !metadata.file_type().is_symlink() {
+        return Err(StoreError::Conflict(format!(
+            "managed Agent target is no longer a link: {}",
+            destination.display()
+        )));
+    }
+    let link = fs::read_link(destination).map_err(fs_error)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| StoreError::InvalidTargetPath(destination.to_path_buf()))?;
+    if normalize_path(&parent.join(link)) != normalize_path(canonical) {
+        return Err(StoreError::Conflict(format!(
+            "managed Agent target link changed: {}",
+            destination.display()
+        )));
+    }
+    Ok(())
+}
+
+fn source_digest(status: &SourceStatus) -> &str {
+    match status {
+        SourceStatus::Verified { content_sha256, .. }
+        | SourceStatus::Local { content_sha256 }
+        | SourceStatus::Unverified { content_sha256 } => content_sha256,
+    }
+}
+
+fn hash_skill_tree(root: &Path) -> Result<String, StoreError> {
+    validate_skill_files(root)?;
+    let mut files = Vec::new();
+    collect_files(root, root, &mut files)?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = Sha256::new();
+    for (relative, path) in files {
+        let metadata = fs::symlink_metadata(&path).map_err(fs_error)?;
+        hasher.update((relative.len() as u64).to_be_bytes());
+        hasher.update(relative.as_bytes());
+        hasher.update(metadata.len().to_be_bytes());
+        let mut file = File::open(path).map_err(fs_error)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(fs_error)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+    }
+    Ok(hex(&hasher.finalize()))
+}
+
+fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
+    let metadata = fs::symlink_metadata(root).map_err(fs_error)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StoreError::InvalidSource(
+            "the local Skill source must be a directory".to_owned(),
+        ));
+    }
+    let skill = root.join("SKILL.md");
+    let metadata = fs::symlink_metadata(&skill).map_err(|_| {
+        StoreError::InvalidSource("the local Skill source must contain SKILL.md".to_owned())
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(StoreError::InvalidSource(
+            "SKILL.md must be a regular file".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
+    validate_skill_files(root)?;
+    let directory_name = SkillName::from_source(root)
+        .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+    let frontmatter_name = read_frontmatter_name(&root.join("SKILL.md"))?;
+    if frontmatter_name != directory_name.as_str() {
+        return Err(StoreError::InvalidSource(format!(
+            "SKILL.md name must match directory {}",
+            directory_name.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn read_frontmatter_name(path: &Path) -> Result<String, StoreError> {
+    let file = File::open(path).map_err(fs_error)?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader.read_line(&mut line).map_err(|error| {
+        StoreError::InvalidSource(format!("cannot read SKILL.md frontmatter: {error}"))
+    })?;
+    if line.trim_end_matches(['\r', '\n']) != "---" {
+        return Err(StoreError::InvalidSource(
+            "SKILL.md must start with frontmatter".to_owned(),
+        ));
+    }
+    let mut bytes_read = line.len();
+    let mut name = None;
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).map_err(|error| {
+            StoreError::InvalidSource(format!("cannot read SKILL.md frontmatter: {error}"))
+        })?;
+        if read == 0 || bytes_read + read > 64 * 1024 {
+            return Err(StoreError::InvalidSource(
+                "SKILL.md frontmatter is not closed within 64 KiB".to_owned(),
+            ));
+        }
+        bytes_read += read;
+        let line = line.trim_end_matches(['\r', '\n']);
+        if line == "---" {
+            return name.ok_or_else(|| {
+                StoreError::InvalidSource("SKILL.md frontmatter must contain name".to_owned())
+            });
+        }
+        if let Some(value) = line.strip_prefix("name:") {
+            if name.is_some() {
+                return Err(StoreError::InvalidSource(
+                    "SKILL.md frontmatter contains duplicate name fields".to_owned(),
+                ));
+            }
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .or_else(|| {
+                    value
+                        .strip_prefix('\'')
+                        .and_then(|value| value.strip_suffix('\''))
+                })
+                .unwrap_or(value);
+            SkillName::parse(value.to_owned())
+                .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+            name = Some(value.to_owned());
+        }
+    }
+}
+
+fn collect_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<(), StoreError> {
+    for entry in fs::read_dir(directory).map_err(fs_error)? {
+        let entry = entry.map_err(fs_error)?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(fs_error)?;
+        if metadata.file_type().is_symlink() {
+            return Err(StoreError::InvalidSource(
+                "local Skill sources cannot contain links".to_owned(),
+            ));
+        }
+        if metadata.is_dir() {
+            collect_files(root, &path, files)?;
+        } else if metadata.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| StoreError::InvalidSource(error.to_string()))?
+                .to_str()
+                .ok_or_else(|| StoreError::InvalidSource("Skill paths must use UTF-8".to_owned()))?
+                .replace('\\', "/");
+            files.push((relative, path));
+        } else {
+            return Err(StoreError::InvalidSource(
+                "local Skill sources can contain only files and directories".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<(), StoreError> {
+    fs::create_dir(destination).map_err(fs_error)?;
+    for entry in fs::read_dir(source).map_err(fs_error)? {
+        let entry = entry.map_err(fs_error)?;
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
-        let metadata = fs::symlink_metadata(&source_path)?;
+        let metadata = fs::symlink_metadata(&source_path).map_err(fs_error)?;
         if metadata.file_type().is_symlink() {
-            return Err(invalid_input("local Skill sources cannot contain links"));
+            return Err(StoreError::InvalidSource(
+                "local Skill sources cannot contain links".to_owned(),
+            ));
         }
         if metadata.is_dir() {
             copy_tree(&source_path, &destination_path)?;
         } else if metadata.is_file() {
-            let mut destination_file = File::create(destination_path)?;
-            let mut source_file = File::open(source_path)?;
-            io::copy(&mut source_file, &mut destination_file)?;
+            let mut destination_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination_path)
+                .map_err(fs_error)?;
+            let mut source_file = File::open(source_path).map_err(fs_error)?;
+            io::copy(&mut source_file, &mut destination_file).map_err(fs_error)?;
+            destination_file.sync_all().map_err(fs_error)?;
+            fs::set_permissions(&destination_path, metadata.permissions()).map_err(fs_error)?;
         } else {
-            return Err(invalid_input(
-                "local Skill sources can contain only files and directories",
+            return Err(StoreError::InvalidSource(
+                "local Skill sources can contain only files and directories".to_owned(),
             ));
         }
+    }
+    let permissions = fs::symlink_metadata(source)
+        .map_err(fs_error)?
+        .permissions();
+    fs::set_permissions(destination, permissions).map_err(fs_error)?;
+    Ok(())
+}
+
+fn restore_path(
+    destination: &Path,
+    stage: &Path,
+    backup: &Path,
+    had_existing: bool,
+) -> Result<(), StoreError> {
+    remove_path(stage).map_err(fs_error)?;
+    if path_exists(backup)? {
+        remove_path(destination).map_err(fs_error)?;
+        fs::rename(backup, destination).map_err(fs_error)?;
+    } else if !had_existing {
+        remove_path(destination).map_err(fs_error)?;
     }
     Ok(())
 }
 
-fn write_journal(path: &Path, name: &SkillName, transaction: &str) -> io::Result<()> {
-    fs::create_dir(path).map_err(|error| with_context("create the transaction journal", error))?;
-    let mut file = File::create(path.join("state"))
-        .map_err(|error| with_context("open the transaction journal", error))?;
-    writeln!(file, "{name}")
-        .map_err(|error| with_context("write the transaction journal", error))?;
-    writeln!(file, "{transaction}")
-        .map_err(|error| with_context("write the transaction journal", error))
-}
-
-#[cfg(not(target_os = "wasi"))]
-fn ensure_write_capability() -> io::Result<()> {
+fn restore_lockfile(root: &Path, transaction: &str) -> Result<(), StoreError> {
+    let lockfile = root.join(LOCKFILE_NAME);
+    let stage = root.join(format!(".skilld-lock-stage-{transaction}"));
+    let backup = root.join(format!(".skilld-lock-backup-{transaction}"));
+    remove_path(&stage).map_err(fs_error)?;
+    if path_exists(&backup)? {
+        remove_path(&lockfile).map_err(fs_error)?;
+        fs::rename(backup, lockfile).map_err(fs_error)?;
+    }
     Ok(())
 }
 
-#[cfg(target_os = "wasi")]
-fn ensure_write_capability() -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "WASIp2 Skill store locking is unavailable",
-    ))
+fn stage_path(destination: &Path, transaction: &str) -> Result<PathBuf, StoreError> {
+    transaction_path(destination, ".skilld-stage", transaction)
 }
 
-#[cfg(not(target_os = "wasi"))]
-fn acquire_store_lock(root: &Path) -> io::Result<StoreLock> {
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(root.join(LOCK_NAME))
-        .map_err(|error| with_context("open the Skill store lock", error))?;
-    fs4::FileExt::lock(&lock).map_err(|error| with_context("lock the Skill store", error))?;
-    Ok(StoreLock { _file: lock })
+fn backup_path(destination: &Path, transaction: &str) -> Result<PathBuf, StoreError> {
+    transaction_path(destination, ".skilld-backup", transaction)
 }
 
-#[cfg(target_os = "wasi")]
-fn acquire_store_lock(_root: &Path) -> io::Result<StoreLock> {
-    Ok(StoreLock)
+fn transaction_path(
+    destination: &Path,
+    prefix: &str,
+    transaction: &str,
+) -> Result<PathBuf, StoreError> {
+    if !valid_transaction_id(transaction) {
+        return Err(StoreError::InvalidLockfile(
+            "invalid Skill transaction identifier".to_owned(),
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| StoreError::InvalidTargetPath(destination.to_path_buf()))?;
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| StoreError::InvalidTargetPath(destination.to_path_buf()))?;
+    Ok(parent.join(format!("{prefix}-{name}-{transaction}")))
+}
+
+fn valid_transaction_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 fn transaction_id() -> String {
@@ -305,10 +1125,85 @@ fn transaction_id() -> String {
     format!("{nanos}-{sequence}")
 }
 
-fn reject_symlink(path: &Path, label: &str) -> io::Result<()> {
+fn relative_path(from: &Path, to: &Path) -> Result<PathBuf, StoreError> {
+    let from = normalize_path(from);
+    let to = normalize_path(to);
+    let from_parts = from.components().collect::<Vec<_>>();
+    let to_parts = to.components().collect::<Vec<_>>();
+    let shared = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if shared == 0 {
+        return Err(StoreError::InvalidTargetPath(to));
+    }
+    let mut relative = PathBuf::new();
+    for _ in shared..from_parts.len() {
+        relative.push("..");
+    }
+    for component in &to_parts[shared..] {
+        relative.push(component.as_os_str());
+    }
+    Ok(relative)
+}
+
+#[cfg(unix)]
+fn create_directory_symlink(source: &Path, destination: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(source, destination)
+}
+
+#[cfg(windows)]
+fn create_directory_symlink(source: &Path, destination: &Path) -> io::Result<()> {
+    std::os::windows::fs::symlink_dir(source, destination)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_directory_symlink(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "directory links are unavailable on this host",
+    ))
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn ensure_write_capability() -> Result<(), StoreError> {
+    Ok(())
+}
+
+#[cfg(target_os = "wasi")]
+fn ensure_write_capability() -> Result<(), StoreError> {
+    Err(StoreError::Unsupported(
+        "WASIp2 Skill store locking is unavailable".to_owned(),
+    ))
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn acquire_store_lock(root: &Path) -> Result<StoreLock, StoreError> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join(LOCK_NAME))
+        .map_err(fs_error)?;
+    fs4::FileExt::lock(&lock).map_err(fs_error)?;
+    Ok(StoreLock { _file: lock })
+}
+
+#[cfg(target_os = "wasi")]
+fn acquire_store_lock(_root: &Path) -> Result<StoreLock, StoreError> {
+    ensure_write_capability()?;
+    Ok(StoreLock)
+}
+
+fn reject_directory_symlink(path: &Path, label: &str) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(invalid_input(format!("{label} must be a directory")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} must be a directory"),
+        ));
     }
     Ok(())
 }
@@ -322,16 +1217,19 @@ fn reject_symlink_ancestors(path: &Path) -> io::Result<()> {
     for ancestor in ancestors {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(invalid_input(format!(
-                    "Skill store path contains a link: {}",
-                    ancestor.display()
-                )));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("managed path contains a link: {}", ancestor.display()),
+                ));
             }
             Ok(metadata) if !metadata.is_dir() => {
-                return Err(invalid_input(format!(
-                    "Skill store ancestor must be a directory: {}",
-                    ancestor.display()
-                )));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "managed path ancestor must be a directory: {}",
+                        ancestor.display()
+                    ),
+                ));
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -339,11 +1237,6 @@ fn reject_symlink_ancestors(path: &Path) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-fn cleanup_path(path: &Path) {
-    // Cleanup preserves the primary transaction error when recovery is still possible.
-    let _ = remove_path(path);
 }
 
 fn remove_path(path: &Path) -> io::Result<()> {
@@ -357,17 +1250,25 @@ fn remove_path(path: &Path) -> io::Result<()> {
     }
 }
 
-fn invalid_input(error: impl fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
+fn path_exists(path: &Path) -> Result<bool, StoreError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(fs_error(error)),
+    }
 }
 
-fn with_context(context: &str, error: io::Error) -> io::Error {
-    io::Error::new(error.kind(), format!("cannot {context}: {error}"))
+fn fs_error(error: io::Error) -> StoreError {
+    if error.kind() == io::ErrorKind::Unsupported {
+        StoreError::Unsupported(error.to_string())
+    } else if error.kind() == io::ErrorKind::InvalidInput {
+        StoreError::InvalidSource(error.to_string())
+    } else {
+        StoreError::Filesystem(error.to_string())
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -385,9 +1286,7 @@ fn absolute_normalized(path: &Path) -> io::Result<PathBuf> {
     if path.is_absolute() {
         return Ok(normalize_path(path));
     }
-    std::env::current_dir()
-        .map(|current| normalize_path(&current.join(path)))
-        .map_err(|error| with_context("resolve the path", error))
+    std::env::current_dir().map(|current| normalize_path(&current.join(path)))
 }
 
 fn resolve_path(path: &Path) -> io::Result<PathBuf> {
@@ -403,213 +1302,22 @@ fn resolve_path(path: &Path) -> io::Result<PathBuf> {
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let Some(component) = existing.file_name().map(ToOwned::to_owned) else {
-                    return Err(with_context("resolve the path", error));
+                    return Err(error);
                 };
                 existing.pop();
                 missing.push(component);
             }
-            Err(error) => return Err(with_context("resolve the path", error)),
+            Err(error) => return Err(error),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::mpsc;
-    use std::thread;
-    use std::time::Duration;
-
-    struct RejectPromotion;
-
-    impl PromotionGate for RejectPromotion {
-        fn before_promote(&self, _destination: &Path) -> io::Result<()> {
-            Err(io::Error::other("injected promotion failure"))
-        }
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(DIGITS[(byte >> 4) as usize] as char);
+        output.push(DIGITS[(byte & 0x0f) as usize] as char);
     }
-
-    struct BlockingPromotion {
-        entered: mpsc::Sender<()>,
-        release: mpsc::Receiver<()>,
-    }
-
-    impl PromotionGate for BlockingPromotion {
-        fn before_promote(&self, _destination: &Path) -> io::Result<()> {
-            self.entered.send(()).unwrap();
-            self.release.recv().unwrap();
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn failed_promotion_restores_the_installed_skill() {
-        let temporary = tempfile::tempdir().unwrap();
-        let store = LocalStore::new(temporary.path().join(".skills"));
-        let source = temporary.path().join("example");
-        fs::create_dir(&source).unwrap();
-        fs::write(source.join("SKILL.md"), "old").unwrap();
-        store.install_from(&source).unwrap();
-        fs::write(source.join("SKILL.md"), "new").unwrap();
-
-        let result = store.install_from_with_gate(&source, &RejectPromotion);
-
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "injected promotion failure"
-        );
-        assert_eq!(
-            fs::read_to_string(temporary.path().join(".skills/example/SKILL.md")).unwrap(),
-            "old"
-        );
-        assert!(
-            !temporary
-                .path()
-                .join(".skills/.skilld-transaction")
-                .exists()
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn source_links_are_rejected() {
-        use std::os::unix::fs::symlink;
-
-        let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("example");
-        fs::create_dir(&source).unwrap();
-        fs::write(source.join("SKILL.md"), "fixture").unwrap();
-        symlink("SKILL.md", source.join("linked.md")).unwrap();
-
-        let error = LocalStore::new(temporary.path().join(".skills"))
-            .install_from(&source)
-            .unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "local Skill sources cannot contain links"
-        );
-        assert!(!temporary.path().join(".skills/example").exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn skill_store_ancestor_links_are_rejected_before_writes() {
-        use std::os::unix::fs::symlink;
-
-        let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("example");
-        let actual_store = temporary.path().join("actual-store");
-        let linked_store = temporary.path().join("linked-store");
-        fs::create_dir(&source).unwrap();
-        fs::write(source.join("SKILL.md"), "fixture").unwrap();
-        fs::create_dir(&actual_store).unwrap();
-        symlink(&actual_store, &linked_store).unwrap();
-
-        let error = LocalStore::new(linked_store.join("skills"))
-            .install_from(&source)
-            .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .starts_with("Skill store path contains a link:")
-        );
-        assert!(!actual_store.join("skills").exists());
-    }
-
-    #[test]
-    fn source_and_store_cannot_overlap() {
-        let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("example");
-        let store_root = source.join(".skills");
-        let journal = store_root.join(JOURNAL_NAME);
-        fs::create_dir_all(&journal).unwrap();
-        fs::write(source.join("SKILL.md"), "fixture").unwrap();
-        fs::write(journal.join("state"), "invalid").unwrap();
-
-        let error = LocalStore::new(store_root)
-            .install_from(&source)
-            .unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "the local Skill source and store cannot overlap"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn source_and_store_aliases_cannot_overlap() {
-        use std::os::unix::fs::symlink;
-
-        let temporary = tempfile::tempdir().unwrap();
-        let actual_parent = temporary.path().join("actual");
-        let alias_parent = temporary.path().join("alias");
-        let source = actual_parent.join("example");
-        let alias = alias_parent.join("example");
-        let store_root = source.join(".skills");
-        let journal = store_root.join(JOURNAL_NAME);
-        fs::create_dir_all(&journal).unwrap();
-        fs::write(source.join("SKILL.md"), "fixture").unwrap();
-        fs::write(journal.join("state"), "invalid").unwrap();
-        symlink(&actual_parent, &alias_parent).unwrap();
-
-        let error = LocalStore::new(store_root)
-            .install_from(&alias)
-            .unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "the local Skill source and store cannot overlap"
-        );
-    }
-
-    #[test]
-    fn concurrent_installs_are_serialized() {
-        let temporary = tempfile::tempdir().unwrap();
-        let store = LocalStore::new(temporary.path().join(".skills"));
-        let first = temporary.path().join("first/example");
-        let second = temporary.path().join("second/example");
-        fs::create_dir_all(&first).unwrap();
-        fs::create_dir_all(&second).unwrap();
-        fs::write(first.join("SKILL.md"), "first").unwrap();
-        fs::write(second.join("SKILL.md"), "second").unwrap();
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let first_store = store.clone();
-        let first_install = thread::spawn(move || {
-            first_store.install_from_with_gate(
-                &first,
-                &BlockingPromotion {
-                    entered: entered_tx,
-                    release: release_rx,
-                },
-            )
-        });
-        entered_rx.recv().unwrap();
-        let second_store = store.clone();
-        let (second_tx, second_rx) = mpsc::channel();
-        let second_install = thread::spawn(move || {
-            second_tx.send(second_store.install_from(&second)).unwrap();
-        });
-
-        assert!(matches!(
-            second_rx.recv_timeout(Duration::from_millis(100)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release_tx.send(()).unwrap();
-
-        assert!(first_install.join().unwrap().is_ok());
-        assert!(
-            second_rx
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_ok()
-        );
-        second_install.join().unwrap();
-        assert_eq!(
-            fs::read_to_string(store.root.join("example/SKILL.md")).unwrap(),
-            "second"
-        );
-    }
+    output
 }

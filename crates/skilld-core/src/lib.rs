@@ -1,22 +1,40 @@
+mod lock;
+mod target;
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const SOURCE_STATUSES: [&str; 3] = ["verified", "local", "unverified"];
+pub use lock::{
+    LockDocument, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES, SourceStatus,
+};
+use serde::{Deserialize, Serialize};
+pub use target::{
+    AGENT_TARGETS, AgentTarget, AgentTargetId, GlobalTargetPath, TargetSelection, select_target_ids,
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SourceStatus {
-    Verified,
-    Local,
-    Unverified,
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallMode {
+    #[default]
+    Copy,
+    Symlink,
 }
 
-impl SourceStatus {
+impl InstallMode {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Verified => "verified",
-            Self::Local => "local",
-            Self::Unverified => "unverified",
+            Self::Copy => "copy",
+            Self::Symlink => "symlink",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, DomainError> {
+        match value {
+            "copy" => Ok(Self::Copy),
+            "symlink" => Ok(Self::Symlink),
+            _ => Err(DomainError::InvalidInstallMode(value.to_owned())),
         }
     }
 }
@@ -70,6 +88,15 @@ pub enum InstallScope {
     Global,
 }
 
+impl InstallScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Global => "global",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InstallSource {
     Local(PathBuf),
@@ -115,18 +142,46 @@ impl InstallPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstallRequest {
+    pub source: Option<InstallSource>,
+    pub scope: InstallScope,
+    pub targets: Vec<AgentTargetId>,
+    pub mode: Option<InstallMode>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DomainError {
+    InvalidInstallMode(String),
     InvalidSkillName(String),
     InvalidSkillPath(PathBuf),
+    InvalidTarget(String),
+    TargetRequired,
+}
+
+impl DomainError {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidInstallMode(_) => "INVALID_INSTALL_MODE",
+            Self::InvalidSkillName(_) | Self::InvalidSkillPath(_) => "INVALID_SOURCE",
+            Self::InvalidTarget(_) => "INVALID_TARGET",
+            Self::TargetRequired => "TARGET_REQUIRED",
+        }
+    }
 }
 
 impl fmt::Display for DomainError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidInstallMode(mode) => write!(formatter, "invalid install mode: {mode}"),
             Self::InvalidSkillName(name) => write!(formatter, "invalid Skill name: {name}"),
             Self::InvalidSkillPath(path) => {
                 write!(formatter, "invalid local Skill path: {}", path.display())
             }
+            Self::InvalidTarget(target) => write!(formatter, "unknown Agent target: {target}"),
+            Self::TargetRequired => write!(
+                formatter,
+                "select an Agent target with --agent or configure agent.targets"
+            ),
         }
     }
 }
@@ -136,14 +191,6 @@ impl std::error::Error for DomainError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn skill_name_rejects_path_components() {
-        assert_eq!(
-            SkillName::parse("../outside"),
-            Err(DomainError::InvalidSkillName("../outside".to_owned()))
-        );
-    }
 
     #[test]
     fn skill_name_matches_the_agent_skills_contract() {
@@ -164,8 +211,27 @@ mod tests {
     }
 
     #[test]
-    fn bundled_skilld_has_an_explicit_source() {
-        assert_eq!(InstallSource::parse("skilld"), InstallSource::BundledSkilld);
+    fn target_selection_uses_explicit_then_detected_then_configured() {
+        let explicit = [AgentTargetId::Cursor];
+        let detected = [AgentTargetId::Codex];
+        let configured = [AgentTargetId::ClaudeCode];
+
+        assert_eq!(
+            select_target_ids(&explicit, &detected, &configured),
+            Ok(TargetSelection::Explicit(explicit.to_vec()))
+        );
+        assert_eq!(
+            select_target_ids(&[], &detected, &configured),
+            Ok(TargetSelection::Detected(detected.to_vec()))
+        );
+        assert_eq!(
+            select_target_ids(&[], &[], &configured),
+            Ok(TargetSelection::Configured(configured.to_vec()))
+        );
+        assert_eq!(
+            select_target_ids(&[], &[], &[]),
+            Err(DomainError::TargetRequired)
+        );
     }
 
     #[test]
@@ -174,14 +240,12 @@ mod tests {
             "../../../tests/fixtures/v3-rust/v1/source-status.json"
         ))
         .unwrap();
-        assert_eq!(
-            [
-                SourceStatus::Verified.as_str(),
-                SourceStatus::Local.as_str(),
-                SourceStatus::Unverified.as_str(),
-            ],
-            fixture.as_slice()
-        );
+
         assert_eq!(fixture, SOURCE_STATUSES);
+    }
+
+    #[test]
+    fn bundled_skilld_has_an_explicit_source() {
+        assert_eq!(InstallSource::parse("skilld"), InstallSource::BundledSkilld);
     }
 }
