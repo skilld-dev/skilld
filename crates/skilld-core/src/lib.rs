@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn skill_name_matches_the_agent_skills_contract() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/v3-rust/skill-name.json"
+            "../../../contracts/fixtures/skill-conformance/skill-name.json"
         ))
         .unwrap();
 
