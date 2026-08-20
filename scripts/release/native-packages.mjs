@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const NPM_REGISTRY = 'https://registry.npmjs.org/'
 const REGISTRY_RESPONSE_LIMIT = 1024 * 1024
+const SEMVER_WITH_NPM_CHANNEL = /^\d+\.\d+\.\d+(?:-([a-z][a-z0-9-]*)(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z.-]+)?$/
 
 export const nativePackageSpecs = Object.freeze([
   nativePackage({ directory: 'cli-darwin-arm64', runner: 'macos-15', target: 'aarch64-apple-darwin', os: 'darwin', cpu: 'arm64', format: 'mach-o' }),
@@ -131,6 +132,13 @@ export async function verifyReleaseVersions(repositoryRoot, tag) {
     protocol: { name: protocol.name, version: protocol.version },
     sharedVersion: root.version,
   }
+}
+
+export function npmTagForVersion(version) {
+  const match = SEMVER_WITH_NPM_CHANNEL.exec(version)
+  if (!match)
+    throw new Error(`Cannot derive an npm tag from ${version}`)
+  return match[1] ?? 'latest'
 }
 
 export function packagePublishDecision({ packageName, response, version }) {
@@ -274,6 +282,11 @@ async function main([command, argument]) {
     process.stdout.write(`Independent protocol: ${versions.protocol.version}\n`)
     return
   }
+  if (command === 'npm-tag') {
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'))
+    process.stdout.write(`${npmTagForVersion(manifest.version)}\n`)
+    return
+  }
   if (command === 'protocol-publish') {
     const manifest = JSON.parse(await readFile(join(process.cwd(), 'packages/protocol/package.json'), 'utf8'))
     const decision = await lookupIndependentPackage({
@@ -295,7 +308,7 @@ async function main([command, argument]) {
     process.stdout.write(`${decision._tag === 'Publish'}\n`)
     return
   }
-  throw new Error('Expected directories, matrix, package-publish, protocol-publish, verify, verify-packed, or versions')
+  throw new Error('Expected directories, matrix, npm-tag, package-publish, protocol-publish, verify, verify-packed, or versions')
 }
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {

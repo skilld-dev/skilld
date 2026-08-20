@@ -10,6 +10,7 @@ import { afterEach, it } from 'vitest'
 import {
   independentPackagePublishDecision,
   nativePackageSpecs,
+  npmTagForVersion,
   packagePublishDecision,
   verifyNativePackages,
   verifyPackedNativePackage,
@@ -99,6 +100,14 @@ it('keeps v3 packages aligned and versions the protocol independently', async ()
     protocol: { name: 'skilld-protocol', version: '2.4.0' },
     sharedVersion: '3.0.0-alpha.2',
   })
+})
+
+it('publishes beta versions under the beta npm tag', () => {
+  assert.equal(npmTagForVersion('3.0.0-beta.0'), 'beta')
+})
+
+it('publishes stable versions under the latest npm tag', () => {
+  assert.equal(npmTagForVersion('3.0.0'), 'latest')
 })
 
 it('rejects a release when Harness has a different v3 version', async () => {
