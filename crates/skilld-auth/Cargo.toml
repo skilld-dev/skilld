@@ -1,33 +1,30 @@
 [package]
 name = "skilld-auth"
-version = "3.0.0-alpha.1"
-edition = "2024"
-license = "MIT"
-repository = "https://github.com/skilld-dev/skilld"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 description = "Native skilld.dev account authentication with PKCE and OS keychains"
 
-# This crate stays independently testable until the root workspace adopts it.
-[workspace]
-
 [dependencies]
-base64 = "0.22.1"
-getrandom = "0.3.4"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
-sha2 = "0.11.0"
-subtle = "2.6.1"
-url = "2.5.7"
-zeroize = "1.8.1"
+base64.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+url.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3.6.3", features = ["linux-native-sync-persistent"] }
+keyring = { workspace = true, features = ["linux-native-sync-persistent"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6.3", features = ["apple-native"] }
+keyring = { workspace = true, features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3.6.3", features = ["windows-native"] }
+keyring = { workspace = true, features = ["windows-native"] }
 
 [lints.rust]
 unsafe_code = "forbid"
