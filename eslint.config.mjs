@@ -15,7 +15,7 @@ export default antfu({
     'docs/**',
     '.claude/skills/**',
     '.claude/worktrees/**',
-    'test/fixtures/**',
+    'tests/fixtures/**',
   ],
 }, {
   files: ['**/*.md/**'],
@@ -23,7 +23,7 @@ export default antfu({
     'style/max-statements-per-line': 'off',
   },
 }, {
-  files: ['**/test/**/*.ts', '**/test/**/*.js'],
+  files: ['**/test/**/*.ts', '**/test/**/*.js', '**/tests/**/*.mjs'],
   rules: {
     'ts/no-unsafe-function-type': 'off',
     'no-console': 'off',

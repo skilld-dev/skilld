@@ -1,15 +1,14 @@
 {
-  "name": "@skilld/cli-linux-x64-gnu",
+  "name": "@skilld/cli-darwin-arm64",
   "version": "3.0.0-alpha.1",
-  "description": "Linux x64 GNU executable for the skilld CLI",
+  "description": "macOS arm64 executable for the skilld CLI",
   "license": "MIT",
   "repository": "github:skilld-dev/skilld",
   "publishConfig": {
     "access": "public",
     "executableFiles": ["bin/skilld"]
   },
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "libc": ["glibc"],
+  "os": ["darwin"],
+  "cpu": ["arm64"],
   "files": ["bin/skilld"]
 }

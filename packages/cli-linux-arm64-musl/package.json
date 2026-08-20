@@ -1,7 +1,7 @@
 {
-  "name": "@skilld/cli-linux-x64-gnu",
+  "name": "@skilld/cli-linux-arm64-musl",
   "version": "3.0.0-alpha.1",
-  "description": "Linux x64 GNU executable for the skilld CLI",
+  "description": "Linux arm64 musl executable for the skilld CLI",
   "license": "MIT",
   "repository": "github:skilld-dev/skilld",
   "publishConfig": {
@@ -9,7 +9,7 @@
     "executableFiles": ["bin/skilld"]
   },
   "os": ["linux"],
-  "cpu": ["x64"],
-  "libc": ["glibc"],
+  "cpu": ["arm64"],
+  "libc": ["musl"],
   "files": ["bin/skilld"]
 }
