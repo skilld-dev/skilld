@@ -344,9 +344,27 @@ export interface components {
             /** Format: date-time */
             notBefore: string;
             publicKey: string;
-            rootSignature?: string;
+            /** @description Ed25519 over skilld-trusted-key-v1 NUL followed by SHA-256 of decoded statement bytes. */
+            rootSignature: string;
+            /** @description Base64url exact TrustedKeyStatementV1 bytes. Fields must match this key and the TrustedRoot rootKeyId. */
+            statement: string;
             /** @enum {string} */
             status: "active" | "overlapping" | "retired" | "revoked";
+        };
+        TrustedKeyStatementV1: {
+            /** @constant */
+            algorithm: "Ed25519";
+            keyId: string;
+            /** Format: date-time */
+            notAfter: string;
+            /** Format: date-time */
+            notBefore: string;
+            publicKey: string;
+            rootKeyId: string;
+            /** @enum {string} */
+            status: "active" | "overlapping" | "retired" | "revoked";
+            /** @constant */
+            version: 1;
         };
         TrustedRoot: {
             /** Format: date-time */

@@ -714,10 +714,42 @@ components:
         mapping:
           public: '#/components/schemas/PublicArtifactGrant'
           private: '#/components/schemas/PrivateArtifactGrant'
+    TrustedKeyStatementV1:
+      type: object
+      additionalProperties: false
+      required: [version, rootKeyId, keyId, algorithm, publicKey, notBefore, notAfter, status]
+      properties:
+        version:
+          type: integer
+          const: 1
+        rootKeyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        keyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        algorithm:
+          type: string
+          const: Ed25519
+        publicKey:
+          type: string
+          minLength: 43
+          maxLength: 44
+        notBefore:
+          type: string
+          format: date-time
+        notAfter:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, overlapping, retired, revoked]
     TrustedKey:
       type: object
       additionalProperties: false
-      required: [keyId, algorithm, publicKey, notBefore, notAfter, status]
+      required: [keyId, algorithm, publicKey, notBefore, notAfter, status, statement, rootSignature]
       properties:
         keyId:
           type: string
@@ -739,8 +771,19 @@ components:
         status:
           type: string
           enum: [active, overlapping, retired, revoked]
+        statement:
+          type: string
+          description: Base64url exact TrustedKeyStatementV1 bytes. Fields must match this key and the TrustedRoot rootKeyId.
+          pattern: '^[A-Za-z0-9_-]+$'
+          minLength: 2
+          maxLength: 4096
+          contentEncoding: base64url
+          contentMediaType: application/json
+          contentSchema:
+            $ref: '#/components/schemas/TrustedKeyStatementV1'
         rootSignature:
           type: string
+          description: Ed25519 over skilld-trusted-key-v1 NUL followed by SHA-256 of decoded statement bytes.
           minLength: 86
           maxLength: 88
     TrustedRoot:
