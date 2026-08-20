@@ -96,6 +96,12 @@ jobs:
           node-version: lts/*
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - id: protocol_release
+        name: Check independent protocol version
+        shell: bash
+        run: |
+          decision="$(node scripts/release/native-packages.mjs protocol-publish)"
+          echo "publish=$decision" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v7
         with:
           path: native-artifacts
@@ -143,10 +149,12 @@ jobs:
         run: pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish Harness and independent protocol
-        shell: bash
-        run: |
-          pnpm --dir packages/harness publish --access public --no-git-checks
-          pnpm --dir packages/protocol publish --access public --no-git-checks
+      - name: Publish Harness
+        run: pnpm --dir packages/harness publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish independent protocol
+        if: steps.protocol_release.outputs.publish == 'true'
+        run: pnpm --dir packages/protocol publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

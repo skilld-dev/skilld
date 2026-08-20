@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { afterEach, it } from 'vitest'
 
 import {
+  independentPackagePublishDecision,
   nativePackageSpecs,
   verifyNativePackages,
   verifyPackedNativePackage,
@@ -110,6 +111,62 @@ it('rejects a release when Harness has a different v3 version', async () => {
   await assert.rejects(
     verifyReleaseVersions(root, 'v3.0.0-alpha.2'),
     /Shared v3 package versions differ/,
+  )
+})
+
+it('skips an independently versioned package that already exists', () => {
+  const decision = independentPackagePublishDecision({
+    packageName: 'skilld-protocol',
+    response: {
+      body: { name: 'skilld-protocol', version: '2.4.0' },
+      status: 200,
+    },
+    version: '2.4.0',
+  })
+
+  assert.deepEqual(decision, {
+    _tag: 'Skip',
+    packageName: 'skilld-protocol',
+    version: '2.4.0',
+  })
+})
+
+it('publishes an independently versioned package only after an exact miss', () => {
+  const decision = independentPackagePublishDecision({
+    packageName: 'skilld-protocol',
+    response: { status: 404 },
+    version: '2.4.0',
+  })
+
+  assert.deepEqual(decision, {
+    _tag: 'Publish',
+    packageName: 'skilld-protocol',
+    version: '2.4.0',
+  })
+})
+
+it('fails an independent package lookup on registry errors', () => {
+  assert.throws(
+    () => independentPackagePublishDecision({
+      packageName: 'skilld-protocol',
+      response: { status: 503 },
+      version: '2.4.0',
+    }),
+    /HTTP 503/,
+  )
+})
+
+it('fails when the registry returns another package version', () => {
+  assert.throws(
+    () => independentPackagePublishDecision({
+      packageName: 'skilld-protocol',
+      response: {
+        body: { name: 'skilld-protocol', version: '2.3.0' },
+        status: 200,
+      },
+      version: '2.4.0',
+    }),
+    /different package version/,
   )
 })
 

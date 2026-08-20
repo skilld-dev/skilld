@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+const NPM_REGISTRY = 'https://registry.npmjs.org/'
+const REGISTRY_RESPONSE_LIMIT = 1024 * 1024
 
 export const nativePackageSpecs = Object.freeze([
   nativePackage({ directory: 'cli-darwin-arm64', runner: 'macos-15', target: 'aarch64-apple-darwin', os: 'darwin', cpu: 'arm64', format: 'mach-o' }),
@@ -131,6 +133,59 @@ export async function verifyReleaseVersions(repositoryRoot, tag) {
   }
 }
 
+export function independentPackagePublishDecision({ packageName, response, version }) {
+  if (response.status === 404) {
+    return {
+      _tag: 'Publish',
+      packageName,
+      version,
+    }
+  }
+  if (response.status !== 200)
+    throw new Error(`npm registry lookup failed with HTTP ${response.status}`)
+  if (response.body?.name !== packageName || response.body?.version !== version)
+    throw new Error('npm registry returned a different package version')
+  return {
+    _tag: 'Skip',
+    packageName,
+    version,
+  }
+}
+
+export async function lookupIndependentPackage({
+  fetch: fetchRegistry = globalThis.fetch,
+  packageName,
+  registry = NPM_REGISTRY,
+  version,
+}) {
+  const packageVersion = `${encodeURIComponent(packageName)}/${encodeURIComponent(version)}`
+  const response = await fetchRegistry(new URL(packageVersion, registry), {
+    headers: { accept: 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (response.status !== 200) {
+    return independentPackagePublishDecision({
+      packageName,
+      response: { status: response.status },
+      version,
+    })
+  }
+
+  const contentLength = Number(response.headers.get('content-length') ?? 0)
+  if (contentLength > REGISTRY_RESPONSE_LIMIT)
+    throw new Error('npm registry response is too large')
+  const text = await response.text()
+  if (Buffer.byteLength(text) > REGISTRY_RESPONSE_LIMIT)
+    throw new Error('npm registry response is too large')
+  const body = JSON.parse(text)
+  return independentPackagePublishDecision({
+    packageName,
+    response: { body, status: response.status },
+    version,
+  })
+}
+
 function nativePackage(spec) {
   const executable = spec.os === 'win32' ? 'skilld.exe' : 'skilld'
   return Object.freeze({
@@ -217,7 +272,17 @@ async function main([command, argument]) {
     process.stdout.write(`Independent protocol: ${versions.protocol.version}\n`)
     return
   }
-  throw new Error('Expected directories, matrix, verify, verify-packed, or versions')
+  if (command === 'protocol-publish') {
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'packages/protocol/package.json'), 'utf8'))
+    const decision = await lookupIndependentPackage({
+      packageName: manifest.name,
+      version: manifest.version,
+    })
+    process.stderr.write(`${decision.packageName}@${decision.version}: ${decision._tag.toLowerCase()}\n`)
+    process.stdout.write(`${decision._tag === 'Publish'}\n`)
+    return
+  }
+  throw new Error('Expected directories, matrix, protocol-publish, verify, verify-packed, or versions')
 }
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
