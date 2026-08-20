@@ -1,0 +1,851 @@
+openapi: 3.1.0
+info:
+  title: skilld Artifact delivery
+  version: 1.0.0
+  description: Resolve GitHub Skills into attested Artifacts for the skilld CLI.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://skilld.dev
+tags:
+  - name: Skills
+    description: Skill discovery for the skilld CLI.
+  - name: Resolutions
+    description: Exact Repository source resolution and Artifact state.
+  - name: Artifacts
+    description: Authorized Artifact content delivery.
+  - name: Trust
+    description: Attestation verification keys.
+paths:
+  /api/v1/skills:
+    get:
+      operationId: searchSkills
+      tags: [Skills]
+      summary: Search for Skills
+      security:
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Matching Skills in ranked order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillSearchResponse'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/resolutions:
+    post:
+      operationId: createResolution
+      tags: [Resolutions]
+      summary: Resolve a Skill from a Repository
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateResolutionRequest'
+      responses:
+        '200':
+          description: The Artifact is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolutionReady'
+        '202':
+          description: Artifact creation is pending.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolutionPending'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/resolutions/{resolutionId}:
+    get:
+      operationId: getResolution
+      tags: [Resolutions]
+      summary: Get a Resolution
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ResolutionId'
+      responses:
+        '200':
+          description: Current Resolution state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resolution'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/artifacts/{artifactId}/grants:
+    post:
+      operationId: createArtifactGrant
+      tags: [Artifacts]
+      summary: Authorize an Artifact download
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ArtifactId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Current download authorization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactGrant'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/artifacts/{artifactId}/content:
+    get:
+      operationId: getPrivateArtifactContent
+      tags: [Artifacts]
+      summary: Download private Artifact content
+      security:
+        - bearerAuth: []
+          downloadGrant: []
+      parameters:
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Verified Artifact archive.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/x-tar:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/trusted-root:
+    get:
+      operationId: getTrustedRoot
+      tags: [Trust]
+      summary: Get attestation verification keys
+      security:
+        - {}
+      responses:
+        '200':
+          description: Active and overlapping verification keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustedRoot'
+        '429':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    downloadGrant:
+      type: apiKey
+      in: header
+      name: X-Skilld-Grant
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 200
+    ResolutionId:
+      name: resolutionId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ResolutionId'
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ArtifactId'
+  headers:
+    RetryAfter:
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 60
+  responses:
+    Problem:
+      description: Request failed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    ResolutionId:
+      type: string
+      format: uuid
+    ArtifactId:
+      type: string
+      pattern: '^sha256:[a-f0-9]{64}$'
+    Sha256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    CommitSha:
+      type: string
+      pattern: '^[a-f0-9]{40}$'
+    SkillName:
+      type: string
+      pattern: '^[a-z0-9](?:[a-z0-9]|-(?!-)){0,62}[a-z0-9]$|^[a-z0-9]$'
+      maxLength: 64
+    RepositoryVisibility:
+      type: string
+      enum: [public, private]
+    SourceStatus:
+      type: string
+      description: Verifies source and content integrity. It does not assert safety.
+      enum: [verified, local, unverified]
+    SourceSelector:
+      oneOf:
+        - $ref: '#/components/schemas/PathSelector'
+        - $ref: '#/components/schemas/NamedSkillSelector'
+      discriminator:
+        propertyName: type
+        mapping:
+          path: '#/components/schemas/PathSelector'
+          named-skill: '#/components/schemas/NamedSkillSelector'
+    PathSelector:
+      type: object
+      additionalProperties: false
+      required: [type, path]
+      properties:
+        type:
+          type: string
+          const: path
+        path:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    NamedSkillSelector:
+      type: object
+      additionalProperties: false
+      required: [type, name]
+      properties:
+        type:
+          type: string
+          const: named-skill
+        name:
+          $ref: '#/components/schemas/SkillName'
+    SourceRef:
+      oneOf:
+        - $ref: '#/components/schemas/BranchRef'
+        - $ref: '#/components/schemas/TagRef'
+        - $ref: '#/components/schemas/CommitRef'
+      discriminator:
+        propertyName: type
+        mapping:
+          branch: '#/components/schemas/BranchRef'
+          tag: '#/components/schemas/TagRef'
+          commit: '#/components/schemas/CommitRef'
+    BranchRef:
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: branch
+        value:
+          type: string
+          minLength: 1
+          maxLength: 255
+    TagRef:
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: tag
+        value:
+          type: string
+          minLength: 1
+          maxLength: 255
+    CommitRef:
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: commit
+        value:
+          $ref: '#/components/schemas/CommitSha'
+    SourceRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, owner, repository, selector]
+      properties:
+        provider:
+          type: string
+          const: github
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 39
+        repository:
+          type: string
+          minLength: 1
+          maxLength: 100
+        selector:
+          $ref: '#/components/schemas/SourceSelector'
+        ref:
+          $ref: '#/components/schemas/SourceRef'
+    CreateResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source:
+          $ref: '#/components/schemas/SourceRequest'
+    SkillSearchResult:
+      type: object
+      additionalProperties: false
+      required: [name, description, source, stargazerCount]
+      properties:
+        name:
+          $ref: '#/components/schemas/SkillName'
+        description:
+          type: [string, 'null']
+          maxLength: 500
+        source:
+          $ref: '#/components/schemas/SourceRequest'
+        stargazerCount:
+          type: integer
+          minimum: 0
+    SkillSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/SkillSearchResult'
+        total:
+          type: integer
+          minimum: 0
+    ResolvedSource:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - repositoryId
+        - owner
+        - repository
+        - visibility
+        - commitSha
+        - treeSha
+        - skillPath
+      properties:
+        provider:
+          type: string
+          const: github
+        repositoryId:
+          type: integer
+          minimum: 1
+        owner:
+          type: string
+        repository:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/RepositoryVisibility'
+        commitSha:
+          $ref: '#/components/schemas/CommitSha'
+        treeSha:
+          $ref: '#/components/schemas/CommitSha'
+        skillPath:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    CheckOutcome:
+      type: string
+      enum: [pass, warn, fail, error]
+    CheckResult:
+      type: object
+      additionalProperties: false
+      required: [name, version, outcome, required]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        version:
+          type: string
+          minLength: 1
+          maxLength: 50
+        outcome:
+          $ref: '#/components/schemas/CheckOutcome'
+        required:
+          type: boolean
+        summary:
+          type: string
+          maxLength: 500
+        findings:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 500
+    ArtifactFile:
+      type: object
+      additionalProperties: false
+      required: [path, mode, size, sha256]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        mode:
+          type: integer
+          enum: [420, 493]
+        size:
+          type: integer
+          minimum: 0
+        sha256:
+          $ref: '#/components/schemas/Sha256'
+    AttestationSignature:
+      type: object
+      description: Ed25519 over skilld-attestation-v1 NUL followed by SHA-256 of decoded statement bytes.
+      additionalProperties: false
+      required: [algorithm, keyId, value]
+      properties:
+        algorithm:
+          type: string
+          const: Ed25519
+        keyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        value:
+          type: string
+          minLength: 86
+          maxLength: 88
+    ArtifactAttestationV1:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - artifactId
+        - createdAt
+        - source
+        - sourceStatus
+        - format
+        - contentSha256
+        - contentBytes
+        - policyVersion
+        - files
+        - checkResults
+        - statement
+        - signature
+      properties:
+        version:
+          type: integer
+          const: 1
+        artifactId:
+          $ref: '#/components/schemas/ArtifactId'
+        createdAt:
+          type: string
+          format: date-time
+        source:
+          $ref: '#/components/schemas/ResolvedSource'
+        sourceStatus:
+          allOf:
+            - $ref: '#/components/schemas/SourceStatus'
+            - type: string
+              const: verified
+        format:
+          type: string
+          const: skilld-tar-v1
+        contentSha256:
+          $ref: '#/components/schemas/Sha256'
+        contentBytes:
+          type: integer
+          minimum: 1
+        policyVersion:
+          type: string
+          minLength: 1
+          maxLength: 100
+        files:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items:
+            $ref: '#/components/schemas/ArtifactFile'
+        checkResults:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CheckResult'
+        statement:
+          type: string
+          description: Base64url exact statement bytes. Parsed fields must match the outer attestation fields.
+          pattern: '^[A-Za-z0-9_-]+$'
+          minLength: 2
+          maxLength: 8388608
+        signature:
+          $ref: '#/components/schemas/AttestationSignature'
+    ArtifactDescriptor:
+      type: object
+      additionalProperties: false
+      required: [artifactId, visibility, attestation]
+      properties:
+        artifactId:
+          $ref: '#/components/schemas/ArtifactId'
+        visibility:
+          $ref: '#/components/schemas/RepositoryVisibility'
+        attestation:
+          $ref: '#/components/schemas/ArtifactAttestationV1'
+    BuildStage:
+      type: string
+      enum:
+        - requested
+        - resolving
+        - fetching
+        - checking
+        - packaging
+        - encrypting
+        - signing
+        - publishing
+        - retry-wait
+    ResolutionPending:
+      type: object
+      additionalProperties: false
+      required: [state, resolutionId, stage, pollAfterMs]
+      properties:
+        state:
+          type: string
+          const: pending
+        resolutionId:
+          $ref: '#/components/schemas/ResolutionId'
+        stage:
+          $ref: '#/components/schemas/BuildStage'
+        pollAfterMs:
+          type: integer
+          minimum: 250
+          maximum: 60000
+    ResolutionReady:
+      type: object
+      additionalProperties: false
+      required: [state, resolutionId, artifact]
+      properties:
+        state:
+          type: string
+          const: ready
+        resolutionId:
+          $ref: '#/components/schemas/ResolutionId'
+        artifact:
+          $ref: '#/components/schemas/ArtifactDescriptor'
+    ResolutionBlocked:
+      type: object
+      additionalProperties: false
+      required: [state, resolutionId, checkResults]
+      properties:
+        state:
+          type: string
+          const: blocked
+        resolutionId:
+          $ref: '#/components/schemas/ResolutionId'
+        checkResults:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CheckResult'
+    ResolutionFailed:
+      type: object
+      additionalProperties: false
+      required: [state, resolutionId, code, retryable]
+      properties:
+        state:
+          type: string
+          const: failed
+        resolutionId:
+          $ref: '#/components/schemas/ResolutionId'
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+        retryable:
+          type: boolean
+    ResolutionRevoked:
+      type: object
+      additionalProperties: false
+      required: [state, resolutionId, reasonCode]
+      properties:
+        state:
+          type: string
+          const: revoked
+        resolutionId:
+          $ref: '#/components/schemas/ResolutionId'
+        reasonCode:
+          type: string
+          minLength: 1
+          maxLength: 100
+    Resolution:
+      oneOf:
+        - $ref: '#/components/schemas/ResolutionPending'
+        - $ref: '#/components/schemas/ResolutionReady'
+        - $ref: '#/components/schemas/ResolutionBlocked'
+        - $ref: '#/components/schemas/ResolutionFailed'
+        - $ref: '#/components/schemas/ResolutionRevoked'
+      discriminator:
+        propertyName: state
+        mapping:
+          pending: '#/components/schemas/ResolutionPending'
+          ready: '#/components/schemas/ResolutionReady'
+          blocked: '#/components/schemas/ResolutionBlocked'
+          failed: '#/components/schemas/ResolutionFailed'
+          revoked: '#/components/schemas/ResolutionRevoked'
+    PublicArtifactGrant:
+      type: object
+      additionalProperties: false
+      required: [kind, artifactId, contentUrl, expiresAt, attestation]
+      properties:
+        kind:
+          type: string
+          const: public
+        artifactId:
+          $ref: '#/components/schemas/ArtifactId'
+        contentUrl:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+        attestation:
+          $ref: '#/components/schemas/ArtifactAttestationV1'
+    PrivateArtifactGrant:
+      type: object
+      additionalProperties: false
+      required: [kind, artifactId, contentUrl, downloadToken, expiresAt, attestation]
+      properties:
+        kind:
+          type: string
+          const: private
+        artifactId:
+          $ref: '#/components/schemas/ArtifactId'
+        contentUrl:
+          type: string
+          format: uri
+        downloadToken:
+          type: string
+          minLength: 32
+          maxLength: 512
+        expiresAt:
+          type: string
+          format: date-time
+        attestation:
+          $ref: '#/components/schemas/ArtifactAttestationV1'
+    ArtifactGrant:
+      oneOf:
+        - $ref: '#/components/schemas/PublicArtifactGrant'
+        - $ref: '#/components/schemas/PrivateArtifactGrant'
+      discriminator:
+        propertyName: kind
+        mapping:
+          public: '#/components/schemas/PublicArtifactGrant'
+          private: '#/components/schemas/PrivateArtifactGrant'
+    TrustedKeyStatementV1:
+      type: object
+      additionalProperties: false
+      required: [version, rootKeyId, keyId, algorithm, publicKey, notBefore, notAfter, status]
+      properties:
+        version:
+          type: integer
+          const: 1
+        rootKeyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        keyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        algorithm:
+          type: string
+          const: Ed25519
+        publicKey:
+          type: string
+          minLength: 43
+          maxLength: 44
+        notBefore:
+          type: string
+          format: date-time
+        notAfter:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, overlapping, retired, revoked]
+    TrustedKey:
+      type: object
+      additionalProperties: false
+      required: [keyId, algorithm, publicKey, notBefore, notAfter, status, statement, rootSignature]
+      properties:
+        keyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        algorithm:
+          type: string
+          const: Ed25519
+        publicKey:
+          type: string
+          minLength: 43
+          maxLength: 44
+        notBefore:
+          type: string
+          format: date-time
+        notAfter:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, overlapping, retired, revoked]
+        statement:
+          type: string
+          description: Base64url exact TrustedKeyStatementV1 bytes. Fields must match this key and the TrustedRoot rootKeyId.
+          pattern: '^[A-Za-z0-9_-]+$'
+          minLength: 2
+          maxLength: 4096
+          contentEncoding: base64url
+          contentMediaType: application/json
+          contentSchema:
+            $ref: '#/components/schemas/TrustedKeyStatementV1'
+        rootSignature:
+          type: string
+          description: Ed25519 over skilld-trusted-key-v1 NUL followed by SHA-256 of decoded statement bytes.
+          minLength: 86
+          maxLength: 88
+    TrustedRoot:
+      type: object
+      additionalProperties: false
+      required: [version, rootKeyId, rootPublicKey, keys, fetchedAt]
+      properties:
+        version:
+          type: integer
+          const: 1
+        rootKeyId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        rootPublicKey:
+          type: string
+          minLength: 43
+          maxLength: 44
+        keys:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TrustedKey'
+        fetchedAt:
+          type: string
+          format: date-time
+    ProblemCode:
+      type: string
+      enum:
+        - AUTH_REQUIRED
+        - INVALID_SOURCE
+        - SOURCE_NOT_FOUND
+        - SOURCE_ACCESS_DENIED
+        - SOURCE_UNAVAILABLE
+        - RATE_LIMITED
+        - CHECK_BLOCKED
+        - CHECK_UNAVAILABLE
+        - ARTIFACT_REVOKED
+        - ARTIFACT_EXPIRED
+        - ATTESTATION_EXPIRED
+        - SIGNER_UNAVAILABLE
+        - SERVICE_UNAVAILABLE
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          maxLength: 200
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          maxLength: 1000
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          $ref: '#/components/schemas/ProblemCode'

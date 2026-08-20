@@ -1,0 +1,76 @@
+{
+  "name": "@skilld/harness",
+  "type": "module",
+  "version": "3.0.0-alpha.1",
+  "description": "Run skilld-maintained Skills with checked, atomic output",
+  "author": {
+    "name": "Harlan Wilton",
+    "email": "harlan@harlanzw.com",
+    "url": "https://harlanzw.com/"
+  },
+  "contributors": [
+    {
+      "name": "Ori",
+      "url": "https://github.com/oritwoen"
+    }
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skilld-dev/skilld.git",
+    "directory": "packages/harness"
+  },
+  "keywords": [
+    "agent",
+    "skills",
+    "harness",
+    "ai-sdk"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./skills": {
+      "types": "./dist/skills.d.mts",
+      "import": "./dist/skills.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "obuild && node scripts/copy-skilld-maintained-skills.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "publint": "publint",
+    "attw": "node scripts/check-package-types.mjs",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "catalog:",
+    "ws": "catalog:",
+    "yaml": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider-utils": "catalog:",
+    "@antfu/eslint-config": "catalog:dev-lint",
+    "@arethetypeswrong/cli": "catalog:",
+    "@types/node": "catalog:dev-build",
+    "@typescript/native": "catalog:",
+    "eslint": "catalog:dev-lint",
+    "obuild": "catalog:dev-build",
+    "publint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:dev-test"
+  }
+}

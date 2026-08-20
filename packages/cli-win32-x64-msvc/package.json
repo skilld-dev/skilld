@@ -1,0 +1,11 @@
+{
+  "name": "@skilld/cli-win32-x64-msvc",
+  "version": "3.0.0-alpha.1",
+  "description": "Windows x64 executable for the skilld CLI",
+  "license": "MIT",
+  "repository": "github:skilld-dev/skilld",
+  "publishConfig": { "access": "public" },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/skilld.exe"]
+}

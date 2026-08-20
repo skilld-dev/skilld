@@ -1,0 +1,30 @@
+[package]
+name = "skilld-core"
+
+version.workspace = true
+
+edition.workspace = true
+
+license.workspace = true
+
+repository.workspace = true
+
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22.1"
+ed25519-dalek = "2.2.0"
+
+serde.workspace = true
+
+serde_json.workspace = true
+
+sha2.workspace = true
+
+time = { version = "=0.3.44", features = [ "parsing" ] }
+
+[dev-dependencies]
+serde_json.workspace = true

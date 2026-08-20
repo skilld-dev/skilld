@@ -1,9 +1,9 @@
 {
   "name": "skilld",
   "type": "module",
-  "version": "2.3.0",
+  "version": "3.0.0-alpha.1",
   "packageManager": "pnpm@11.21.0",
-  "description": "Generate AI agent skills from npm package documentation",
+  "description": "Search, install, and keep Skills current",
   "author": {
     "name": "Harlan Wilton",
     "email": "harlan@harlanzw.com",
@@ -18,78 +18,47 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/skilld-dev/skilld"
+    "url": "git+https://github.com/skilld-dev/skilld.git"
   },
   "keywords": [
-    "ai",
     "agent",
     "skills",
-    "npm",
-    "documentation",
-    "claude",
-    "llm",
-    "cursor",
-    "codex"
+    "cli",
+    "github"
   ],
   "bin": {
-    "skilld": "./dist/cli-entry.mjs"
+    "skilld": "./bin/skilld.mjs"
   },
   "files": [
-    "dist",
-    "skills"
+    "bin",
+    "loader"
   ],
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=18.18.0"
   },
   "scripts": {
-    "build": "obuild",
-    "dev:prepare": "obuild --stub",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm --filter skilld-protocol build && pnpm --filter @skilld/harness build && cargo build --workspace",
+    "lint": "eslint . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "lint:fix": "eslint . --fix && cargo fmt --all",
+    "typecheck": "pnpm --filter skilld-protocol typecheck && pnpm --filter @skilld/harness typecheck",
     "test": "vitest",
-    "test:run": "vitest run",
-    "release": "pnpm -r build && bumpp -r -x \"npx changelogen --output=CHANGELOG.md\"",
-    "prepack": "pnpm run build",
-    "prepare": "test -z \"$CI\" && skilld prepare || true"
-  },
-  "dependencies": {
-    "@clack/prompts": "catalog:deps",
-    "@earendil-works/pi-ai": "catalog:",
-    "@huggingface/transformers": "catalog:deps",
-    "@mdream/crawl": "catalog:",
-    "citty": "catalog:deps",
-    "consola": "catalog:deps",
-    "giget": "catalog:",
-    "hookable": "catalog:",
-    "jsonc-parser": "catalog:",
-    "log-update": "catalog:deps",
-    "mdream": "catalog:",
-    "ofetch": "catalog:",
-    "oxc-parser": "catalog:deps",
-    "p-limit": "catalog:deps",
-    "pathe": "catalog:",
-    "retriv": "catalog:",
-    "skilld-protocol": "workspace:*",
-    "sqlite-vec": "catalog:deps",
-    "std-env": "catalog:",
-    "typebox": "catalog:",
-    "typescript": "catalog:",
-    "unagent": "catalog:",
-    "verkit": "catalog:"
+    "test:run": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter @skilld/harness test:run && cargo test --workspace",
+    "prepack": "pnpm test:loader",
+    "test:loader": "vitest run --config vitest.config.mjs"
   },
   "optionalDependencies": {
-    "@napi-rs/keyring": "catalog:"
+    "@skilld/cli-darwin-arm64": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-darwin-x64": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-linux-arm64-gnu": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-linux-arm64-musl": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-linux-x64-gnu": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-linux-x64-musl": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-win32-arm64-msvc": "workspace:3.0.0-alpha.1",
+    "@skilld/cli-win32-x64-msvc": "workspace:3.0.0-alpha.1"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
-    "@types/node": "catalog:dev-build",
-    "@typescript/native": "catalog:",
-    "@vitest/coverage-v8": "catalog:dev-test",
-    "bumpp": "catalog:",
     "eslint": "catalog:dev-lint",
-    "obuild": "catalog:dev-build",
-    "tsx": "catalog:",
     "vitest": "catalog:dev-test"
   }
 }

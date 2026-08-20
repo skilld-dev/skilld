@@ -1,0 +1,3 @@
+# Check
+
+Return `fixture-ok`.

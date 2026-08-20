@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "artifactId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "createdAt": "2026-08-20T00:00:00.000Z",
+  "source": {
+    "provider": "github",
+    "repositoryId": 123456789,
+    "owner": "skilld-dev",
+    "repository": "skilld",
+    "visibility": "public",
+    "commitSha": "0123456789abcdef0123456789abcdef01234567",
+    "treeSha": "89abcdef0123456789abcdef0123456789abcdef",
+    "skillPath": "skills/skilld"
+  },
+  "sourceStatus": "verified",
+  "format": "skilld-tar-v1",
+  "contentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contentBytes": 5120,
+  "policyVersion": "2026-08-20",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "mode": 420,
+      "size": 320,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "checkResults": [
+    {
+      "name": "path-policy",
+      "version": "1",
+      "outcome": "pass",
+      "required": true
+    }
+  ],
+  "statement": "eyJhcnRpZmFjdElkIjoic2hhMjU2OmFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJjaGVja1Jlc3VsdHMiOlt7Im5hbWUiOiJwYXRoLXBvbGljeSIsIm91dGNvbWUiOiJwYXNzIiwicmVxdWlyZWQiOnRydWUsInZlcnNpb24iOiIxIn1dLCJjb250ZW50Qnl0ZXMiOjUxMjAsImNvbnRlbnRTaGEyNTYiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiY3JlYXRlZEF0IjoiMjAyNi0wOC0yMFQwMDowMDowMC4wMDBaIiwiZmlsZXMiOlt7Im1vZGUiOjQyMCwicGF0aCI6IlNLSUxMLm1kIiwic2hhMjU2IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsInNpemUiOjMyMH1dLCJmb3JtYXQiOiJza2lsbGQtdGFyLXYxIiwicG9saWN5VmVyc2lvbiI6IjIwMjYtMDgtMjAiLCJzb3VyY2UiOnsiY29tbWl0U2hhIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2NyIsIm93bmVyIjoic2tpbGxkLWRldiIsInByb3ZpZGVyIjoiZ2l0aHViIiwicmVwb3NpdG9yeSI6InNraWxsZCIsInJlcG9zaXRvcnlJZCI6MTIzNDU2Nzg5LCJza2lsbFBhdGgiOiJza2lsbHMvc2tpbGxkIiwidHJlZVNoYSI6Ijg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJ2aXNpYmlsaXR5IjoicHVibGljIn0sInNvdXJjZVN0YXR1cyI6InZlcmlmaWVkIiwidmVyc2lvbiI6MX0",
+  "signature": {
+    "algorithm": "Ed25519",
+    "keyId": "skilld-production-2026-03",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

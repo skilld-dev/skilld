@@ -8,6 +8,9 @@ dist
 .nuxt
 .output
 coverage
+/target
+/packages/cli-*/bin/skilld
+/packages/cli-*/bin/skilld.exe
 
 # Local
 .env

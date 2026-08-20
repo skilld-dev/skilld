@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "rootKeyId": "skilld-root-2026",
+  "rootPublicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "keys": [
+    {
+      "keyId": "skilld-production-2026-03",
+      "algorithm": "Ed25519",
+      "publicKey": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "notBefore": "2026-07-01T00:00:00.000Z",
+      "notAfter": "2026-10-01T00:00:00.000Z",
+      "status": "active",
+      "statement": "eyJ2ZXJzaW9uIjoxLCJyb290S2V5SWQiOiJza2lsbGQtcm9vdC0yMDI2Iiwia2V5SWQiOiJza2lsbGQtcHJvZHVjdGlvbi0yMDI2LTAzIiwiYWxnb3JpdGhtIjoiRWQyNTUxOSIsInB1YmxpY0tleSI6IkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkIiLCJub3RCZWZvcmUiOiIyMDI2LTA3LTAxVDAwOjAwOjAwLjAwMFoiLCJub3RBZnRlciI6IjIwMjYtMTAtMDFUMDA6MDA6MDAuMDAwWiIsInN0YXR1cyI6ImFjdGl2ZSJ9",
+      "rootSignature": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    }
+  ],
+  "fetchedAt": "2026-08-20T00:00:00.000Z"
+}

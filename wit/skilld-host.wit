@@ -1,0 +1,51 @@
+package skilld:host@3.0.0;
+
+interface credentials {
+  enum error-code {
+    unsupported-host,
+    unavailable,
+    denied,
+    not-found,
+    invalid,
+    io,
+  }
+
+  get: func(service: string, account: string) -> result<option<string>, error-code>;
+  set: func(service: string, account: string, secret: string) -> result<_, error-code>;
+  delete: func(service: string, account: string) -> result<bool, error-code>;
+}
+
+interface process {
+  enum error-code {
+    unsupported-host,
+    unavailable,
+    not-found,
+    denied,
+    invalid,
+    timed-out,
+    io,
+  }
+
+  record git-command {
+    args: list<string>,
+    cwd: option<string>,
+    stdin: option<list<u8>>,
+    max-output-bytes: u64,
+    timeout-ms: u64,
+  }
+
+  record output {
+    exit-code: s32,
+    stdout: list<u8>,
+    stderr: list<u8>,
+  }
+
+  run-git: func(command: git-command) -> result<output, error-code>;
+  open-url: func(url: string) -> result<_, error-code>;
+}
+
+world command {
+  import credentials;
+  import process;
+  export run: func() -> u32;
+}

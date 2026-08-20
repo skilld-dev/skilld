@@ -1,0 +1,15 @@
+{
+  "name": "@skilld/cli-linux-arm64-gnu",
+  "version": "3.0.0-alpha.1",
+  "description": "Linux arm64 GNU executable for the skilld CLI",
+  "license": "MIT",
+  "repository": "github:skilld-dev/skilld",
+  "publishConfig": {
+    "access": "public",
+    "executableFiles": ["bin/skilld"]
+  },
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["glibc"],
+  "files": ["bin/skilld"]
+}

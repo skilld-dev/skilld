@@ -1,0 +1,14 @@
+{
+  "name": "@skilld/cli-darwin-arm64",
+  "version": "3.0.0-alpha.1",
+  "description": "macOS arm64 executable for the skilld CLI",
+  "license": "MIT",
+  "repository": "github:skilld-dev/skilld",
+  "publishConfig": {
+    "access": "public",
+    "executableFiles": ["bin/skilld"]
+  },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/skilld"]
+}

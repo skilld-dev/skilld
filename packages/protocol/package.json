@@ -1,7 +1,7 @@
 {
   "name": "skilld-protocol",
   "type": "module",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Wire shapes and constants shared between the skilld CLI and skilld.dev",
   "author": {
     "name": "Harlan Wilton",
@@ -22,6 +22,11 @@
   ],
   "sideEffects": false,
   "exports": {
+    "./v1": {
+      "types": "./dist/v1.d.mts",
+      "import": "./dist/v1.mjs"
+    },
+    "./openapi/skilld-v1.yaml": "./openapi/skilld-v1.yaml",
     "./wire": {
       "types": "./dist/wire.d.mts",
       "import": "./dist/wire.mjs"
@@ -36,13 +41,17 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "openapi"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "obuild",
+    "build": "pnpm generate:v1 && obuild",
+    "generate:v1": "openapi-typescript ./openapi/skilld-v1.yaml --output ./src/generated/skilld-v1.ts --alphabetize",
+    "lint:v1": "redocly lint ./openapi/skilld-v1.yaml",
+    "check:v1": "pnpm generate:v1 && git diff --exit-code -- ./src/generated/skilld-v1.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
@@ -58,10 +67,12 @@
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
     "@arethetypeswrong/cli": "catalog:",
+    "@redocly/cli": "catalog:",
     "@types/node": "catalog:dev-build",
     "@typescript/native": "catalog:",
     "eslint": "catalog:dev-lint",
     "obuild": "catalog:dev-build",
+    "openapi-typescript": "catalog:",
     "publint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:dev-test"

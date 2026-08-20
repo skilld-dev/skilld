@@ -1,0 +1,8 @@
+{
+  "argv": ["skilld", "install", "skilld", "--global"],
+  "source": {
+    "type": "bundled-skilld"
+  },
+  "scope": "global",
+  "store": "<skilld-data-directory>/skills/skilld"
+}

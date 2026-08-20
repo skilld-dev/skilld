@@ -1,0 +1,14 @@
+[
+  { "id": "claude-code", "displayName": "Claude Code", "projectSkillsDir": ".claude/skills", "globalSkillsDir": "claude:skills" },
+  { "id": "cursor", "displayName": "Cursor", "projectSkillsDir": ".cursor/skills", "globalSkillsDir": "home:.cursor/skills" },
+  { "id": "windsurf", "displayName": "Windsurf", "projectSkillsDir": ".windsurf/skills", "globalSkillsDir": "home:.codeium/windsurf/skills" },
+  { "id": "cline", "displayName": "Cline", "projectSkillsDir": ".cline/skills", "globalSkillsDir": "home:.cline/skills" },
+  { "id": "codex", "displayName": "Codex", "projectSkillsDir": ".agents/skills", "globalSkillsDir": "home:.agents/skills" },
+  { "id": "github-copilot", "displayName": "GitHub Copilot", "projectSkillsDir": ".github/skills", "globalSkillsDir": "home:.copilot/skills" },
+  { "id": "gemini-cli", "displayName": "Gemini CLI", "projectSkillsDir": ".gemini/skills", "globalSkillsDir": "home:.gemini/skills" },
+  { "id": "goose", "displayName": "Goose", "projectSkillsDir": ".goose/skills", "globalSkillsDir": "config:goose/skills" },
+  { "id": "amp", "displayName": "Amp", "projectSkillsDir": ".agents/skills", "globalSkillsDir": "config:agents/skills" },
+  { "id": "opencode", "displayName": "OpenCode", "projectSkillsDir": ".opencode/skills", "globalSkillsDir": "config:opencode/skills" },
+  { "id": "roo", "displayName": "Roo Code", "projectSkillsDir": ".roo/skills", "globalSkillsDir": "home:.roo/skills" },
+  { "id": "antigravity", "displayName": "Antigravity", "projectSkillsDir": ".agent/skills", "globalSkillsDir": "home:.gemini/antigravity/skills" }
+]
