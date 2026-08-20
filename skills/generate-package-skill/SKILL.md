@@ -60,4 +60,5 @@ Keep the description at 1024 characters or fewer.
 - Do not include credentials, caches, build output, or dependency directories.
 
 For a direct run, show the generated files for user review.
+Replace an existing Skill only after the user approves the files.
 Do not claim that the Skill passed Harness checks.

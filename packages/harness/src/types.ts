@@ -63,6 +63,8 @@ export interface GeneratedSkill {
   readonly outputDir: string
   readonly files: ReadonlyArray<SkillFile>
   readonly sourceAttempts: ReadonlyArray<SourceAttempt>
+  /** Cleanup problems after the new Skill reached its destination. */
+  readonly warnings: ReadonlyArray<string>
 }
 
 export interface SkillReviewFinding {
@@ -103,7 +105,11 @@ export interface SkillHarness {
 
 export interface CreateSkillHarnessOptions {
   readonly harness: HarnessV1
+  /** The sandbox must provide POSIX sh, rm, mkdir, and GNU find. */
   readonly sandbox: HarnessV1SandboxProvider
+  /** onSession runs after the Harness writes its visible inputs. */
   readonly sandboxConfig?: HarnessAgentSandboxConfig
   readonly outputPolicy?: Partial<SkillOutputPolicy>
+  /** HTTP adapter for npm metadata and immutable source archives. */
+  readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 }

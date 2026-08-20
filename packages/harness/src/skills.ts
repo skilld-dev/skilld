@@ -3,11 +3,22 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseDocument } from 'yaml'
+import { isSkillName } from './internal/paths.ts'
 
 const skillRoots = [
+  resolve(dirname(fileURLToPath(import.meta.url)), '../skills'),
   resolve(dirname(fileURLToPath(import.meta.url)), 'skills'),
   resolve(dirname(fileURLToPath(import.meta.url)), '../../../skills'),
 ] as const
+
+function parseManifest(source: string): ReadonlyArray<string> {
+  const value = JSON.parse(source) as unknown
+  if (!Array.isArray(value) || value.some(name => typeof name !== 'string' || !isSkillName(name)))
+    throw new Error('skilld-maintained Skill manifest is invalid.')
+  if (new Set(value).size !== value.length)
+    throw new Error('skilld-maintained Skill manifest contains duplicate names.')
+  return Object.freeze([...value])
+}
 
 async function locateFile(path: string): Promise<string> {
   for (const root of skillRoots) {
@@ -41,23 +52,31 @@ function splitSkill(source: string): { name: string, description: string, conten
   return { name: values.name, description: values.description, content: match[2]! }
 }
 
-export async function harnessWorkflowNames(): Promise<ReadonlyArray<string>> {
-  const source = await locateFile('harness-workflows.json')
-  const value = JSON.parse(source) as unknown
-  if (!Array.isArray(value) || value.some(name => typeof name !== 'string'))
-    throw new Error('skilld-maintained Skill manifest is invalid.')
-  return value
+export async function harnessSkillNames(): Promise<ReadonlyArray<string>> {
+  const source = await locateFile('harness-skills.json')
+  return parseManifest(source)
+}
+
+export async function skilldMaintainedSkillNames(): Promise<ReadonlyArray<string>> {
+  const source = await locateFile('skilld-maintained-skills.json')
+  return parseManifest(source)
 }
 
 export async function loadSkilldMaintainedSkill(name: string): Promise<HarnessV1Skill> {
-  const names = await harnessWorkflowNames()
+  const names = await skilldMaintainedSkillNames()
   if (!names.includes(name))
     throw new Error(`Unknown skilld-maintained Skill: ${name}`)
 
   const source = await locateFile(`${name}/SKILL.md`)
   const skill = splitSkill(source)
-  const request = await locateFile(`${name}/assets/harness-request.md`)
+  if (skill.name !== name)
+    throw new Error(`skilld-maintained Skill name does not match its directory: ${name}`)
 
+  const harnessSkills = await harnessSkillNames()
+  if (!harnessSkills.includes(name))
+    return skill
+
+  const request = await locateFile(`${name}/assets/harness-request.md`)
   return {
     ...skill,
     files: [{ path: 'assets/harness-request.md', content: request }],

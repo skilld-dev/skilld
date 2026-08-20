@@ -69,6 +69,8 @@ export const promoteSkill = async (
   const backup = join(root, `.skilld-${name}-${nonce}.previous`)
   let movedCurrent = false
   let promoted = false
+  let failureMessage = 'Skill output could not be promoted.'
+  let failureCause: unknown
 
   try {
     await mkdir(staging, { mode: 0o700 })
@@ -84,41 +86,55 @@ export const promoteSkill = async (
     }
     await rename(staging, target)
     promoted = true
-    if (movedCurrent)
-      await rm(backup, { recursive: true })
+  }
+  catch (cause) {
+    failureCause = cause
+    if (movedCurrent && !promoted) {
+      const current = await statOrMissing(target).catch(error => error as Error)
+      if (current instanceof Error) {
+        failureMessage = 'Skill output rollback could not inspect its destination.'
+        failureCause = new AggregateError([cause, current])
+      }
+      if (current === missing) {
+        const rollback = await rename(backup, target).catch(error => error as Error)
+        if (rollback instanceof Error) {
+          failureMessage = 'Skill output rollback failed.'
+          failureCause = new AggregateError([cause, rollback])
+        }
+      }
+    }
+  }
 
+  const lockCleanupErrors: unknown[] = []
+  await lock.close().catch(error => lockCleanupErrors.push(error))
+  await unlink(lockPath).catch(error => lockCleanupErrors.push(error))
+
+  if (promoted) {
+    const warnings: string[] = []
+    if (lockCleanupErrors.length > 0) {
+      const detail = lockCleanupErrors.map(error => error instanceof Error ? error.message : String(error)).join('; ')
+      warnings.push(`Output lock cleanup failed at ${lockPath}: ${detail}`)
+    }
+    if (movedCurrent) {
+      const backupCleanup = await rm(backup, { recursive: true }).catch(error => error as Error)
+      if (backupCleanup instanceof Error)
+        warnings.push(`Previous Skill cleanup failed at ${backup}: ${backupCleanup.message}`)
+    }
     return ok({
       _tag: 'GeneratedSkill',
       name,
       outputDir: target,
       files: files.map(file => ({ path: file.path, bytes: file.content.byteLength })),
       sourceAttempts: attempts,
+      warnings,
     })
   }
-  catch (cause) {
-    if (promoted)
-      throw cause
-    if (movedCurrent && !promoted) {
-      const current = await statOrMissing(target).catch(error => error as Error)
-      if (current instanceof Error)
-        return err({ _tag: 'PromotionFailed', message: 'Skill output rollback could not inspect its destination.', path: target, cause: new AggregateError([cause, current]) })
-      if (current === missing) {
-        const rollback = await rename(backup, target).catch(error => error as Error)
-        if (rollback instanceof Error)
-          return err({ _tag: 'PromotionFailed', message: 'Skill output rollback failed.', path: target, cause: new AggregateError([cause, rollback]) })
-      }
-    }
-    return err({ _tag: 'PromotionFailed', message: 'Skill output could not be promoted.', path: target, cause })
-  }
-  finally {
-    const cleanupErrors: unknown[] = []
-    await lock.close().catch(error => cleanupErrors.push(error))
-    await unlink(lockPath).catch(error => cleanupErrors.push(error))
-    if (!promoted)
-      await rm(staging, { recursive: true, force: true }).catch(error => cleanupErrors.push(error))
-    if (createdRoot && !promoted)
-      await rmdir(root).catch(error => cleanupErrors.push(error))
-    if (cleanupErrors.length > 0)
-      throw new AggregateError(cleanupErrors, 'Skill output cleanup failed.')
-  }
+
+  const cleanupErrors = [...lockCleanupErrors]
+  await rm(staging, { recursive: true, force: true }).catch(error => cleanupErrors.push(error))
+  if (createdRoot)
+    await rmdir(root).catch(error => cleanupErrors.push(error))
+  const causes = failureCause === undefined ? cleanupErrors : [failureCause, ...cleanupErrors]
+  const cause = causes.length <= 1 ? causes[0] : new AggregateError(causes, 'Skill output cleanup failed.')
+  return err({ _tag: 'PromotionFailed', message: failureMessage, path: target, cause })
 }

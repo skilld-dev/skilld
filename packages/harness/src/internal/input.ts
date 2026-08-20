@@ -1,5 +1,6 @@
 import type { SkillOutputPolicy, SkillRun, SkillRunError } from '../types.ts'
 import type { Result } from './result.ts'
+import { resolve } from 'node:path'
 import { isSkillName, resolveWithin } from './paths.ts'
 import { err, ok } from './result.ts'
 
@@ -23,14 +24,26 @@ export function parseSkillRun(input: SkillRun): Result<SkillRun, SkillRunError> 
     if (input.source._tag === 'NpmPackage') {
       if (!isNonEmptyString(input.source.spec))
         return invalid('npm package spec is required.')
-      return ok(input)
+      return ok({
+        _tag: 'PackageSkill',
+        source: { _tag: 'NpmPackage', spec: input.source.spec },
+        destination: { rootDir: resolve(input.destination.rootDir), name: input.destination.name },
+      })
     }
     if (input.source._tag === 'LocalPackage') {
       if (!isNonEmptyString(input.source.rootDir) || !isNonEmptyString(input.source.packageDir))
         return invalid('Local package paths are required.')
       if (resolveWithin(input.source.rootDir, input.source.packageDir) === null)
         return invalid('Local package directory must stay inside its root directory.')
-      return ok(input)
+      return ok({
+        _tag: 'PackageSkill',
+        source: {
+          _tag: 'LocalPackage',
+          rootDir: resolve(input.source.rootDir),
+          packageDir: input.source.packageDir,
+        },
+        destination: { rootDir: resolve(input.destination.rootDir), name: input.destination.name },
+      })
     }
     return invalid('Package source tag is invalid.')
   }
@@ -40,13 +53,17 @@ export function parseSkillRun(input: SkillRun): Result<SkillRun, SkillRunError> 
       return invalid('Project Skill input is incomplete.')
     if (!isNonEmptyString(input.destination.rootDir) || !isSkillName(input.destination.name))
       return invalid('Project Skill destination is invalid.')
-    return ok(input)
+    return ok({
+      _tag: 'ProjectSkill',
+      projectDir: resolve(input.projectDir),
+      destination: { rootDir: resolve(input.destination.rootDir), name: input.destination.name },
+    })
   }
 
   if (input._tag === 'ReviewSkill') {
     if (!isNonEmptyString(input.skillDir))
       return invalid('Skill review directory is required.')
-    return ok(input)
+    return ok({ _tag: 'ReviewSkill', skillDir: resolve(input.skillDir) })
   }
 
   return invalid('Skill run tag is invalid.')

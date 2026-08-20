@@ -23,10 +23,10 @@ import { resolveWithin } from './internal/paths.ts'
 import { err, ok } from './internal/result.ts'
 import { collectHostDirectory } from './internal/source/host.ts'
 import { prepareNpmPackage } from './internal/source/npm.ts'
-import { DEFAULT_OUTPUT_POLICY, loadSkilldMaintainedSkill } from './workflows.ts'
+import { DEFAULT_OUTPUT_POLICY, loadSkilldMaintainedSkill } from './skills.ts'
 
 interface PreparedRun {
-  readonly workflowName: 'generate-package-skill' | 'generate-project-skill' | 'review-skill'
+  readonly skillName: 'generate-package-skill' | 'generate-project-skill' | 'review-skill'
   readonly outputName: string
   readonly source: PreparedSource
   readonly current?: PreparedSource
@@ -42,7 +42,7 @@ function cancelled(): SkillRunResult {
   return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
 }
 
-async function prepareCurrentSkill(destination: SkillDestination, policy: SkillOutputPolicy): Promise<Result<PreparedSource | undefined, SkillRunError>> {
+async function prepareCurrentSkill(destination: SkillDestination, policy: SkillOutputPolicy, signal?: AbortSignal): Promise<Result<PreparedSource | undefined, SkillRunError>> {
   const root = resolve(destination.rootDir)
   const rootStat = await lstat(root).catch(error => error as NodeJS.ErrnoException)
   if (rootStat instanceof Error) {
@@ -65,7 +65,7 @@ async function prepareCurrentSkill(destination: SkillDestination, policy: SkillO
   }
   if (!targetStat.isDirectory() || targetStat.isSymbolicLink())
     return err({ _tag: 'UnsafeOutputPath', message: 'Output path must be a directory, not a symbolic link.', path: target })
-  return collectHostDirectory(target, policy, 'current Skill')
+  return collectHostDirectory(target, policy, 'current Skill', signal)
 }
 
 async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClient: FetchClient, signal?: AbortSignal): Promise<Result<PreparedRun, SkillRunError>> {
@@ -74,22 +74,22 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
 
   const current = input._tag === 'ReviewSkill'
     ? ok(undefined)
-    : await prepareCurrentSkill(input.destination, policy)
+    : await prepareCurrentSkill(input.destination, policy, signal)
   if (current._tag === 'Err')
     return current
 
   if (input._tag === 'ProjectSkill') {
-    const source = await collectHostDirectory(input.projectDir, policy)
+    const source = await collectHostDirectory(input.projectDir, policy, input.projectDir, signal)
     return source._tag === 'Err'
       ? source
-      : ok({ workflowName: 'generate-project-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+      : ok({ skillName: 'generate-project-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
   }
 
   if (input._tag === 'ReviewSkill') {
-    const source = await collectHostDirectory(input.skillDir, policy)
+    const source = await collectHostDirectory(input.skillDir, policy, input.skillDir, signal)
     return source._tag === 'Err'
       ? source
-      : ok({ workflowName: 'review-skill', outputName: 'review', source: source.value })
+      : ok({ skillName: 'review-skill', outputName: 'review', source: source.value })
   }
 
   if (input.source._tag === 'NpmPackage') {
@@ -98,7 +98,7 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
       return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
     return source._tag === 'Err'
       ? source
-      : ok({ workflowName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+      : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
   }
 
   const packageDir = resolveWithin(input.source.rootDir, input.source.packageDir)
@@ -113,10 +113,10 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
     })
   }
 
-  const source = await collectHostDirectory(packageDir, policy)
+  const source = await collectHostDirectory(packageDir, policy, packageDir, signal)
   return source._tag === 'Err'
     ? source
-    : ok({ workflowName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+    : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
 }
 
 function requestContent(skill: HarnessV1Skill): string {
@@ -136,6 +136,16 @@ function renderRequest(template: string, sourcePath: string, currentSkillPath: s
 
 async function writePreparedSource(active: ActiveSandbox, prepared: PreparedRun, signal?: AbortSignal): Promise<void> {
   const sourcePath = posix.join(active.workDir, 'input/source')
+  const reset = await active.sandbox.run({
+    command: 'rm -rf -- "$SKILLD_INPUT" "$SKILLD_OUTPUT" && mkdir -p -- "$SKILLD_INPUT"',
+    env: {
+      SKILLD_INPUT: posix.join(active.workDir, 'input'),
+      SKILLD_OUTPUT: posix.join(active.workDir, 'skilld-output'),
+    },
+    abortSignal: signal,
+  })
+  if (reset.exitCode !== 0)
+    throw new Error(reset.stderr.trim() || 'Harness work directory cannot be prepared.')
   for (const file of prepared.source.files) {
     await active.sandbox.writeBinaryFile({
       path: posix.join(sourcePath, file.path),
@@ -169,7 +179,10 @@ function toAgentError(cause: unknown, signal?: AbortSignal): SkillRunResult {
 
 export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHarness {
   const policy = parseOutputPolicy({ ...DEFAULT_OUTPUT_POLICY, ...options.outputPolicy })
-  const fetchClient = globalThis.fetch.bind(globalThis)
+  const fetchClient: FetchClient = options.fetch ?? globalThis.fetch.bind(globalThis)
+  const sandboxConfig = { ...options.sandboxConfig }
+  const harness = options.harness
+  const sandbox = options.sandbox
 
   return {
     run: async (input, runOptions = {}): Promise<SkillRunResult> => {
@@ -181,27 +194,28 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
       if (prepared._tag === 'Err')
         return prepared
 
-      const workflow = await loadSkilldMaintainedSkill(prepared.value.workflowName)
+      const skill = await loadSkilldMaintainedSkill(prepared.value.skillName)
       let active: ActiveSandbox | undefined
-      const userOnSession = options.sandboxConfig?.onSession
+      const userOnSession = sandboxConfig.onSession
       const agent = new HarnessAgent({
-        harness: options.harness,
-        sandbox: options.sandbox,
-        skills: [workflow],
+        harness,
+        sandbox,
+        skills: [skill],
         permissionMode: 'allow-all',
         sandboxConfig: {
-          ...options.sandboxConfig,
+          ...sandboxConfig,
           onSession: async (sessionOptions) => {
-            await userOnSession?.(sessionOptions)
             active = { sandbox: sessionOptions.session, workDir: sessionOptions.sessionWorkDir }
             await writePreparedSource(active, prepared.value, runOptions.signal)
+            await userOnSession?.(sessionOptions)
           },
         },
       })
 
-      const session = await agent.createSession({ abortSignal: runOptions.signal }).catch(error => error as Error)
-      if (session instanceof Error)
-        return toAgentError(session, runOptions.signal)
+      const sessionResult = await agent.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
+      if (sessionResult._tag === 'Err')
+        return toAgentError(sessionResult.error, runOptions.signal)
+      const session = sessionResult.value
 
       try {
         if (!active)
@@ -209,10 +223,10 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         const sourcePath = posix.join(active.workDir, 'input/source')
         const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
         const outputPath = posix.join(active.workDir, 'skilld-output', prepared.value.outputName)
-        const prompt = renderRequest(requestContent(workflow), sourcePath, currentSkillPath, outputPath, prepared.value.outputName)
-        const generated = await agent.generate({ session, prompt, abortSignal: runOptions.signal }).catch(error => error as Error)
-        if (generated instanceof Error)
-          return toAgentError(generated, runOptions.signal)
+        const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.value.outputName)
+        const generated = await agent.generate({ session, prompt, abortSignal: runOptions.signal }).then(ok, cause => err(cause))
+        if (generated._tag === 'Err')
+          return toAgentError(generated.error, runOptions.signal)
         if (runOptions.signal?.aborted)
           return cancelled()
 
@@ -220,7 +234,7 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         if (collected._tag === 'Err')
           return collected
 
-        if (prepared.value.workflowName === 'review-skill')
+        if (prepared.value.skillName === 'review-skill')
           return validateSkillReview(collected.value)
 
         const validated = validateGeneratedSkill(prepared.value.outputName, collected.value)

@@ -193,11 +193,16 @@ async function fetchWithRedirects(fetchClient: FetchClient, url: string, init: R
 
 function createIntegrityVerifier(dist: NpmDist): IntegrityVerifier | null {
   const values = dist.integrity?.split(/\s+/).filter(Boolean) ?? []
-  const expected = values.flatMap((value) => {
+  let expected = values.flatMap((value) => {
     const match = value.match(/^(sha(?:1|256|384|512))-([A-Za-z0-9+/=]+)$/)
     return match?.[1] && match[2] ? [{ algorithm: match[1], digest: match[2] }] : []
   })
-  if (values.length === 0 && dist.shasum)
+  if (expected.length > 0) {
+    const strength = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 } as const
+    const strongest = Math.max(...expected.map(value => strength[value.algorithm as keyof typeof strength]))
+    expected = expected.filter(value => strength[value.algorithm as keyof typeof strength] === strongest)
+  }
+  if (values.length === 0 && dist.shasum && /^[0-9a-f]{40}$/i.test(dist.shasum))
     expected.push({ algorithm: 'sha1', digest: Buffer.from(dist.shasum, 'hex').toString('base64') })
   if (expected.length === 0)
     return null

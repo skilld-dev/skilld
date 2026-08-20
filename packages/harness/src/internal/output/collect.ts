@@ -19,8 +19,10 @@ const inventory = async (
   outputDir: string,
   signal?: AbortSignal,
 ): Promise<Result<ReadonlyArray<{ type: string, path: string, size: number }>, SkillRunError>> => {
+  if (signal?.aborted)
+    return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
   const command = 'find -P "$SKILLD_OUTPUT" -mindepth 1 -printf \'%y\\0%P\\0%s\\0\''
-  const result = await Promise.resolve(sandbox.run({
+  const result = await Promise.resolve().then(() => sandbox.run({
     command,
     env: { LC_ALL: 'C', SKILLD_OUTPUT: outputDir },
     abortSignal: signal,
@@ -62,6 +64,8 @@ export const collectSandboxOutput = async (
   const seen = new Set<string>()
   let totalBytes = 0
   for (const entry of before.value) {
+    if (signal?.aborted)
+      return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
     const path = normalizeOutputPath(entry.path)
     if (path === null)
       return invalid('Harness output contains an invalid path.', [entry.path])
@@ -78,7 +82,12 @@ export const collectSandboxOutput = async (
     if (totalBytes + entry.size > policy.maxOutputBytes)
       return invalid('Harness output exceeds the total byte limit.', [`Limit: ${policy.maxOutputBytes}`])
 
-    const content = await sandbox.readBinaryFile({ path: `${outputDir}/${path}`, abortSignal: signal })
+    const content = await Promise.resolve().then(() => sandbox.readBinaryFile({ path: `${outputDir}/${path}`, abortSignal: signal })).catch(error => error as Error)
+    if (content instanceof Error) {
+      if (signal?.aborted)
+        return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
+      return invalid('Harness output cannot be read.', [path, content.message])
+    }
     if (content === null || content.byteLength !== entry.size)
       return invalid('Harness output changed during collection.', [path])
     seen.add(path)

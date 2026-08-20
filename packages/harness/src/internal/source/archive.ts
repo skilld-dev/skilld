@@ -38,6 +38,16 @@ function readOctal(buffer: Uint8Array, start: number, length: number): number | 
   return Number.isSafeInteger(parsed) ? parsed : null
 }
 
+function hasValidChecksum(header: Uint8Array): boolean {
+  const expected = readOctal(header, 148, 8)
+  if (expected === null)
+    return false
+  let actual = 0
+  for (let index = 0; index < header.byteLength; index += 1)
+    actual += index >= 148 && index < 156 ? 32 : header[index]!
+  return actual === expected
+}
+
 function parsePaxPath(content: Uint8Array): string | null {
   const text = Buffer.from(content).toString('utf8')
   let offset = 0
@@ -157,6 +167,8 @@ export async function extractArchive(
           ended = true
           continue
         }
+        if (!hasValidChecksum(header))
+          return unavailable('Source archive has an invalid header checksum.')
 
         const size = readOctal(header, 124, 12)
         if (size === null)

@@ -6,8 +6,20 @@ import { fileURLToPath } from 'node:url'
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceDir = resolve(packageDir, '../../skills')
 const outputDir = resolve(packageDir, 'dist/skills')
-const manifestNames = ['skilld-maintained-skills.json', 'harness-workflows.json']
-const names = JSON.parse(await readFile(resolve(sourceDir, manifestNames[0]), 'utf8'))
+const manifestNames = ['skilld-maintained-skills.json', 'harness-skills.json']
+function parseNames(source, label) {
+  const value = JSON.parse(source)
+  if (!Array.isArray(value) || value.some(name => typeof name !== 'string' || name.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)))
+    throw new Error(`${label} contains an invalid Skill name.`)
+  if (new Set(value).size !== value.length)
+    throw new Error(`${label} contains duplicate Skill names.`)
+  return value
+}
+
+const names = parseNames(await readFile(resolve(sourceDir, manifestNames[0]), 'utf8'), manifestNames[0])
+const harnessSkills = parseNames(await readFile(resolve(sourceDir, manifestNames[1]), 'utf8'), manifestNames[1])
+if (harnessSkills.some(name => !names.includes(name)))
+  throw new Error('Harness Skill manifest contains an unknown Skill.')
 
 async function inventory(root, current = root) {
   const files = []
@@ -45,6 +57,7 @@ await mkdir(outputDir, { recursive: true })
 for (const name of names) {
   const source = resolve(sourceDir, name)
   const output = resolve(outputDir, name)
+  await inventory(source)
   await cp(source, output, { recursive: true })
   await assertCopy(source, output)
 }

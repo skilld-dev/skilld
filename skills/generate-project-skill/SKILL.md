@@ -5,7 +5,7 @@ description: Generate or update an Agent Skill from the observed workflows, boun
 
 # Generate a project Skill
 
-Create a compact Skill from the project itself.
+Create a compact, searchable Skill from the project itself.
 
 ## Inputs
 
@@ -20,6 +20,15 @@ Ask for the destination only when the request does not provide one.
 4. Trace the main public workflows through their real entry points.
 5. Note generated directories and files an Agent must not edit.
 6. Check recent changes when they explain current conventions.
+
+## Project navigation
+
+1. Identify the project name, purpose, key files, and main directories.
+2. Use project-relative paths for every file pointer.
+3. Add focused search commands for source and documentation.
+4. Keep search results linked to the real project files.
+5. Never add a generated directory prefix to a project-relative path.
+6. Tell the Agent when project changes require a new Skill run.
 
 Ignore dependency directories, version-control data, generated output, caches, and credentials.
 Do not follow symbolic links while collecting project files.
@@ -40,10 +49,14 @@ Keep the name at 64 characters or fewer.
 - Describe when the Skill applies.
 - Use project terms exactly.
 - Point to source files instead of copying them.
-- Include verified commands and expected outcomes.
+- Run project commands only when they add useful evidence.
+- Record the observed command and outcome.
+- Include repeatable search commands for project source and documentation.
+- Keep file pointers rooted at the real project directory.
 - Separate rules from optional guidance.
 - Remove stale, inferred, or duplicated instructions.
 - Link each reference from `SKILL.md`.
 
 For a direct run, show the generated files for user review.
 Do not replace an existing Skill until the user approves it.
+Do not claim that the Skill passed Harness checks.

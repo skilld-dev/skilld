@@ -6,7 +6,7 @@ export default defineBuildConfig({
       type: 'bundle',
       input: [
         './src/index.ts',
-        './src/workflows.ts',
+        './src/skills.ts',
       ],
       outDir: './dist',
     },

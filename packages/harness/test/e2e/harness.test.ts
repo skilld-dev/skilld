@@ -14,7 +14,7 @@ async function makePackage() {
 const promptText = (prompt: unknown): string => typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
 
 describe('createSkillHarness', () => {
-  it('runs one visible package workflow and promotes its checked output', async () => {
+  it('runs one visible package Skill and promotes its checked output', async () => {
     const packageDir = await makePackage()
     const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
     let configured = false
@@ -74,6 +74,50 @@ describe('createSkillHarness', () => {
 
     expect(result).toMatchObject({ _tag: 'Err', error: { _tag: 'SourceUnavailable' } })
     expect(capture.starts).toHaveLength(0)
+  })
+
+  it('rejects a local package reached through a linked directory', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'skilld-source-root-'))
+    const outsideParent = await mkdtemp(join(tmpdir(), 'skilld-outside-parent-'))
+    const outside = join(outsideParent, 'package')
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
+    await mkdir(outside)
+    await writeFile(join(outside, 'package.json'), '{}\n')
+    await symlink(outsideParent, join(sourceRoot, 'linked-parent'))
+    const fake = createFakeHarness({ onPrompt: async () => {} })
+
+    const result = await createSkillHarness({ harness: fake.harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: sourceRoot, packageDir: 'linked-parent/package' },
+      destination: { rootDir: destinationRoot, name: 'example-package' },
+    })
+
+    expect(result).toMatchObject({ _tag: 'Err', error: { _tag: 'SourceUnavailable' } })
+    expect(fake.capture.starts).toHaveLength(0)
+  })
+
+  it('uses the parsed destination when the caller mutates its input later', async () => {
+    const projectDir = await makePackage()
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
+    const input = {
+      _tag: 'ProjectSkill' as const,
+      projectDir,
+      destination: { rootDir: destinationRoot, name: 'example-project' },
+    }
+    const fake = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        input.destination.name = 'changed-project'
+        await sandbox.writeTextFile({
+          path: join(workDir, 'skilld-output/example-project/SKILL.md'),
+          content: skillSource('example-project'),
+        })
+      },
+    })
+
+    const result = await createSkillHarness({ harness: fake.harness, sandbox: createFakeSandboxProvider() }).run(input)
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { outputDir: join(destinationRoot, 'example-project') } })
+    await expect(readFile(join(destinationRoot, 'example-project/SKILL.md'), 'utf8')).resolves.toContain('name: example-project')
   })
 
   it('returns a checked review result without promoting files', async () => {
@@ -175,6 +219,7 @@ describe('createSkillHarness', () => {
       destination: { rootDir: destinationRoot, name: 'example-project' },
     })
     expect(linkedResult).toMatchObject({ _tag: 'Err', error: { _tag: 'InvalidSkill' } })
+    expect(linked.capture.destroyed).toBe(1)
 
     const failed = createFakeHarness({ onPrompt: async () => {}, failPrompt: new Error('agent stopped') })
     const failedResult = await createSkillHarness({ harness: failed.harness, sandbox: createFakeSandboxProvider() }).run({
@@ -183,6 +228,7 @@ describe('createSkillHarness', () => {
       destination: { rootDir: destinationRoot, name: 'example-project' },
     })
     expect(failedResult).toMatchObject({ _tag: 'Err', error: { _tag: 'AgentFailed' } })
+    expect(failed.capture.destroyed).toBe(1)
   })
 
   it('returns OutputBusy when another Skill run holds the destination lock', async () => {
@@ -236,7 +282,7 @@ describe('createSkillHarness', () => {
     await expect(readFile(join(currentDir, 'references/old.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('creates the project .skilld root for the self Skill workflow', async () => {
+  it('creates the project .skilld root for a project Skill', async () => {
     const projectDir = await makePackage()
     const fake = createFakeHarness({
       async onPrompt({ sandbox, workDir }) {

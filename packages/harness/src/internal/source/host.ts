@@ -1,7 +1,7 @@
 import type { SkillOutputPolicy, SkillRunError, SourceAttempt } from '../../types.ts'
 import type { Result } from '../result.ts'
 import { constants } from 'node:fs'
-import { lstat, open, opendir } from 'node:fs/promises'
+import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { err, ok } from '../result.ts'
 
@@ -33,7 +33,7 @@ const ignoredNames = new Set([
   'target',
 ])
 
-export async function collectHostDirectory(directory: string, policy: SkillOutputPolicy, sourceLabel = directory): Promise<Result<PreparedSource, SkillRunError>> {
+export async function collectHostDirectory(directory: string, policy: SkillOutputPolicy, sourceLabel = directory, signal?: AbortSignal): Promise<Result<PreparedSource, SkillRunError>> {
   const root = resolve(directory)
   const unavailable = (message: string, cause?: unknown): Result<never, SkillRunError> => err({
     _tag: 'SourceUnavailable',
@@ -41,21 +41,36 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
     attempts: [{ source: sourceLabel, status: 'skipped', reason: message }],
     cause,
   })
+  const cancelled = (): Result<never, SkillRunError> => err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
+  if (signal?.aborted)
+    return cancelled()
   const rootStat = await lstat(root).catch(error => error as NodeJS.ErrnoException)
   if (rootStat instanceof Error)
     return unavailable('Source directory is unavailable.', rootStat)
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
     return unavailable('Source path must be a directory, not a symbolic link.')
+  const canonicalRoot = await realpath(root).catch(error => error as NodeJS.ErrnoException)
+  if (canonicalRoot instanceof Error)
+    return unavailable('Source directory cannot be resolved.', canonicalRoot)
+  if (canonicalRoot !== root)
+    return unavailable('Source path must not pass through a symbolic link.')
 
   const files: PreparedFile[] = []
   let totalBytes = 0
 
   const walk = async (current: string): Promise<Result<void, SkillRunError>> => {
+    if (signal?.aborted)
+      return cancelled()
+    const canonicalCurrent = await realpath(current).catch(error => error as NodeJS.ErrnoException)
+    if (canonicalCurrent instanceof Error || canonicalCurrent !== current)
+      return unavailable('Source directory changed during collection.', canonicalCurrent instanceof Error ? canonicalCurrent : undefined)
     const directoryHandle = await opendir(current).catch(error => error as NodeJS.ErrnoException)
     if (directoryHandle instanceof Error)
       return unavailable('Source directory cannot be read.', directoryHandle)
 
     for await (const entry of directoryHandle) {
+      if (signal?.aborted)
+        return cancelled()
       if (ignoredNames.has(entry.name))
         continue
       const absolute = join(current, entry.name)
@@ -105,6 +120,8 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
         return unavailable('Source file cannot be read.', content)
       if (content.byteLength !== openedStat.size)
         return unavailable('Source file changed during collection.')
+      if (signal?.aborted)
+        return cancelled()
       files.push({ path, content })
       totalBytes += content.byteLength
     }
