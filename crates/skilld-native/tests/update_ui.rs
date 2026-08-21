@@ -396,7 +396,7 @@ fn fixture_host_resolves_model_effects_without_terminal_access() {
 
 struct PlanHost {
     plan: UpdatePlanV1,
-    selections: Mutex<Vec<Vec<String>>>,
+    selections: Mutex<Vec<Vec<UpdatePlanItem>>>,
     apply_error: Option<CommandError>,
 }
 
@@ -417,14 +417,14 @@ impl Host for PlanHost {
         Ok(self.plan.clone())
     }
 
-    fn update_selected(&self, names: &[String]) -> Result<Vec<String>, CommandError> {
-        self.selections.lock().unwrap().push(names.to_vec());
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+        self.selections.lock().unwrap().push(items.to_vec());
         if let Some(error) = self.apply_error.clone() {
             return Err(error);
         }
-        Ok(names
+        Ok(items
             .iter()
-            .map(|name| format!("Updated Skill {name}."))
+            .map(|item| format!("Updated Skill {}.", item.name().as_str()))
             .collect())
     }
 }
@@ -463,6 +463,14 @@ fn command_plan_host(apply_error: Option<CommandError>) -> Arc<PlanHost> {
         )
         .unwrap(),
     );
+    let second_available = UpdatePlanItem::new(
+        SkillName::parse("smoke-skill").unwrap(),
+        UpdateRelation::Available {
+            locked_commit_sha: locked.clone(),
+            latest_commit_sha: latest.clone(),
+            ahead_by: NonZeroU64::new(1).unwrap(),
+        },
+    );
     let unavailable = UpdatePlanItem::new(
         SkillName::parse("review-skill").unwrap(),
         UpdateRelation::Unavailable {
@@ -479,7 +487,9 @@ fn command_plan_host(apply_error: Option<CommandError>) -> Arc<PlanHost> {
         UpdateRelation::Current { commit_sha: locked },
     );
     Arc::new(PlanHost {
-        plan: UpdatePlanV1::new(UpdatePlan::new(vec![available, unavailable, current]).unwrap()),
+        plan: UpdatePlanV1::new(
+            UpdatePlan::new(vec![available, second_available, unavailable, current]).unwrap(),
+        ),
         selections: Mutex::new(Vec::new()),
         apply_error,
     })
@@ -515,7 +525,16 @@ fn command_host_maps_update_plans_commits_and_exact_selection() {
         interactive.apply(&["grill-me".to_owned()]),
         [ApplyResult::updated("grill-me")]
     );
-    assert_eq!(*host.selections.lock().unwrap(), [["grill-me".to_owned()]]);
+    let selections = host.selections.lock().unwrap();
+    assert_eq!(selections.len(), 1);
+    assert_eq!(selections[0][0].name().as_str(), "grill-me");
+    assert!(matches!(
+        selections[0][0].relation(),
+        UpdateRelation::Available {
+            latest_commit_sha,
+            ..
+        } if latest_commit_sha.as_str() == "2222222222222222222222222222222222222222"
+    ));
 }
 
 #[test]
@@ -525,7 +544,8 @@ fn command_host_reports_one_atomic_failure_for_every_selected_skill() {
         "A required check failed.",
     )));
     let interactive = CommandInteractiveUpdateHost::new(host.clone());
-    let names = ["grill-me".to_owned(), "review-skill".to_owned()];
+    interactive.load_candidates().unwrap();
+    let names = ["grill-me".to_owned(), "smoke-skill".to_owned()];
 
     let results = interactive.apply(&names);
 
