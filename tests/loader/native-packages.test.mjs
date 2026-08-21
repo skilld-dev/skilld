@@ -10,6 +10,7 @@ import { afterEach, it } from 'vitest'
 import {
   independentPackagePublishDecision,
   nativePackageSpecs,
+  nativeReleaseMatrix,
   npmTagForVersion,
   packagePublishDecision,
   verifyNativePackages,
@@ -108,6 +109,13 @@ it('publishes beta versions under the beta npm tag', () => {
 
 it('publishes stable versions under the latest npm tag', () => {
   assert.equal(npmTagForVersion('3.0.0'), 'latest')
+})
+
+it('disables GCC outline atomics for the ARM64 musl build', () => {
+  const release = nativeReleaseMatrix()
+  const arm64Musl = release.include.find(item => item.target === 'aarch64-unknown-linux-musl')
+
+  assert.equal(arm64Musl.cflags, '-mno-outline-atomics')
 })
 
 it('rejects a release when Harness has a different v3 version', async () => {

@@ -14,7 +14,7 @@ export const nativePackageSpecs = Object.freeze([
   nativePackage({ directory: 'cli-darwin-arm64', runner: 'macos-15', target: 'aarch64-apple-darwin', os: 'darwin', cpu: 'arm64', format: 'mach-o' }),
   nativePackage({ directory: 'cli-darwin-x64', runner: 'macos-15-intel', target: 'x86_64-apple-darwin', os: 'darwin', cpu: 'x64', format: 'mach-o' }),
   nativePackage({ directory: 'cli-linux-arm64-gnu', runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-gnu', os: 'linux', cpu: 'arm64', libc: 'glibc', format: 'elf' }),
-  nativePackage({ directory: 'cli-linux-arm64-musl', runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-musl', os: 'linux', cpu: 'arm64', libc: 'musl', format: 'elf' }),
+  nativePackage({ directory: 'cli-linux-arm64-musl', runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-musl', os: 'linux', cpu: 'arm64', libc: 'musl', format: 'elf', cflags: '-mno-outline-atomics' }),
   nativePackage({ directory: 'cli-linux-x64-gnu', runner: 'ubuntu-24.04', target: 'x86_64-unknown-linux-gnu', os: 'linux', cpu: 'x64', libc: 'glibc', format: 'elf' }),
   nativePackage({ directory: 'cli-linux-x64-musl', runner: 'ubuntu-24.04', target: 'x86_64-unknown-linux-musl', os: 'linux', cpu: 'x64', libc: 'musl', format: 'elf' }),
   nativePackage({ directory: 'cli-win32-arm64-msvc', runner: 'windows-11-arm', target: 'aarch64-pc-windows-msvc', os: 'win32', cpu: 'arm64', format: 'pe' }),
@@ -26,6 +26,7 @@ export function nativeReleaseMatrix() {
     include: nativePackageSpecs.map(spec => ({
       directory: spec.directory,
       executable: spec.executable,
+      cflags: spec.cflags ?? '',
       libc: spec.libc ?? 'none',
       runner: spec.runner,
       target: spec.target,
