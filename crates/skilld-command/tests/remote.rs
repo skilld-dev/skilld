@@ -1719,7 +1719,7 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
 
-    let lines = host.update(None).unwrap();
+    let lines = host.update(None, InstallScope::Project).unwrap();
 
     assert_eq!(lines, ["Updated Skill alpha.", "Updated Skill beta."]);
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
@@ -1764,7 +1764,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
     *provider.version.lock().unwrap() = "second";
     *provider.fail_name.lock().unwrap() = Some("beta");
 
-    let error = host.update(None).unwrap_err();
+    let error = host.update(None, InstallScope::Project).unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
@@ -1808,7 +1808,7 @@ fn plain_update_rejects_a_source_that_moved_behind() {
     *provider.version.lock().unwrap() = "second";
     *provider.relation.lock().unwrap() = RemoteComparisonRelation::Behind;
 
-    let error = host.update(None).unwrap_err();
+    let error = host.update(None, InstallScope::Project).unwrap_err();
 
     assert_eq!(error.code, "UPDATE_CONFIRMATION_REQUIRED");
     assert!(provider.prepared_names.lock().unwrap().is_empty());
@@ -2043,7 +2043,9 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
     *provider.stale.lock().unwrap() = true;
     *provider.fail_prepare.lock().unwrap() = true;
 
-    let error = host.update(Some("example")).unwrap_err();
+    let error = host
+        .update(Some("example"), InstallScope::Project)
+        .unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(

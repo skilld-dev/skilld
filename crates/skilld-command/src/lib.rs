@@ -1,9 +1,10 @@
 mod config;
 mod local_store;
+mod outdated;
 mod output;
 mod remote;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -123,9 +124,18 @@ enum Command {
             conflicts_with_all = ["skill", "check", "json", "plain"]
         )]
         interactive: bool,
+        /// Update Skills in the global scope.
+        #[arg(long)]
+        global: bool,
     },
     /// Verify a Skill source.
     Verify { skill: Option<String> },
+    /// Report outdated and unmanaged Skills.
+    Outdated {
+        /// Scan every Agent target on this system.
+        #[arg(long)]
+        system: bool,
+    },
     /// Manage account authentication.
     Auth {
         #[command(subcommand)]
@@ -195,7 +205,11 @@ pub trait Host {
         ))
     }
 
-    fn update(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn update(
+        &self,
+        _name: Option<&str>,
+        _scope: InstallScope,
+    ) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill update is unavailable on this host",
         ))
@@ -211,6 +225,12 @@ pub trait Host {
     fn update_check(&self, _name: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill update checks are unavailable on this host",
+        ))
+    }
+
+    fn outdated(&self, _system: bool) -> Result<Vec<String>, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Outdated Skill reports are unavailable on this host",
         ))
     }
 
@@ -758,6 +778,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             skill,
             check,
             interactive,
+            global,
         } => {
             if interactive {
                 Err(CommandError::unsupported_host(
@@ -767,10 +788,12 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 host.update_check(skill.as_deref())
                     .map(CommandOutput::UpdateCheck)
             } else {
-                host.update(skill.as_deref()).map(CommandOutput::Lines)
+                host.update(skill.as_deref(), scope(global))
+                    .map(CommandOutput::Lines)
             }
         }
         Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
+        Command::Outdated { system } => host.outdated(system).map(CommandOutput::Lines),
     }
 }
 
@@ -1354,8 +1377,11 @@ impl Host for LocalHost {
         Ok(lines)
     }
 
-    fn update(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
-        let scope = InstallScope::Project;
+    fn update(
+        &self,
+        requested: Option<&str>,
+        scope: InstallScope,
+    ) -> Result<Vec<String>, CommandError> {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
@@ -1698,6 +1724,80 @@ impl Host for LocalHost {
         }
         let plan = UpdatePlan::new(items).map_err(update_model_error)?;
         Ok(UpdatePlanV1::new(plan))
+    }
+
+    fn outdated(&self, system: bool) -> Result<Vec<String>, CommandError> {
+        let scopes = if system {
+            vec![InstallScope::Project, InstallScope::Global]
+        } else {
+            vec![InstallScope::Project]
+        };
+        let mut lines = Vec::new();
+        let mut managed = BTreeMap::<String, Vec<PathBuf>>::new();
+        let mut store_roots = Vec::new();
+        let mut scan = Vec::new();
+        for scope in scopes {
+            let known = self.known_targets(scope)?;
+            let store = self.store(scope);
+            let names = match store.list(&known) {
+                Ok(names) => names,
+                Err(error) => {
+                    // Without a readable lockfile, managed copies cannot be told from unmanaged ones.
+                    lines.push(format!(
+                        "Skill store unavailable in {} scope: {}",
+                        scope.as_str(),
+                        CommandError::store(error).message
+                    ));
+                    continue;
+                }
+            };
+            for name in names {
+                let skill_name =
+                    skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
+                let view = match store.view(&skill_name, &known) {
+                    Ok(view) => view,
+                    Err(error) => {
+                        lines.push(format!(
+                            "Skill {name} details unavailable: {}",
+                            CommandError::store(error).message
+                        ));
+                        continue;
+                    }
+                };
+                let mut paths = vec![view.canonical_path.clone()];
+                for locked in &view.skill.targets {
+                    if let Some(target) = known.iter().find(|target| target.agent == locked.agent) {
+                        paths.push(target.root.join(name.as_str()));
+                    }
+                }
+                managed
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(paths.iter().cloned());
+                lines.extend(self.report_outdated_view(&view, scope));
+            }
+            if system {
+                store_roots.push(store.root().to_path_buf());
+                scan.push((scope, known));
+            }
+        }
+        if system {
+            for skill in outdated::scan_unmanaged(&scan, &store_roots, &managed) {
+                match self.search_candidate(&skill.name) {
+                    Ok(Some(candidate)) => {
+                        lines.extend(outdated::render_unmanaged(&skill, Some(&candidate)))
+                    }
+                    Ok(None) => lines.extend(outdated::render_unmanaged(&skill, None)),
+                    Err(error) => {
+                        lines.push(outdated::render_search_failure(&skill, &error.message));
+                    }
+                }
+            }
+        }
+        if lines.is_empty() {
+            lines.push("No installed Skills found.".to_owned());
+        }
+        Ok(lines)
     }
 }
 
@@ -2064,6 +2164,80 @@ fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> Command
     }
 }
 
+impl LocalHost {
+    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<String> {
+        let name = &view.name;
+        let global = if scope == InstallScope::Global {
+            " --global"
+        } else {
+            ""
+        };
+        match (&view.skill.source, &view.skill.source_status) {
+            (
+                LockedSource::Remote {
+                    source, commit_sha, ..
+                },
+                skilld_core::SourceStatus::Verified { artifact_id, .. },
+            ) => {
+                let state = skilld_core::RemoteSelector::parse(source)
+                    .map_err(CommandError::remote)
+                    .and_then(|selector| {
+                        self.remote_provider()?
+                            .source_state(&selector, artifact_id, commit_sha)
+                            .map_err(CommandError::remote)
+                    });
+                match state {
+                    Ok(RemoteSourceState::Current) => {
+                        vec![format!("Current Skill {name}.")]
+                    }
+                    Ok(RemoteSourceState::Stale { .. }) => {
+                        vec![format!(
+                            "Outdated Skill {name}. Run skilld update {name}{global}."
+                        )]
+                    }
+                    Err(error) => {
+                        vec![format!(
+                            "Source state unavailable for Skill {name}: {}.",
+                            error.message
+                        )]
+                    }
+                }
+            }
+            (LockedSource::Remote { source, .. }, skilld_core::SourceStatus::Unverified { .. }) => {
+                let agents = view
+                    .skill
+                    .targets
+                    .iter()
+                    .map(|locked| locked.agent)
+                    .collect::<Vec<_>>();
+                let agent_flags = outdated::agent_flags(&agents);
+                vec![format!(
+                    "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to update it."
+                )]
+            }
+            (LockedSource::BundledSkilld, _) => vec![format!("skilld-maintained Skill {name}.")],
+            _ => vec![format!("Local Skill {name}.")],
+        }
+    }
+
+    fn search_candidate(
+        &self,
+        name: &str,
+    ) -> Result<Option<outdated::SkillCandidate>, CommandError> {
+        let results = self
+            .remote_provider()?
+            .search(name, 5)
+            .map_err(CommandError::remote)?;
+        let Some(result) = results.items.into_iter().find(|result| result.name == name) else {
+            return Ok(None);
+        };
+        let selector = result.selector().map_err(CommandError::remote)?;
+        Ok(Some(outdated::SkillCandidate {
+            selector: selector.canonical(),
+            stargazer_count: result.stargazer_count,
+        }))
+    }
+}
 struct StagedRemote {
     _directory: tempfile::TempDir,
     skill: PathBuf,
@@ -2341,7 +2515,8 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "update", "verify", "auth", "config"
+                "search", "install", "list", "view", "remove", "update", "verify", "outdated",
+                "auth", "config"
             ]
         );
     }
