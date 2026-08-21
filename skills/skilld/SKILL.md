@@ -1,6 +1,6 @@
 ---
 name: skilld
-description: Search, view, install, upgrade, verify, and remove Skills with skilld CLI, including private repository access.
+description: Search, view, install, update, verify, and remove Skills with skilld CLI, including private repository access.
 ---
 
 # Use skilld CLI
@@ -64,11 +64,14 @@ Use `view` to show one Skill's path, source status, and Agent targets.
 ## Maintain installed Skills
 
 ```sh
-skilld upgrade <skill>
+skilld update <skill>
+skilld update --check --json
 skilld verify <skill>
 skilld remove <skill>
 ```
 
-Use `upgrade` to install a newer Artifact.
+Use `update --check --json` to inspect update relations without changing files.
+Treat `unavailable` as unknown. Do not infer a newer commit.
+Use `update` to install a newer Artifact.
 Use `verify` to check the installed bytes and source status.
 Use `remove` only when the request names the Skill to remove.

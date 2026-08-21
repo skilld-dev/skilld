@@ -18,6 +18,7 @@ use skilld_core::{
     CheckResult, InstallMode, InstallRequest, InstallScope, InstallSource, LockedSource,
     PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
     SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
+    UpdateCheckV1, UpdateLatestCommit, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -843,7 +844,7 @@ fn verify_reports_changed_bytes_and_stale_sources() {
 }
 
 #[test]
-fn remote_install_verify_and_failed_upgrade_use_the_normal_transaction() {
+fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     let data = temporary.path().join("data");
@@ -868,13 +869,60 @@ fn remote_install_verify_and_failed_upgrade_use_the_normal_transaction() {
     *provider.content.lock().unwrap() = b"---\nname: example\ndescription: second\n---\n".to_vec();
     *provider.fail_prepare.lock().unwrap() = true;
 
-    let error = host.upgrade(Some("example")).unwrap_err();
+    let error = host.update(Some("example")).unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(
         fs::read(project.join(".skills/example/SKILL.md")).unwrap(),
         before
     );
+}
+
+#[test]
+fn update_check_keeps_an_uncompared_commit_unavailable() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = provider("---\nname: example\ndescription: first\n---\n");
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    host.install_request(InstallRequest {
+        source: Some(InstallSource::Remote(
+            "skilld:skilld-dev/skills/example".to_owned(),
+        )),
+        scope: InstallScope::Project,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+    })
+    .unwrap();
+    *provider.stale.lock().unwrap() = true;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "update", "example", "--check", "--json"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    let check: UpdateCheckV1 = serde_json::from_value(outcome["data"].clone()).unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(outcome["schemaVersion"], 1);
+    assert_eq!(outcome["_tag"], "Success");
+    assert_eq!(outcome["command"], "update");
+    assert_eq!(outcome["notices"], serde_json::json!([]));
+    assert!(matches!(
+        check.items()[0].relation(),
+        UpdateRelation::Unavailable {
+            latest_commit: UpdateLatestCommit::Known { commit_sha },
+            failure,
+            ..
+        } if commit_sha.as_str() == "ffffffffffffffffffffffffffffffffffffffff"
+            && failure.code == "COMPARISON_UNAVAILABLE"
+    ));
 }
 
 #[test]

@@ -24,11 +24,16 @@ pub use remote::{
     RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
-    AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallRequest,
-    InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
+    AGENT_TARGETS, AgentTargetId, CommitSha, DomainError, GlobalTargetPath, InstallMode,
+    InstallRequest, InstallScope, InstallSource, LockedSource, NotTrackedReason, SourceRef,
+    UpdateCheckV1, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem,
+    UpdateRelation, VERSION, select_target_ids,
 };
 
-use output::{OutputMode, SearchItem, SearchOutcome, render_error, render_search, resolve_mode};
+use output::{
+    OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
+    resolve_mode,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -81,8 +86,13 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Upgrade installed Skills.
-    Upgrade { skill: Option<String> },
+    /// Update installed Skills.
+    Update {
+        skill: Option<String>,
+        /// Check update relations without changing files.
+        #[arg(long, requires = "json")]
+        check: bool,
+    },
     /// Verify a Skill source.
     Verify { skill: Option<String> },
     /// Manage account authentication.
@@ -152,9 +162,15 @@ pub trait Host {
         ))
     }
 
-    fn upgrade(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn update(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
-            "Skill upgrade is unavailable on this host",
+            "Skill update is unavailable on this host",
+        ))
+    }
+
+    fn update_check(&self, _name: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill update checks are unavailable on this host",
         ))
     }
 
@@ -297,6 +313,7 @@ pub struct CommandResult {
 enum CommandOutput {
     Lines(Vec<String>),
     Search(SearchOutcome),
+    UpdateCheck(UpdateCheckV1),
 }
 
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
@@ -374,10 +391,12 @@ where
     };
 
     let mode = resolve_mode(cli.json, cli.plain, context);
-    if mode == OutputMode::JsonV1 && !matches!(&cli.command, Command::Search { .. }) {
+    let supports_json = matches!(&cli.command, Command::Search { .. })
+        || matches!(&cli.command, Command::Update { check: true, .. });
+    if mode == OutputMode::JsonV1 && !supports_json {
         let error = CommandError::usage(
             "UNSUPPORTED_OUTPUT",
-            "JSON output is available for Skill search only",
+            "JSON output is available for Skill search and update checks",
         );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
@@ -395,6 +414,19 @@ where
             write_success(&bytes, mode, stdout, stderr)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
+            }
+        },
+        Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
             Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
             Err(error) => {
                 if stderr.write_all(&render_error(&error, mode)).is_err() {
@@ -438,7 +470,7 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
-        "search", "install", "list", "view", "remove", "upgrade", "verify", "auth", "config",
+        "search", "install", "list", "view", "remove", "update", "verify", "auth", "config",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -617,7 +649,14 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 total: response.total,
             }))
         }
-        Command::Upgrade { skill } => host.upgrade(skill.as_deref()).map(CommandOutput::Lines),
+        Command::Update { skill, check } => {
+            if check {
+                host.update_check(skill.as_deref())
+                    .map(CommandOutput::UpdateCheck)
+            } else {
+                host.update(skill.as_deref()).map(CommandOutput::Lines)
+            }
+        }
         Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
     }
 }
@@ -891,6 +930,144 @@ impl LocalHost {
         self.remote.as_deref().ok_or_else(|| {
             CommandError::service("remote Artifact delivery is unavailable in this build")
         })
+    }
+
+    fn update_relation(
+        &self,
+        skill: &skilld_core::LockedSkill,
+    ) -> Result<UpdateRelation, CommandError> {
+        let (source, locked_commit_sha) = match &skill.source {
+            LockedSource::Local { .. } => {
+                return Ok(UpdateRelation::NotTracked {
+                    reason: NotTrackedReason::Local,
+                });
+            }
+            LockedSource::BundledSkilld => {
+                return Ok(UpdateRelation::NotTracked {
+                    reason: NotTrackedReason::Bundled,
+                });
+            }
+            LockedSource::Remote {
+                source, commit_sha, ..
+            } => (
+                source,
+                CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?,
+            ),
+        };
+
+        let selector = match skilld_core::RemoteSelector::parse(source) {
+            Ok(selector) => selector,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        if let Some(SourceRef::Commit { value }) = &selector.source().r#ref {
+            let pinned_commit_sha = match CommitSha::parse(value.clone()) {
+                Ok(commit_sha) => commit_sha,
+                Err(error) => {
+                    return Ok(unavailable_update(
+                        locked_commit_sha,
+                        UpdateLatestCommit::Unknown,
+                        "INVALID_SOURCE",
+                        error.to_string(),
+                    ));
+                }
+            };
+            if pinned_commit_sha != locked_commit_sha {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Known {
+                        commit_sha: pinned_commit_sha,
+                    },
+                    "INVALID_LOCKFILE",
+                    "the locked commit differs from its source selector",
+                ));
+            }
+            return Ok(UpdateRelation::Pinned {
+                commit_sha: locked_commit_sha,
+            });
+        }
+
+        let artifact_id = match &skill.source_status {
+            skilld_core::SourceStatus::Verified { artifact_id, .. } => artifact_id,
+            skilld_core::SourceStatus::Unverified { .. } => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    "UNVERIFIED_SOURCE",
+                    "run an explicit --direct install to update this Skill",
+                ));
+            }
+            skilld_core::SourceStatus::Local { .. } => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    "INVALID_LOCKFILE",
+                    "the remote Skill has a local source status",
+                ));
+            }
+        };
+        let provider = match self.remote_provider() {
+            Ok(provider) => provider,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        let state = match provider.source_state(&selector, artifact_id, locked_commit_sha.as_str())
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        match state {
+            RemoteSourceState::Current => Ok(UpdateRelation::Current {
+                commit_sha: locked_commit_sha,
+            }),
+            RemoteSourceState::Stale {
+                current_commit_sha, ..
+            } => {
+                let latest_commit_sha = match CommitSha::parse(current_commit_sha) {
+                    Ok(commit_sha) => commit_sha,
+                    Err(error) => {
+                        return Ok(unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            "INVALID_RESPONSE",
+                            error.to_string(),
+                        ));
+                    }
+                };
+                if latest_commit_sha == locked_commit_sha {
+                    return Ok(UpdateRelation::Current {
+                        commit_sha: locked_commit_sha,
+                    });
+                }
+                Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Known {
+                        commit_sha: latest_commit_sha,
+                    },
+                    "COMPARISON_UNAVAILABLE",
+                    "skilld.dev does not provide Git comparison data",
+                ))
+            }
+        }
     }
 
     fn install_remote(
@@ -1172,12 +1349,12 @@ impl Host for LocalHost {
         Ok(lines)
     }
 
-    fn upgrade(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn update(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
-        let mut upgraded = Vec::new();
+        let mut updated = Vec::new();
         for name in names {
             let skill_name =
                 skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
@@ -1208,7 +1385,7 @@ impl Host for LocalHost {
             if staged_name != skill_name {
                 return Err(CommandError::operation(
                     "SOURCE_MISMATCH",
-                    format!("the upgraded Skill name changed from {name}"),
+                    format!("the updated Skill name changed from {name}"),
                 ));
             }
             let targets = view
@@ -1240,9 +1417,27 @@ impl Host for LocalHost {
                     &known,
                 )
                 .map_err(CommandError::store)?;
-            upgraded.push(format!("Upgraded Skill {name}."));
+            updated.push(format!("Updated Skill {name}."));
         }
-        Ok(upgraded)
+        Ok(updated)
+    }
+
+    fn update_check(&self, requested: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        let names = selected_names(&store, &known, requested)?;
+        let mut items = Vec::with_capacity(names.len());
+        for name in names {
+            let skill_name = skilld_core::SkillName::parse(name).map_err(CommandError::domain)?;
+            let view = store
+                .view(&skill_name, &known)
+                .map_err(CommandError::store)?;
+            let relation = self.update_relation(&view.skill)?;
+            items.push(UpdatePlanItem::new(skill_name, relation));
+        }
+        let plan = UpdatePlan::new(items).map_err(update_model_error)?;
+        Ok(UpdateCheckV1::new(plan))
     }
 }
 
@@ -1309,6 +1504,26 @@ fn selected_names(
         Ok(vec![name.to_owned()])
     } else {
         store.list(known).map_err(CommandError::store)
+    }
+}
+
+fn unavailable_update(
+    locked_commit_sha: CommitSha,
+    latest_commit: UpdateLatestCommit,
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> UpdateRelation {
+    UpdateRelation::Unavailable {
+        locked_commit_sha,
+        latest_commit,
+        failure: UpdateFailure::new(code, message),
+    }
+}
+
+fn update_model_error(error: UpdateModelError) -> CommandError {
+    CommandError {
+        code: "INVALID_LOCKFILE",
+        message: error.to_string(),
     }
 }
 
@@ -1469,9 +1684,28 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "upgrade", "verify", "auth",
-                "config"
+                "search", "install", "list", "view", "remove", "update", "verify", "auth", "config"
             ]
+        );
+    }
+
+    #[test]
+    fn upgrade_is_not_a_command_alias() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(
+            ["skilld", "upgrade"],
+            &RecordingHost,
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(result.exit_code, 2);
+        assert!(stdout.is_empty());
+        assert!(
+            String::from_utf8(stderr)
+                .unwrap()
+                .contains("unrecognized subcommand 'upgrade'")
         );
     }
 
