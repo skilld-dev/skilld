@@ -17,7 +17,7 @@ use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
     CheckResult, InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource,
     LockedSource, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
-    SearchResult, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
+    SearchResponse, SearchResult, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -331,9 +331,10 @@ fn search_uses_only_the_v1_skilld_route_and_retries_a_bounded_failure() {
     ]));
     let remote = search_remote(http.clone());
 
-    let results = remote.search("vue testing", 20).unwrap();
+    let response = remote.search("vue testing", 20).unwrap();
 
-    assert_eq!(results[0].name, "vue-testing");
+    assert_eq!(response.items[0].name, "vue-testing");
+    assert_eq!(response.total, 1);
     let requests = http.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(requests.iter().all(|request| {
@@ -759,11 +760,10 @@ impl FakeProvider {
 }
 
 impl RemoteProvider for FakeProvider {
-    fn search(&self, _query: &str, _limit: u8) -> Result<Vec<SearchResult>, RemoteError> {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, RemoteError> {
         skilld_core::parse_search_response(include_bytes!(
             "../../../contracts/fixtures/v1/skill-search.json"
         ))
-        .map(|response| response.items)
     }
 
     fn prepare(

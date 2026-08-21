@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use skilld_core::{
     ArtifactAttestation, LockedSource, PreparedFile, RemoteError, RemoteSelector,
-    RepositoryVisibility, SearchResult, SourceRef, SourceRequest, SourceSelector, SourceStatus,
+    RepositoryVisibility, SearchResponse, SourceRef, SourceRequest, SourceSelector, SourceStatus,
     TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
     prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
 };
@@ -250,7 +250,7 @@ pub enum RemoteSourceState {
 }
 
 pub trait RemoteProvider: Send + Sync {
-    fn search(&self, query: &str, limit: u8) -> Result<Vec<SearchResult>, RemoteError>;
+    fn search(&self, query: &str, limit: u8) -> Result<SearchResponse, RemoteError>;
 
     fn prepare(
         &self,
@@ -786,7 +786,7 @@ impl SkilldRemote {
 }
 
 impl RemoteProvider for SkilldRemote {
-    fn search(&self, query: &str, limit: u8) -> Result<Vec<SearchResult>, RemoteError> {
+    fn search(&self, query: &str, limit: u8) -> Result<SearchResponse, RemoteError> {
         let query = query.trim();
         if query.is_empty() || query.len() > 200 || !(1..=50).contains(&limit) {
             return Err(RemoteError::new(
@@ -806,7 +806,7 @@ impl RemoteProvider for SkilldRemote {
             response_limit: SEARCH_LIMIT,
         };
         let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
-        parse_search_response(&response.body).map(|response| response.items)
+        parse_search_response(&response.body)
     }
 
     fn prepare(

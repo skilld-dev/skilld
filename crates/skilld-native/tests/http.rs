@@ -33,8 +33,9 @@ fn native_http_adapter_reaches_the_v1_skill_search_route() {
     .with_endpoint(&format!("http://{address}"))
     .unwrap();
 
-    let results = remote.search("testing", 20).unwrap();
+    let response = remote.search("testing", 20).unwrap();
 
-    assert_eq!(results[0].name, "vue-testing");
+    assert_eq!(response.items[0].name, "vue-testing");
+    assert_eq!(response.total, 1);
     server.join().unwrap();
 }
