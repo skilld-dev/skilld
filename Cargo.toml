@@ -1,10 +1,11 @@
 [workspace]
 members = [
-  "crates/skilld-auth",
-  "crates/skilld-command",
-  "crates/skilld-core",
-  "crates/skilld-native",
-  "crates/skilld-wasi",
+    "crates/skilld-auth",
+    "crates/skilld-command",
+    "crates/skilld-core",
+    "crates/skilld-native",
+    "crates/skilld-ui",
+    "crates/skilld-wasi",
 ]
 resolver = "3"
 
@@ -27,6 +28,7 @@ sha2 = "0.11.0"
 skilld-auth = { path = "crates/skilld-auth" }
 skilld-command = { path = "crates/skilld-command" }
 skilld-core = { path = "crates/skilld-core" }
+skilld-ui = { path = "crates/skilld-ui" }
 subtle = "2.6.1"
 tempfile = "3.27.0"
 terminal_size = "0.4.4"

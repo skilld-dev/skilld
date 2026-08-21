@@ -2015,6 +2015,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "skilld-core",
+ "skilld-ui",
  "tempfile",
  "unicode-width 0.2.0",
  "url",
@@ -2042,11 +2043,19 @@ dependencies = [
  "skilld-auth",
  "skilld-command",
  "skilld-core",
+ "skilld-ui",
  "tempfile",
  "terminal_size",
  "unicode-width 0.2.0",
  "ureq",
  "url",
+]
+
+[[package]]
+name = "skilld-ui"
+version = "3.0.0-beta.1"
+dependencies = [
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

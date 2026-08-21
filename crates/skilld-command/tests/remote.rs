@@ -1721,7 +1721,13 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
 
     let lines = host.update(None, InstallScope::Project).unwrap();
 
-    assert_eq!(lines, ["Updated Skill alpha.", "Updated Skill beta."]);
+    assert_eq!(
+        lines
+            .iter()
+            .map(skilld_ui::Line::plain_text)
+            .collect::<Vec<_>>(),
+        ["Updated Skill alpha.", "Updated Skill beta."]
+    );
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
     for name in ["alpha", "beta"] {
         assert_eq!(
@@ -1863,7 +1869,13 @@ fn selected_skill_update_commits_only_the_exact_subset() {
 
     let lines = host.update_selected(&reviewed).unwrap();
 
-    assert_eq!(lines, ["Updated Skill gamma.", "Updated Skill alpha."]);
+    assert_eq!(
+        lines
+            .iter()
+            .map(skilld_ui::Line::plain_text)
+            .collect::<Vec<_>>(),
+        ["Updated Skill gamma.", "Updated Skill alpha."]
+    );
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["gamma", "alpha"]);
     for (name, version) in [("alpha", "second"), ("beta", "first"), ("gamma", "second")] {
         assert_eq!(
@@ -2035,7 +2047,11 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
 
     assert_eq!(host.install_request(request).unwrap(), ["example"]);
     assert_eq!(
-        host.verify(Some("example")).unwrap(),
+        host.verify(Some("example"))
+            .unwrap()
+            .iter()
+            .map(skilld_ui::Line::plain_text)
+            .collect::<Vec<_>>(),
         ["Verified Skill example."]
     );
     let before = fs::read(project.join(".skills/example/SKILL.md")).unwrap();

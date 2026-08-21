@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use skilld_core::{AgentTargetId, InstallScope, SkillName};
+use skilld_ui::Line;
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
@@ -131,28 +132,28 @@ pub(crate) fn found_line(skill: &UnmanagedSkill) -> String {
     )
 }
 
-pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<String> {
+pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<Line> {
     if skills.is_empty() {
         return vec![];
     }
-    vec![format!(
+    vec![Line::warn(format!(
         "No Repository match for {} ({}).",
         skill_count(skills.len()),
         name_list(skills)
-    )]
+    ))]
 }
 
 pub(crate) fn render_search_failures(
     failures: &BTreeMap<String, Vec<&UnmanagedSkill>>,
-) -> Vec<String> {
+) -> Vec<Line> {
     failures
         .iter()
         .map(|(message, skills)| {
-            format!(
+            Line::warn(format!(
                 "Skill search unavailable for {} ({}): {message}.",
                 skill_count(skills.len()),
                 name_list(skills)
-            )
+            ))
         })
         .collect()
 }
@@ -172,7 +173,7 @@ fn skill_count(count: usize) -> String {
 pub(crate) fn render_unmanaged(
     skill: &UnmanagedSkill,
     candidate: Option<&SkillCandidate>,
-) -> Vec<String> {
+) -> Vec<Line> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
         return vec![];
@@ -184,15 +185,15 @@ pub(crate) fn render_unmanaged(
     };
     let agent_flags = agent_flags(&skill.agents);
     vec![
-        format!(
+        Line::warn(format!(
             "Unmanaged Skill {} ({agents}). Candidate source {}, {} stars.",
             skill.name, candidate.selector, candidate.stargazer_count
-        ),
-        format!(
+        )),
+        Line::hint(format!(
             "Delete {}, then run skilld install {}{global}{agent_flags}.",
             skill.path.display(),
             candidate.selector
-        ),
+        )),
     ]
 }
 
