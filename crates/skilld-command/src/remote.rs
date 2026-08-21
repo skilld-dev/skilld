@@ -19,6 +19,7 @@ use skilld_core::{
 use url::Url;
 
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
+const UPDATE_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 1024 * 1024;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
@@ -308,6 +309,8 @@ pub enum RemoteComparisonRelation {
 pub enum RemoteComparisonOutcome {
     Ready {
         relation: RemoteComparisonRelation,
+        ahead_by: u64,
+        behind_by: u64,
         commits: Vec<CommitSummary>,
         total: u64,
         truncated: bool,
@@ -404,6 +407,8 @@ impl UpdateComparisonTask {
 #[derive(Clone)]
 struct ComparisonPageReady {
     relation: RemoteComparisonRelation,
+    ahead_by: u64,
+    behind_by: u64,
     commits: Vec<CommitSummary>,
     total: u64,
     page: usize,
@@ -486,6 +491,10 @@ enum HostedComparisonResult {
         #[serde(rename = "headSha")]
         head_sha: String,
         relation: RemoteComparisonRelation,
+        #[serde(rename = "aheadBy")]
+        ahead_by: u64,
+        #[serde(rename = "behindBy")]
+        behind_by: u64,
         commits: Vec<HostedCommit>,
         total: u64,
         truncated: bool,
@@ -603,6 +612,8 @@ struct HostedCommitAuthor {
 #[derive(Deserialize)]
 struct GithubComparisonWire {
     status: RemoteComparisonRelation,
+    ahead_by: u64,
+    behind_by: u64,
     total_commits: u64,
     commits: Vec<GithubComparisonCommit>,
 }
@@ -1091,6 +1102,8 @@ impl SkilldRemote {
             return Ok(first.into_outcome());
         };
         let relation = first.relation;
+        let ahead_by = first.ahead_by;
+        let behind_by = first.behind_by;
         let total = first.total;
         let first_included_index = total.saturating_sub(MAX_UPDATE_COMMITS as u64);
         let first_included_page =
@@ -1112,7 +1125,11 @@ impl SkilldRemote {
             let ComparisonPage::Ready(page) = page else {
                 return Ok(page.into_outcome());
             };
-            if page.relation != relation || page.total != total {
+            if page.relation != relation
+                || page.ahead_by != ahead_by
+                || page.behind_by != behind_by
+                || page.total != total
+            {
                 return Err(invalid_update_response());
             }
             let offset = if page.page == first_included_page {
@@ -1125,9 +1142,21 @@ impl SkilldRemote {
         if commits.len() > MAX_UPDATE_COMMITS {
             commits.drain(..commits.len() - MAX_UPDATE_COMMITS);
         }
+        let expected_count = usize::try_from(total.min(MAX_UPDATE_COMMITS as u64))
+            .map_err(|_| invalid_update_response())?;
+        let unique_count = commits
+            .iter()
+            .map(|commit| commit.sha.as_str())
+            .collect::<BTreeSet<_>>()
+            .len();
+        if commits.len() != expected_count || unique_count != commits.len() {
+            return Err(invalid_update_response());
+        }
         let compare_url = github_compare_url(input);
         Ok(RemoteComparisonOutcome::Ready {
             relation,
+            ahead_by,
+            behind_by,
             truncated: u64::try_from(commits.len()).unwrap_or(u64::MAX) < total,
             commits,
             total,
@@ -1157,7 +1186,7 @@ impl SkilldRemote {
         let response = self.execute_comparison_request(request, AllowedOrigin::Github)?;
         if is_rate_limited(&response) {
             return Ok(ComparisonPage::RateLimited {
-                retry_after_seconds: bounded_retry_after(&response),
+                retry_after_seconds: bounded_rate_limit_wait(&response),
                 reset_at: None,
             });
         }
@@ -1173,7 +1202,18 @@ impl SkilldRemote {
             });
         }
         let wire: GithubComparisonWire = parse_json(&response.body)?;
-        if wire.commits.len() > UPDATE_COMMITS_PER_PAGE || wire.total_commits > MAX_SAFE_INTEGER {
+        if wire.commits.len() > UPDATE_COMMITS_PER_PAGE
+            || wire.total_commits > MAX_SAFE_INTEGER
+            || wire.ahead_by > MAX_SAFE_INTEGER
+            || wire.behind_by > MAX_SAFE_INTEGER
+            || wire.total_commits != wire.ahead_by
+            || !comparison_counts_match(
+                wire.status,
+                input.base_sha == input.head_sha,
+                wire.ahead_by,
+                wire.behind_by,
+            )
+        {
             return Err(invalid_update_response());
         }
         let commits = wire
@@ -1183,6 +1223,8 @@ impl SkilldRemote {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ComparisonPage::Ready(ComparisonPageReady {
             relation: wire.status,
+            ahead_by: wire.ahead_by,
+            behind_by: wire.behind_by,
             total: wire.total_commits,
             commits,
             page,
@@ -1212,27 +1254,48 @@ impl SkilldRemote {
             url: self.service_url("/api/v1/update-plans")?.into(),
             headers,
             body,
-            response_limit: JSON_LIMIT,
+            response_limit: UPDATE_RESPONSE_LIMIT,
         };
-        let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
+        let response = self
+            .execute_comparison_request(request, AllowedOrigin::Service(self.endpoint.clone()))?;
+        if is_rate_limited(&response) {
+            let retry_after_seconds = bounded_rate_limit_wait(&response);
+            return Ok(inputs
+                .iter()
+                .map(|input| RemoteUpdateResult {
+                    id: input.id.clone(),
+                    outcome: RemoteComparisonOutcome::RateLimited {
+                        retry_after_seconds,
+                        reset_at: None,
+                    },
+                })
+                .collect());
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(problem_error(&response));
+        }
         let wire: HostedComparisonsResponse = parse_json(&response.body)?;
         if wire.results.len() != inputs.len() || wire.results.len() > UPDATE_SERVICE_BATCH {
             return Err(invalid_update_response());
         }
-        let mut by_id = wire
-            .results
-            .into_iter()
-            .map(|result| {
-                let id = result.id().to_owned();
-                let input = inputs
-                    .iter()
-                    .find(|input| input.id == id)
-                    .ok_or_else(invalid_update_response)?;
-                validate_hosted_identity(input, &result)?;
-                let outcome = present_hosted_outcome(input, result)?;
-                Ok((id, outcome))
-            })
-            .collect::<Result<BTreeMap<_, _>, RemoteError>>()?;
+        let mut by_id = BTreeMap::new();
+        for result in wire.results {
+            let id = result.id().to_owned();
+            if by_id.contains_key(&id) {
+                return Err(invalid_update_response());
+            }
+            let input = inputs
+                .iter()
+                .find(|input| input.id == id)
+                .ok_or_else(invalid_update_response)?;
+            let outcome = validate_hosted_identity(input, &result)
+                .and_then(|()| present_hosted_outcome(input, result))
+                .unwrap_or_else(|error| RemoteComparisonOutcome::RequestFailure {
+                    code: error.code,
+                    message: error.message,
+                });
+            by_id.insert(id, outcome);
+        }
         if by_id.len() != inputs.len() {
             return Err(invalid_update_response());
         }
@@ -1705,6 +1768,8 @@ fn present_hosted_outcome(
     match result {
         HostedComparisonResult::Ready {
             relation,
+            ahead_by,
+            behind_by,
             commits,
             total,
             truncated,
@@ -1713,6 +1778,15 @@ fn present_hosted_outcome(
         } => {
             if commits.len() > MAX_UPDATE_COMMITS
                 || total > MAX_SAFE_INTEGER
+                || ahead_by > MAX_SAFE_INTEGER
+                || behind_by > MAX_SAFE_INTEGER
+                || total != ahead_by
+                || !comparison_counts_match(
+                    relation,
+                    input.base_sha == input.head_sha,
+                    ahead_by,
+                    behind_by,
+                )
                 || u64::try_from(commits.len()).unwrap_or(u64::MAX) > total
                 || truncated != (u64::try_from(commits.len()).unwrap_or(u64::MAX) < total)
                 || compare_url != github_compare_url(input)
@@ -1721,6 +1795,8 @@ fn present_hosted_outcome(
             }
             Ok(RemoteComparisonOutcome::Ready {
                 relation,
+                ahead_by,
+                behind_by,
                 commits: commits
                     .into_iter()
                     .map(|commit| present_hosted_commit(input, commit))
@@ -1900,11 +1976,34 @@ fn is_rate_limited(response: &HttpResponse) -> bool {
                 || response.header("retry-after").is_some()))
 }
 
-fn bounded_retry_after(response: &HttpResponse) -> Option<u64> {
-    response
+fn comparison_counts_match(
+    relation: RemoteComparisonRelation,
+    same_commit: bool,
+    ahead_by: u64,
+    behind_by: u64,
+) -> bool {
+    matches!(
+        (relation, same_commit, ahead_by, behind_by),
+        (RemoteComparisonRelation::Identical, true, 0, 0)
+            | (RemoteComparisonRelation::Ahead, false, 1.., 0)
+            | (RemoteComparisonRelation::Behind, false, 0, 1..)
+            | (RemoteComparisonRelation::Diverged, false, 1.., 1..)
+    )
+}
+
+fn bounded_rate_limit_wait(response: &HttpResponse) -> Option<u64> {
+    let retry_after = response
         .header("retry-after")
         .and_then(|value| value.parse().ok())
-        .map(|seconds: u64| seconds.min(604_800))
+        .map(|seconds: u64| seconds.min(604_800));
+    retry_after.or_else(|| {
+        let reset = response.header("x-ratelimit-reset")?.parse::<u64>().ok()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Some(reset.saturating_sub(now).min(604_800)).filter(|seconds| *seconds > 0)
+    })
 }
 
 fn invalid_update_response() -> RemoteError {

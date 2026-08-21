@@ -1,4 +1,5 @@
 use std::fmt;
+use std::num::NonZeroU64;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -177,14 +178,18 @@ pub enum UpdateRelation {
     Available {
         locked_commit_sha: CommitSha,
         latest_commit_sha: CommitSha,
+        ahead_by: NonZeroU64,
     },
     Behind {
         locked_commit_sha: CommitSha,
         latest_commit_sha: CommitSha,
+        behind_by: NonZeroU64,
     },
     Diverged {
         locked_commit_sha: CommitSha,
         latest_commit_sha: CommitSha,
+        ahead_by: NonZeroU64,
+        behind_by: NonZeroU64,
     },
     Pinned {
         commit_sha: CommitSha,
@@ -212,15 +217,19 @@ pub fn classify_update_comparison(
         (false, ahead_by, 0) if ahead_by > 0 => Ok(UpdateRelation::Available {
             locked_commit_sha,
             latest_commit_sha,
+            ahead_by: NonZeroU64::new(ahead_by).expect("ahead count is non-zero"),
         }),
         (false, 0, behind_by) if behind_by > 0 => Ok(UpdateRelation::Behind {
             locked_commit_sha,
             latest_commit_sha,
+            behind_by: NonZeroU64::new(behind_by).expect("behind count is non-zero"),
         }),
         (false, ahead_by, behind_by) if ahead_by > 0 && behind_by > 0 => {
             Ok(UpdateRelation::Diverged {
                 locked_commit_sha,
                 latest_commit_sha,
+                ahead_by: NonZeroU64::new(ahead_by).expect("ahead count is non-zero"),
+                behind_by: NonZeroU64::new(behind_by).expect("behind count is non-zero"),
             })
         }
         _ => Err(UpdateModelError::InvalidComparison),

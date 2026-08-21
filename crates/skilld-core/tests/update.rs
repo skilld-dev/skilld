@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use skilld_core::{
     CommitAuthor, CommitHistory, CommitSha, CommitSummary, SkillName, UpdateLatestCommit,
     UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
@@ -24,6 +26,7 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Available {
             locked_commit_sha: locked.clone(),
             latest_commit_sha: latest.clone(),
+            ahead_by: NonZeroU64::new(3).unwrap(),
         }
     );
     assert_eq!(
@@ -31,6 +34,7 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Behind {
             locked_commit_sha: locked.clone(),
             latest_commit_sha: latest.clone(),
+            behind_by: NonZeroU64::new(2).unwrap(),
         }
     );
     assert_eq!(
@@ -38,6 +42,8 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Diverged {
             locked_commit_sha: locked,
             latest_commit_sha: latest,
+            ahead_by: NonZeroU64::new(4).unwrap(),
+            behind_by: NonZeroU64::new(2).unwrap(),
         }
     );
 }
@@ -103,6 +109,7 @@ fn update_plan_carries_full_bounded_commit_history() {
         UpdateRelation::Available {
             locked_commit_sha: sha('1'),
             latest_commit_sha: sha('2'),
+            ahead_by: NonZeroU64::new(501).unwrap(),
         },
         CommitHistory::compared(
             vec![CommitSummary {

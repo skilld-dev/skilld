@@ -29,7 +29,8 @@ use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallRequest, InstallScope, InstallSource, LockedSource, NotTrackedReason,
     SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem,
-    UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION, select_target_ids,
+    UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION, classify_update_comparison,
+    select_target_ids,
 };
 
 use output::{
@@ -1244,7 +1245,8 @@ impl Host for LocalHost {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
-        let mut selected = Vec::new();
+        let provider = self.remote_provider()?;
+        let mut pending = Vec::new();
         for name in names {
             let skill_name =
                 skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
@@ -1265,24 +1267,112 @@ impl Host for LocalHost {
             }
             let selector =
                 skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
-            let provider = self.remote_provider()?;
-            let expected_commit = provider
+            if matches!(selector.source().r#ref, Some(SourceRef::Commit { .. })) {
+                continue;
+            }
+            let latest_commit = provider
                 .latest_commit(&selector, false)
-                .map_err(CommandError::remote)?
-                .commit_sha;
+                .map_err(CommandError::remote)?;
+            let LockedSource::Remote { commit_sha, .. } = &view.skill.source else {
+                unreachable!("the update candidate has a remote source")
+            };
+            let locked_commit_sha =
+                CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?;
+            if latest_commit.commit_sha == locked_commit_sha {
+                continue;
+            }
+            let comparison = RemoteUpdateComparison::new(
+                skill_name.as_str(),
+                &selector.source().owner,
+                &selector.source().repository,
+                locked_commit_sha,
+                latest_commit.commit_sha.clone(),
+                latest_commit.access,
+            )
+            .map_err(CommandError::remote)?;
+            pending.push(PendingUpdateApply {
+                name,
+                skill_name,
+                view,
+                selector,
+                expected_commit: latest_commit.commit_sha,
+                comparison,
+            });
+        }
+        if pending.is_empty() {
+            return Ok(vec![]);
+        }
+        let comparisons = pending
+            .iter()
+            .map(|pending| pending.comparison.clone())
+            .collect::<Vec<_>>();
+        let results = provider
+            .compare_updates(&comparisons)
+            .map_err(CommandError::remote)?;
+        if results.len() != pending.len() {
+            return Err(CommandError::service(
+                "Update comparison results were incomplete",
+            ));
+        }
+        let mut selected = Vec::new();
+        for (pending, result) in pending.into_iter().zip(results) {
+            if pending.comparison.id != result.id {
+                return Err(CommandError::service(
+                    "Update comparison results changed order",
+                ));
+            }
+            match result.outcome {
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Ahead,
+                    total,
+                    ..
+                } if total > 0 => {}
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Behind,
+                    ..
+                } => {
+                    return Err(CommandError::operation(
+                        "UPDATE_CONFIRMATION_REQUIRED",
+                        format!(
+                            "Skill {} needs interactive confirmation because its source moved behind",
+                            pending.name
+                        ),
+                    ));
+                }
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Diverged,
+                    ..
+                } => {
+                    return Err(CommandError::operation(
+                        "UPDATE_CONFIRMATION_REQUIRED",
+                        format!(
+                            "Skill {} needs interactive confirmation because its source diverged",
+                            pending.name
+                        ),
+                    ));
+                }
+                RemoteComparisonOutcome::Ready { .. } => {
+                    return Err(CommandError::operation(
+                        "INVALID_RESPONSE",
+                        "GitHub returned an impossible update relation",
+                    ));
+                }
+                outcome => return Err(update_apply_failure(&pending.name, outcome)),
+            }
             let prepared = provider
-                .prepare_exact(&selector, &expected_commit, false)
+                .prepare_exact(&pending.selector, &pending.expected_commit, false)
                 .map_err(CommandError::remote)?;
             let staged = materialize_remote(&prepared.files)?;
             let staged_name =
                 skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
-            if staged_name != skill_name {
+            if staged_name != pending.skill_name {
                 return Err(CommandError::operation(
                     "SOURCE_MISMATCH",
-                    format!("the updated Skill name changed from {name}"),
+                    format!("the updated Skill name changed from {}", pending.name),
                 ));
             }
-            let targets = view
+            let targets = pending
+                .view
                 .skill
                 .targets
                 .iter()
@@ -1303,10 +1393,12 @@ impl Host for LocalHost {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             selected.push(PreparedUpdateSelection {
-                name,
+                name: pending.name,
                 staged,
                 prepared,
                 targets,
+                expected_transaction_id: pending.view.transaction_id,
+                expected_skill: pending.view.skill,
             });
         }
         let updates = selected
@@ -1316,6 +1408,8 @@ impl Host for LocalHost {
                 locked_source: selection.prepared.locked_source.clone(),
                 source_status: Some(selection.prepared.source_status.clone()),
                 targets: selection.targets.clone(),
+                expected_transaction_id: selection.expected_transaction_id.clone(),
+                expected_skill: selection.expected_skill.clone(),
             })
             .collect();
         store
@@ -1492,11 +1586,22 @@ struct PendingUpdateComparison {
     comparison: RemoteUpdateComparison,
 }
 
+struct PendingUpdateApply {
+    name: String,
+    skill_name: skilld_core::SkillName,
+    view: SkillView,
+    selector: skilld_core::RemoteSelector,
+    expected_commit: CommitSha,
+    comparison: RemoteUpdateComparison,
+}
+
 struct PreparedUpdateSelection {
     name: String,
     staged: StagedRemote,
     prepared: PreparedRemoteSkill,
     targets: Vec<TargetInstall>,
+    expected_transaction_id: String,
+    expected_skill: skilld_core::LockedSkill,
 }
 
 fn update_plan_item(
@@ -1519,40 +1624,48 @@ fn update_plan_item(
     match outcome {
         RemoteComparisonOutcome::Ready {
             relation,
+            ahead_by,
+            behind_by,
             commits,
             total,
             truncated,
             compare_url,
         } => {
-            let relation = match relation {
-                RemoteComparisonRelation::Identical
-                    if pending.locked_commit_sha == pending.latest_commit_sha =>
-                {
-                    UpdateRelation::Current {
-                        commit_sha: pending.locked_commit_sha.clone(),
-                    }
-                }
-                RemoteComparisonRelation::Ahead if total > 0 => UpdateRelation::Available {
-                    locked_commit_sha: pending.locked_commit_sha.clone(),
-                    latest_commit_sha: pending.latest_commit_sha.clone(),
-                },
-                RemoteComparisonRelation::Behind => UpdateRelation::Behind {
-                    locked_commit_sha: pending.locked_commit_sha.clone(),
-                    latest_commit_sha: pending.latest_commit_sha.clone(),
-                },
-                RemoteComparisonRelation::Diverged => UpdateRelation::Diverged {
-                    locked_commit_sha: pending.locked_commit_sha.clone(),
-                    latest_commit_sha: pending.latest_commit_sha.clone(),
-                },
-                RemoteComparisonRelation::Identical | RemoteComparisonRelation::Ahead => {
-                    return unavailable(
-                        "INVALID_RESPONSE",
-                        "GitHub returned an impossible update relation".to_owned(),
-                    );
-                }
+            let Ok(classified) = classify_update_comparison(
+                pending.locked_commit_sha.clone(),
+                pending.latest_commit_sha.clone(),
+                ahead_by,
+                behind_by,
+            ) else {
+                return unavailable(
+                    "INVALID_RESPONSE",
+                    "GitHub returned impossible update counts".to_owned(),
+                );
             };
+            let relation_matches = matches!(
+                (&relation, &classified),
+                (
+                    RemoteComparisonRelation::Identical,
+                    UpdateRelation::Current { .. }
+                ) | (
+                    RemoteComparisonRelation::Ahead,
+                    UpdateRelation::Available { .. }
+                ) | (
+                    RemoteComparisonRelation::Behind,
+                    UpdateRelation::Behind { .. }
+                ) | (
+                    RemoteComparisonRelation::Diverged,
+                    UpdateRelation::Diverged { .. }
+                )
+            );
+            if !relation_matches {
+                return unavailable(
+                    "INVALID_RESPONSE",
+                    "GitHub returned an impossible update relation".to_owned(),
+                );
+            }
             match CommitHistory::compared(commits, total, truncated, compare_url) {
-                Ok(history) => UpdatePlanItem::with_history(pending.name, relation, history),
+                Ok(history) => UpdatePlanItem::with_history(pending.name, classified, history),
                 Err(error) => unavailable("INVALID_RESPONSE", error.to_string()),
             }
         }
@@ -1597,6 +1710,45 @@ fn update_plan_item(
             ),
         ),
         RemoteComparisonOutcome::RequestFailure { code, message } => unavailable(code, message),
+    }
+}
+
+fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> CommandError {
+    match outcome {
+        RemoteComparisonOutcome::NotFound => CommandError::operation(
+            "SOURCE_NOT_FOUND",
+            format!("The Repository or commit for Skill {name} is unavailable"),
+        ),
+        RemoteComparisonOutcome::InvalidComparison => CommandError::operation(
+            "COMMIT_NOT_FOUND",
+            format!("GitHub could not compare the installed commit for Skill {name}"),
+        ),
+        RemoteComparisonOutcome::RateLimited {
+            retry_after_seconds,
+            ..
+        } => CommandError::operation(
+            "RATE_LIMITED",
+            retry_after_seconds.map_or_else(
+                || "GitHub rate limited the Skill update".to_owned(),
+                |seconds| {
+                    format!("GitHub rate limited the Skill update. Retry after {seconds} seconds")
+                },
+            ),
+        ),
+        RemoteComparisonOutcome::ProviderFailure { status } => CommandError::operation(
+            "SERVICE_UNAVAILABLE",
+            status.map_or_else(
+                || "GitHub comparison failed".to_owned(),
+                |status| format!("GitHub comparison returned HTTP {status}"),
+            ),
+        ),
+        RemoteComparisonOutcome::RequestFailure { code, message } => {
+            CommandError::operation(code, message)
+        }
+        RemoteComparisonOutcome::Ready { .. } => CommandError::operation(
+            "INVALID_RESPONSE",
+            "GitHub returned an impossible update relation",
+        ),
     }
 }
 

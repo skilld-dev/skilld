@@ -62,6 +62,8 @@ pub struct PreparedStoreUpdate {
     pub locked_source: LockedSource,
     pub source_status: Option<SourceStatus>,
     pub targets: Vec<TargetInstall>,
+    pub expected_transaction_id: String,
+    pub expected_skill: LockedSkill,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,6 +71,7 @@ pub struct SkillView {
     pub name: String,
     pub canonical_path: PathBuf,
     pub skill: LockedSkill,
+    pub transaction_id: String,
 }
 
 #[derive(Debug)]
@@ -80,6 +83,7 @@ pub enum StoreError {
     InvalidSource(String),
     InvalidTargetPath(PathBuf),
     NotFound(String),
+    StalePlan(String),
     Unsupported(String),
 }
 
@@ -93,6 +97,7 @@ impl StoreError {
             Self::InvalidSource(_) => "INVALID_SOURCE",
             Self::InvalidTargetPath(_) => "INVALID_TARGET",
             Self::NotFound(_) => "SKILL_NOT_FOUND",
+            Self::StalePlan(_) => "PLAN_STALE",
             Self::Unsupported(_) => "UNSUPPORTED_HOST",
         }
     }
@@ -107,6 +112,7 @@ impl fmt::Display for StoreError {
             | Self::InvalidLockfile(message)
             | Self::InvalidSource(message)
             | Self::NotFound(message)
+            | Self::StalePlan(message)
             | Self::Unsupported(message) => formatter.write_str(message),
             Self::InvalidTargetPath(path) => {
                 write!(
@@ -180,6 +186,7 @@ impl LocalStore {
             name: name.to_string(),
             canonical_path: self.root.join(name.as_str()),
             skill,
+            transaction_id: document.transaction_id,
         })
     }
 
@@ -207,6 +214,7 @@ impl LocalStore {
             name: name.to_string(),
             canonical_path: self.root.join(name.as_str()),
             skill,
+            transaction_id: document.transaction_id,
         })
     }
 
@@ -445,28 +453,50 @@ impl LocalStore {
                 locked_source: update.locked_source,
                 source_status,
                 targets: update.targets,
+                expected_transaction_id: update.expected_transaction_id,
+                expected_skill: update.expected_skill,
             });
+        }
+        let expected_transaction_id = validated[0].expected_transaction_id.clone();
+        if validated
+            .iter()
+            .any(|update| update.expected_transaction_id != expected_transaction_id)
+        {
+            return Err(stale_update_plan());
         }
 
         self.prepare_root()?;
         let _lock = acquire_store_lock(&self.root)?;
         self.recover_locked(known_targets)?;
         let old_lock = self.read_lock()?;
+        if old_lock.transaction_id != expected_transaction_id {
+            return Err(stale_update_plan());
+        }
         let mut prepared = Vec::with_capacity(validated.len());
         for update in validated {
-            let old_skill = old_lock.skills.get(update.name.as_str());
-            self.verify_managed_state(&update.name, old_skill, known_targets)?;
+            let Some(old_skill) = old_lock.skills.get(update.name.as_str()) else {
+                return Err(stale_update_plan());
+            };
+            if old_skill != &update.expected_skill {
+                return Err(stale_update_plan());
+            }
+            self.verify_managed_state(&update.name, Some(old_skill), known_targets)?;
             let selected_targets = unique_target_installs(&update.targets);
             self.validate_target_changes(
                 &update.name,
-                old_skill,
+                Some(old_skill),
                 &selected_targets,
                 known_targets,
             )?;
             let canonical = self.root.join(update.name.as_str());
             prepared.push(BatchStoreUpdate {
                 canonical_had_existing: path_exists(&canonical)?,
-                changes: target_changes(&update.name, old_skill, &selected_targets, known_targets)?,
+                changes: target_changes(
+                    &update.name,
+                    Some(old_skill),
+                    &selected_targets,
+                    known_targets,
+                )?,
                 canonical,
                 update,
             });
@@ -996,6 +1026,8 @@ struct ValidatedStoreUpdate {
     locked_source: LockedSource,
     source_status: SourceStatus,
     targets: Vec<TargetInstall>,
+    expected_transaction_id: String,
+    expected_skill: LockedSkill,
 }
 
 #[derive(Clone, Debug)]
@@ -1577,6 +1609,10 @@ fn fs_error(error: io::Error) -> StoreError {
     } else {
         StoreError::Filesystem(error.to_string())
     }
+}
+
+fn stale_update_plan() -> StoreError {
+    StoreError::StalePlan("The Skill store changed while the update was preparing".to_owned())
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

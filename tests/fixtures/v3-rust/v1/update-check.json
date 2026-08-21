@@ -9,7 +9,8 @@
       "relation": {
         "_tag": "available",
         "lockedCommitSha": "1111111111111111111111111111111111111111",
-        "latestCommitSha": "2222222222222222222222222222222222222222"
+        "latestCommitSha": "2222222222222222222222222222222222222222",
+        "aheadBy": 3
       },
       "history": {
         "_tag": "compared",
@@ -35,7 +36,8 @@
       "relation": {
         "_tag": "behind",
         "lockedCommitSha": "2222222222222222222222222222222222222222",
-        "latestCommitSha": "1111111111111111111111111111111111111111"
+        "latestCommitSha": "1111111111111111111111111111111111111111",
+        "behindBy": 2
       }
     },
     {
@@ -50,7 +52,9 @@
       "relation": {
         "_tag": "diverged",
         "lockedCommitSha": "1111111111111111111111111111111111111111",
-        "latestCommitSha": "2222222222222222222222222222222222222222"
+        "latestCommitSha": "2222222222222222222222222222222222222222",
+        "aheadBy": 4,
+        "behindBy": 2
       }
     },
     {
