@@ -1,5 +1,6 @@
 mod embedded_skill;
 mod native_auth;
+mod status;
 
 use std::env;
 use std::io::{IsTerminal, Write};
@@ -22,6 +23,7 @@ use skilld_native::update_ui::{
     CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
     write_static_summary,
 };
+use status::StatusLine;
 use terminal_size::Width;
 
 fn main() -> ExitCode {
@@ -97,7 +99,7 @@ fn main() -> ExitCode {
     }
 
     let mut stdout = std::io::stdout().lock();
-    let mut stderr = std::io::stderr().lock();
+    let mut stderr = std::io::stderr();
     let output = OutputContext::auto(
         stdout.is_terminal(),
         active_agent_detected(),
@@ -106,7 +108,14 @@ fn main() -> ExitCode {
         env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
         terminal_width(),
     );
-    let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut stderr);
+    let label = status::status_label(args.iter().map(|arg| arg.to_string_lossy()));
+    let status = match label {
+        Some(label) => StatusLine::for_terminal(label, output),
+        None => StatusLine::disabled(),
+    };
+    let mut gated = status::GatedStderr::new(&mut stderr, status);
+    let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
+    gated.finish_status();
     ExitCode::from(result.exit_code)
 }
 
