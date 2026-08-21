@@ -68,6 +68,7 @@ GitHub remains the source of truth.
 
 skilld.dev builds an immutable Artifact from an exact Git commit.
 The CLI checks its digest, Artifact attestation, check results, and archive before installation.
+The CLI stops pending Artifact creation after at most 60 seconds.
 
 Private Repository delivery requires both:
 
