@@ -1782,23 +1782,76 @@ impl Host for LocalHost {
             }
         }
         if system {
-            for skill in outdated::scan_unmanaged(&scan, &store_roots, &managed) {
-                match self.search_candidate(&skill.name) {
+            let skills = outdated::scan_unmanaged(&scan, &store_roots, &managed);
+            #[cfg(not(target_os = "wasi"))]
+            let results = search_candidates_parallel(self, &skills);
+            #[cfg(target_os = "wasi")]
+            let results = skills
+                .iter()
+                .map(|skill| self.search_candidate(&skill.name))
+                .collect::<Vec<_>>();
+            let mut no_match = Vec::new();
+            let mut failures = BTreeMap::<String, Vec<&outdated::UnmanagedSkill>>::new();
+            for (skill, result) in skills.iter().zip(results) {
+                match result {
                     Ok(Some(candidate)) => {
-                        lines.extend(outdated::render_unmanaged(&skill, Some(&candidate)))
+                        lines.extend(outdated::render_unmanaged(skill, Some(&candidate)))
                     }
-                    Ok(None) => lines.extend(outdated::render_unmanaged(&skill, None)),
-                    Err(error) => {
-                        lines.push(outdated::render_search_failure(&skill, &error.message));
-                    }
+                    Ok(None) => no_match.push(skill),
+                    Err(error) => failures.entry(error.message).or_default().push(skill),
                 }
             }
+            lines.extend(outdated::render_no_match(&no_match));
+            lines.extend(outdated::render_search_failures(&failures));
         }
         if lines.is_empty() {
             lines.push("No installed Skills found.".to_owned());
         }
         Ok(lines)
     }
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn search_candidates_parallel(
+    host: &LocalHost,
+    skills: &[outdated::UnmanagedSkill],
+) -> Vec<Result<Option<outdated::SkillCandidate>, CommandError>> {
+    use std::sync::Mutex;
+
+    const MAX_CONCURRENT_SEARCHES: usize = 8;
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let slots = Mutex::new(
+        skills
+            .iter()
+            .map(|_| None)
+            .collect::<Vec<Option<Result<Option<outdated::SkillCandidate>, CommandError>>>>(),
+    );
+    if !skills.is_empty() {
+        std::thread::scope(|scope| {
+            let workers = skills.len().min(MAX_CONCURRENT_SEARCHES);
+            let mut handles = Vec::with_capacity(workers);
+            for _ in 0..workers {
+                handles.push(scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if index >= skills.len() {
+                            break;
+                        }
+                        let result = host.search_candidate(&skills[index].name);
+                        slots.lock().unwrap()[index] = Some(result);
+                    }
+                }));
+            }
+            for handle in handles {
+                let _ = handle.join();
+            }
+        });
+    }
+    let filled = slots.into_inner().unwrap();
+    filled
+        .into_iter()
+        .map(|slot| slot.expect("every search slot is filled"))
+        .collect()
 }
 
 struct PendingUpdateComparison {

@@ -89,12 +89,42 @@ pub(crate) fn scan_unmanaged(
     skills
 }
 
-pub(crate) fn render_search_failure(skill: &UnmanagedSkill, message: &str) -> String {
-    format!(
-        "Unmanaged Skill {} ({}). Skill search unavailable: {message}.",
-        skill.name,
-        agent_list(skill)
-    )
+pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<String> {
+    if skills.is_empty() {
+        return vec![];
+    }
+    vec![format!(
+        "No Repository match for {} ({}).",
+        skill_count(skills.len()),
+        name_list(skills)
+    )]
+}
+
+pub(crate) fn render_search_failures(
+    failures: &BTreeMap<String, Vec<&UnmanagedSkill>>,
+) -> Vec<String> {
+    failures
+        .iter()
+        .map(|(message, skills)| {
+            format!(
+                "Skill search unavailable for {} ({}): {message}.",
+                skill_count(skills.len()),
+                name_list(skills)
+            )
+        })
+        .collect()
+}
+
+fn name_list(skills: &[&UnmanagedSkill]) -> String {
+    skills
+        .iter()
+        .map(|skill| format!("{} ({})", skill.name, agent_list(skill)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn skill_count(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "Skill" } else { "Skills" })
 }
 
 pub(crate) fn render_unmanaged(
@@ -103,10 +133,7 @@ pub(crate) fn render_unmanaged(
 ) -> Vec<String> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
-        return vec![format!(
-            "Unmanaged Skill {} ({agents}). No Repository match found.",
-            skill.name
-        )];
+        return vec![];
     };
     let global = if skill.scope == InstallScope::Global {
         " --global"
