@@ -49,7 +49,10 @@ skilld view vue
 
 # Keep Skills current
 skilld verify vue
-skilld upgrade vue
+skilld update vue
+
+# Check update relations for an Agent or CI
+skilld update --check --json
 
 # Remove a Skill
 skilld remove vue

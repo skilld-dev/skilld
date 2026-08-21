@@ -6,6 +6,9 @@ use skilld_command::{Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpRes
 use skilld_core::RemoteError;
 use url::Url;
 
+#[cfg(not(target_os = "wasi"))]
+pub mod update_ui;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BrowserCommand {
     pub program: &'static str,
