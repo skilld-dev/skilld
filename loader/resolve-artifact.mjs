@@ -1,12 +1,12 @@
 const nativePackages = new Map([
-  ['darwin:arm64', '@skilld/cli-darwin-arm64'],
-  ['darwin:x64', '@skilld/cli-darwin-x64'],
-  ['linux:arm64:gnu', '@skilld/cli-linux-arm64-gnu'],
-  ['linux:arm64:musl', '@skilld/cli-linux-arm64-musl'],
-  ['linux:x64:gnu', '@skilld/cli-linux-x64-gnu'],
-  ['linux:x64:musl', '@skilld/cli-linux-x64-musl'],
-  ['win32:arm64', '@skilld/cli-win32-arm64-msvc'],
-  ['win32:x64', '@skilld/cli-win32-x64-msvc'],
+  ['darwin:arm64', 'skilld-cli-darwin-arm64'],
+  ['darwin:x64', 'skilld-cli-darwin-x64'],
+  ['linux:arm64:gnu', 'skilld-cli-linux-arm64-gnu'],
+  ['linux:arm64:musl', 'skilld-cli-linux-arm64-musl'],
+  ['linux:x64:gnu', 'skilld-cli-linux-x64-gnu'],
+  ['linux:x64:musl', 'skilld-cli-linux-x64-musl'],
+  ['win32:arm64', 'skilld-cli-win32-arm64-msvc'],
+  ['win32:x64', 'skilld-cli-win32-x64-msvc'],
 ])
 
 export function detectLibc(report = process.report) {

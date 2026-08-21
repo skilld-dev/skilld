@@ -1,7 +1,7 @@
 # Migrate from skilld v2 to v3
 
 v3 replaces the JavaScript CLI with a native Rust CLI.
-It also moves Skill generation into visible Skills and `@skilld/harness`.
+It also moves Skill generation into visible Skills and `skilld-harness`.
 
 v3 does not import v2 configuration, credentials, or lockfiles.
 Complete these steps in order.
@@ -132,7 +132,7 @@ Use the visible skilld-maintained Skills for an interactive Agent run.
 The Agent shows the proposed files.
 You review and approve any replacement.
 
-Use `@skilld/harness` in CI or an application.
+Use `skilld-harness` in CI or an application.
 Harness enforces output limits, structure checks, and atomic promotion.
 
 An Agent run does not claim that Harness checks passed.

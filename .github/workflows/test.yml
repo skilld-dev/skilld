@@ -35,8 +35,8 @@ jobs:
       - run: pnpm --filter skilld-protocol check:v1
       - run: pnpm --filter skilld-protocol publint
       - run: pnpm --filter skilld-protocol attw
-      - run: pnpm --filter @skilld/harness publint
-      - run: pnpm --filter @skilld/harness attw
+      - run: pnpm --filter skilld-harness publint
+      - run: pnpm --filter skilld-harness attw
       - name: Pack root CLI
         run: |
           mkdir -p artifacts

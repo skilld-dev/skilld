@@ -17,7 +17,7 @@ Use focused commands during development:
 ```sh
 pnpm test:loader
 pnpm --filter skilld-protocol test:run
-pnpm --filter @skilld/harness test:run
+pnpm --filter skilld-harness test:run
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
@@ -29,7 +29,7 @@ It also manages account authentication and Agent target configuration.
 
 The skilld CLI contains no Skill generation logic or Agent runtime.
 
-`@skilld/harness` runs visible skilld-maintained Skills for generation and review.
+`skilld-harness` runs visible skilld-maintained Skills for generation and review.
 Agents can run the same Skill files directly without the Harness.
 
 Direct runs remain user reviewed.

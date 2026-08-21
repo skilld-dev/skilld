@@ -122,7 +122,7 @@ jobs:
       - name: Build JavaScript packages
         run: |
           pnpm --filter skilld-protocol build
-          pnpm --filter @skilld/harness build
+          pnpm --filter skilld-harness build
       - name: Check native package artifacts
         shell: bash
         run: |

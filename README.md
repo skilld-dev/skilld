@@ -9,7 +9,7 @@ Search, install, and keep Agent Skills current.
 skilld v3 has two products:
 
 - The native `skilld` CLI manages Skills.
-- The JavaScript [`@skilld/harness`](./packages/harness) package runs visible Skill generation and review instructions.
+- The JavaScript [`skilld-harness`](./packages/harness) package runs visible Skill generation and review instructions.
 
 The skilld CLI contains no Skill generation logic or Agent runtime.
 
@@ -124,15 +124,15 @@ Use these skilld-maintained Skills directly with your Agent:
 Direct Skill runs remain user reviewed.
 The instructions and changes stay visible to the user.
 
-Use [`@skilld/harness`](./packages/harness) when an application or CI needs strict output checks.
+Use [`skilld-harness`](./packages/harness) when an application or CI needs strict output checks.
 The Harness runs the same visible Skill files through an AI SDK Harness.
 
 ```sh
-pnpm add @skilld/harness @ai-sdk/harness ws zod
+pnpm add skilld-harness @ai-sdk/harness ws zod
 ```
 
 ```ts
-import { createSkillHarness } from '@skilld/harness'
+import { createSkillHarness } from 'skilld-harness'
 
 const skillHarness = createSkillHarness({ harness, sandbox })
 
@@ -143,7 +143,7 @@ const result = await skillHarness.run({
 })
 ```
 
-See the [`@skilld/harness` guide](./packages/harness/README.md) for its full contract.
+See the [`skilld-harness` guide](./packages/harness/README.md) for its full contract.
 
 ## Upgrade from v2
 

@@ -1,5 +1,5 @@
 {
-  "name": "@skilld/cli-linux-arm64-musl",
+  "name": "skilld-cli-linux-arm64-musl",
   "version": "3.0.0-beta.0",
   "description": "Linux arm64 musl executable for the skilld CLI",
   "license": "MIT",

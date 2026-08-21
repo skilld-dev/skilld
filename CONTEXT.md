@@ -7,7 +7,7 @@ Use the terms in `GLOSSARY.md` exactly.
 - The skilld CLI is Rust.
 - skilld-maintained Skills support direct Agent generation, review, search, and install.
 - `skilld install skilld --global` installs search and install guidance for Agents.
-- Harness is the JavaScript `@skilld/harness` package.
+- Harness is the JavaScript `skilld-harness` package.
 - `skilld.dev` resolves Repositories into Artifacts with attestations.
 
 The skilld CLI and Harness do not import or execute each other.

@@ -203,7 +203,7 @@ function nativePackage(spec) {
     ...spec,
     executable,
     executableMode: spec.os !== 'win32',
-    packageName: `@skilld/${spec.directory}`,
+    packageName: `skilld-${spec.directory}`,
   })
 }
 
