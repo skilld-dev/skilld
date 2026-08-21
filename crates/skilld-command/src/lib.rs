@@ -1141,7 +1141,6 @@ impl Host for LocalHost {
         }
         Ok(upgraded)
     }
-
     fn outdated(&self, system: bool) -> Result<Vec<String>, CommandError> {
         let scopes = if system {
             vec![InstallScope::Project, InstallScope::Global]
@@ -1155,13 +1154,31 @@ impl Host for LocalHost {
         for scope in scopes {
             let known = self.known_targets(scope)?;
             let store = self.store(scope);
-            let names = store.list(&known).map_err(CommandError::store)?;
+            let names = match store.list(&known) {
+                Ok(names) => names,
+                Err(error) => {
+                    // Without a readable lockfile, managed copies cannot be told from unmanaged ones.
+                    lines.push(format!(
+                        "Skill store unavailable in {} scope: {}",
+                        scope.as_str(),
+                        CommandError::store(error).message
+                    ));
+                    continue;
+                }
+            };
             for name in names {
                 let skill_name =
                     skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
-                let view = store
-                    .view(&skill_name, &known)
-                    .map_err(CommandError::store)?;
+                let view = match store.view(&skill_name, &known) {
+                    Ok(view) => view,
+                    Err(error) => {
+                        lines.push(format!(
+                            "Skill {name} details unavailable: {}",
+                            CommandError::store(error).message
+                        ));
+                        continue;
+                    }
+                };
                 let mut paths = vec![view.canonical_path.clone()];
                 for locked in &view.skill.targets {
                     if let Some(target) = known.iter().find(|target| target.agent == locked.agent) {
@@ -1172,7 +1189,7 @@ impl Host for LocalHost {
                     .entry(name.clone())
                     .or_default()
                     .extend(paths.iter().cloned());
-                lines.extend(self.report_outdated_view(&view, scope)?);
+                lines.extend(self.report_outdated_view(&view, scope));
             }
             if system {
                 store_roots.push(store.root().to_path_buf());
@@ -1181,14 +1198,15 @@ impl Host for LocalHost {
         }
         if system {
             for skill in outdated::scan_unmanaged(&scan, &store_roots, &managed) {
-                let candidate = match self.search_candidate(&skill.name) {
-                    Ok(candidate) => candidate,
+                match self.search_candidate(&skill.name) {
+                    Ok(Some(candidate)) => {
+                        lines.extend(outdated::render_unmanaged(&skill, Some(&candidate)))
+                    }
+                    Ok(None) => lines.extend(outdated::render_unmanaged(&skill, None)),
                     Err(error) => {
                         lines.push(outdated::render_search_failure(&skill, &error.message));
-                        continue;
                     }
-                };
-                lines.extend(outdated::render_unmanaged(&skill, candidate.as_deref()));
+                }
             }
         }
         if lines.is_empty() {
@@ -1199,11 +1217,7 @@ impl Host for LocalHost {
 }
 
 impl LocalHost {
-    fn report_outdated_view(
-        &self,
-        view: &SkillView,
-        scope: InstallScope,
-    ) -> Result<Vec<String>, CommandError> {
+    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<String> {
         let name = &view.name;
         let global = if scope == InstallScope::Global {
             " --global"
@@ -1217,41 +1231,65 @@ impl LocalHost {
                 },
                 skilld_core::SourceStatus::Verified { artifact_id, .. },
             ) => {
-                let selector =
-                    skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
-                match self
-                    .remote_provider()?
-                    .source_state(&selector, artifact_id, commit_sha)
-                    .map_err(CommandError::remote)?
-                {
-                    RemoteSourceState::Current => Ok(vec![format!("Current Skill {name}.")]),
-                    RemoteSourceState::Stale { .. } => Ok(vec![format!(
-                        "Outdated Skill {name}. Run skilld upgrade {name}{global}."
-                    )]),
+                let state = skilld_core::RemoteSelector::parse(source)
+                    .map_err(CommandError::remote)
+                    .and_then(|selector| {
+                        self.remote_provider()?
+                            .source_state(&selector, artifact_id, commit_sha)
+                            .map_err(CommandError::remote)
+                    });
+                match state {
+                    Ok(RemoteSourceState::Current) => {
+                        vec![format!("Current Skill {name}.")]
+                    }
+                    Ok(RemoteSourceState::Stale { .. }) => {
+                        vec![format!(
+                            "Outdated Skill {name}. Run skilld upgrade {name}{global}."
+                        )]
+                    }
+                    Err(error) => {
+                        vec![format!(
+                            "Source state unavailable for Skill {name}: {}.",
+                            error.message
+                        )]
+                    }
                 }
             }
             (LockedSource::Remote { source, .. }, skilld_core::SourceStatus::Unverified { .. }) => {
-                Ok(vec![format!(
-                    "Unverified Skill {name}. Run skilld install {source} --direct{global} to upgrade it."
-                )])
+                let agents = view
+                    .skill
+                    .targets
+                    .iter()
+                    .map(|locked| locked.agent)
+                    .collect::<Vec<_>>();
+                let agent_flags = outdated::agent_flags(&agents);
+                vec![format!(
+                    "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to upgrade it."
+                )]
             }
-            _ => Ok(vec![format!("Local Skill {name}.")]),
+            (LockedSource::BundledSkilld, _) => vec![format!("skilld-maintained Skill {name}.")],
+            _ => vec![format!("Local Skill {name}.")],
         }
     }
 
-    fn search_candidate(&self, name: &str) -> Result<Option<String>, CommandError> {
+    fn search_candidate(
+        &self,
+        name: &str,
+    ) -> Result<Option<outdated::SkillCandidate>, CommandError> {
         let results = self
             .remote_provider()?
             .search(name, 5)
             .map_err(CommandError::remote)?;
-        Ok(results
-            .iter()
-            .find(|result| result.name == name)
-            .and_then(|result| result.selector().ok())
-            .map(|selector| selector.canonical()))
+        let Some(result) = results.into_iter().find(|result| result.name == name) else {
+            return Ok(None);
+        };
+        let selector = result.selector().map_err(CommandError::remote)?;
+        Ok(Some(outdated::SkillCandidate {
+            selector: selector.canonical(),
+            stargazer_count: result.stargazer_count,
+        }))
     }
 }
-
 struct StagedRemote {
     _directory: tempfile::TempDir,
     skill: PathBuf,

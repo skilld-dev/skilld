@@ -15,6 +15,7 @@ use skilld_core::{
 struct Provider {
     content: Mutex<Vec<u8>>,
     stale: Mutex<bool>,
+    fail_state: Mutex<bool>,
     search_results: Mutex<Vec<SearchResult>>,
     fail_search: Mutex<bool>,
 }
@@ -24,6 +25,7 @@ impl Provider {
         Self {
             content: Mutex::new(content.as_bytes().to_vec()),
             stale: Mutex::new(false),
+            fail_state: Mutex::new(false),
             search_results: Mutex::new(vec![]),
             fail_search: Mutex::new(false),
         }
@@ -74,7 +76,7 @@ impl RemoteProvider for Provider {
     fn prepare(
         &self,
         selector: &RemoteSelector,
-        _direct: bool,
+        direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
         let bytes = self.content.lock().unwrap().clone();
         let file = PreparedFile {
@@ -90,11 +92,18 @@ impl RemoteProvider for Provider {
                 commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 skill_path: "skills/example".to_owned(),
             },
-            source_status: SourceStatus::Verified {
-                artifact_id: format!("sha256:{digest}"),
-                content_sha256: digest.clone(),
-                installed_sha256: digest,
-                attestation_key_id: "test-key".to_owned(),
+            source_status: if direct {
+                SourceStatus::Unverified {
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
+                }
+            } else {
+                SourceStatus::Verified {
+                    artifact_id: format!("sha256:{digest}"),
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
+                    attestation_key_id: "test-key".to_owned(),
+                }
             },
         })
     }
@@ -105,6 +114,12 @@ impl RemoteProvider for Provider {
         _artifact_id: &str,
         _commit_sha: &str,
     ) -> Result<RemoteSourceState, RemoteError> {
+        if *self.fail_state.lock().unwrap() {
+            return Err(RemoteError::new(
+                "SERVICE_UNAVAILABLE",
+                "the remote service returned HTTP 503",
+            ));
+        }
         Ok(if *self.stale.lock().unwrap() {
             RemoteSourceState::Stale {
                 current_artifact_id: "sha256:new".to_owned(),
@@ -232,7 +247,7 @@ fn outdated_system_links_unmanaged_skills_to_a_repository() {
     assert_eq!(result.exit_code, 0);
     let output = String::from_utf8(stdout).unwrap();
     let expected = format!(
-        "Unmanaged Skill vue-testing (claude-code). Candidate source skilld:acme/skills/vue-testing.\nDelete {}, then run skilld install skilld:acme/skills/vue-testing --global --agent claude-code.\n",
+        "Unmanaged Skill vue-testing (claude-code). Candidate source skilld:acme/skills/vue-testing, 0 stars.\nDelete {}, then run skilld install skilld:acme/skills/vue-testing --global --agent claude-code.\n",
         home.join(".claude/skills/vue-testing").display()
     );
     assert_eq!(output, expected);
@@ -372,5 +387,167 @@ fn upgrade_global_upgrades_a_global_skill() {
     assert_eq!(
         fs::read_to_string(data.join("skills/example/SKILL.md")).unwrap(),
         "---\nname: example\ndescription: second\n---\n"
+    );
+}
+
+#[test]
+fn outdated_survives_a_source_state_failure() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(Provider::new(
+        "---\nname: example\ndescription: first\n---\n",
+    ));
+    *provider.fail_state.lock().unwrap() = true;
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    install_project(&host, "skilld:skilld-dev/skills/example");
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(["skilld", "outdated"], &host, &mut stdout, &mut stderr);
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        "Source state unavailable for Skill example: the remote service returned HTTP 503.\n"
+    );
+}
+
+#[test]
+fn outdated_system_survives_a_corrupt_global_store() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let home = temporary.path();
+    let data = home.join("data");
+    fs::create_dir_all(data.join("skills")).unwrap();
+    fs::write(data.join("skills/skilld-lock.yaml"), "not json").unwrap();
+    unmanaged_skill(&project, ".agents", "unmanaged-project");
+    unmanaged_skill(home, ".claude", "hidden-global");
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(project, data.clone()).with_remote_provider(provider);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--system"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.starts_with("Skill store unavailable in global scope: "),
+        "expected a store failure line, got: {output}"
+    );
+    assert!(
+        output.contains(
+            "Unmanaged Skill unmanaged-project (amp, codex). No Repository match found.\n"
+        )
+    );
+    assert!(
+        !output.contains("hidden-global"),
+        "a scope with an unreadable lockfile must not report its Skills: {output}"
+    );
+}
+
+#[test]
+fn outdated_system_groups_agents_sharing_one_directory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let home = temporary.path();
+    unmanaged_skill(&project, ".agents", "shared");
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(project, home.join("data")).with_remote_provider(provider);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--system"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains("Unmanaged Skill shared (amp, codex). No Repository match found.\n"),
+        "expected both agents sharing .agents/skills, got: {output}"
+    );
+}
+
+#[test]
+fn outdated_gives_the_direct_recovery_for_unverified_skills() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(Provider::new(
+        "---\nname: example\ndescription: direct\n---\n",
+    ));
+    let host =
+        LocalHost::new(project, temporary.path().join("data")).with_remote_provider(provider);
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::DirectRemote(
+            "github:skilld-dev/skills/skills/example".to_owned(),
+        )),
+        scope: InstallScope::Project,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+    })
+    .unwrap();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(["skilld", "outdated"], &host, &mut stdout, &mut stderr);
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        "Unverified Skill example. Run skilld install github:skilld-dev/skills/skills/example --direct --agent codex to upgrade it.\n"
+    );
+}
+
+#[test]
+fn outdated_reports_the_bundled_skill_by_its_source() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let bundled = temporary.path().join("bundled").join("skilld");
+    fs::create_dir_all(&bundled).unwrap();
+    fs::write(
+        bundled.join("SKILL.md"),
+        "---\nname: skilld\ndescription: bundled\n---\n",
+    )
+    .unwrap();
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider)
+        .with_bundled_skill(bundled);
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::BundledSkilld),
+        scope: InstallScope::Global,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+    })
+    .unwrap();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--system"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        "skilld-maintained Skill skilld.\n"
     );
 }
