@@ -1324,7 +1324,7 @@ fn direct_install_error_gives_an_agent_an_exact_recovery() {
     assert_eq!(error.code, "DIRECT_SOURCE_REQUIRED");
     assert_eq!(
         error.message,
-        "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command."
+        "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again."
     );
 }
 

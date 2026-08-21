@@ -38,7 +38,7 @@ use output::{
     resolve_mode,
 };
 
-const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command.";
+const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -62,35 +62,35 @@ pub struct Cli {
 enum Command {
     /// Search for Skills.
     Search { query: Vec<String> },
-    /// Install a Skill or restore lockfile state.
+    /// Install a Skill, or restore the Skills recorded in your lockfile.
     #[command(
-        long_about = "Install a Skill or restore lockfile state.\n\nAccepted SOURCE values:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      These public GitHub Repository sources require --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Public GitHub Repository paths. Each one requires --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
         after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
-        /// Select the Skill source. Omit SOURCE to restore lockfile state.
+        /// The Skill source to install. Omit SOURCE to restore .skills/skilld-lock.yaml.
         #[arg(value_name = "SOURCE")]
         source: Option<String>,
         #[arg(
             long,
-            long_help = "Use account-level Agent targets. Default scope: current project."
+            long_help = "Install to your account-level Agent targets. The default is the current project."
         )]
         global: bool,
         #[arg(
             long = "agent",
             value_name = "AGENT",
-            long_help = "Select an Agent target. Repeat --agent to select more than one Agent target.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity.\nDefault: detected Agent targets. If none exist, use agent.targets."
+            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
         )]
         agents: Vec<String>,
         #[arg(
             long,
             value_name = "MODE",
-            long_help = "Set how Agent targets receive the Skill.\nValues: copy, symlink. Default: install.mode. Its initial value is copy."
+            long_help = "Choose how each Agent target receives the Skill.\nValues: copy, symlink. The default comes from install.mode. A fresh configuration sets install.mode to copy."
         )]
         mode: Option<String>,
         #[arg(
             long,
-            long_help = "Fetch a public GitHub Repository without skilld.dev.\nRequires a github: source or GitHub tree URL.\nDirect installs set source status to unverified."
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct install records the unverified source status."
         )]
         direct: bool,
     },
@@ -300,14 +300,14 @@ impl CommandError {
     fn direct_local_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
-            "--direct cannot install a local Skill. Remove --direct and retry the same command.",
+            "--direct cannot install a local Skill. Remove --direct, then run the same command again.",
         )
     }
 
     fn direct_bundled_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
-            "--direct cannot install the skilld-maintained Skill. Run: skilld install skilld --global",
+            "--direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead",
         )
     }
 

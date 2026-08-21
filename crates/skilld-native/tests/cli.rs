@@ -188,11 +188,13 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH",
         "Values: claude-code, cursor, windsurf, cline, codex, github-copilot,",
         "gemini-cli, goose, amp, opencode, roo, antigravity.",
-        "Repeat --agent to select more than one Agent target.",
-        "Values: copy, symlink. Default: install.mode. Its initial value is copy.",
-        "Default: detected Agent targets. If none exist, use agent.targets.",
-        "Default scope: current project.",
-        "Direct installs set source status to unverified.",
+        "Repeat --agent to select several.",
+        "Default: every Agent target skilld detects.",
+        "If skilld detects none, it uses agent.targets.",
+        "Values: copy, symlink. The default comes from install.mode.",
+        "A fresh configuration sets install.mode to copy.",
+        "The default is the current project.",
+        "A direct install records the unverified source status.",
         "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
         "Verified remote Skills restore the exact locked Git commit.",
         "skilld install skilld:skilld-dev/skills/find-skill --agent codex",
@@ -217,7 +219,7 @@ fn direct_local_source_error_gives_an_agent_an_exact_recovery() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "DIRECT_SOURCE_REQUIRED: --direct cannot install a local Skill. Remove --direct and retry the same command.\n"
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install a local Skill. Remove --direct, then run the same command again.\n"
     );
 }
 
@@ -236,7 +238,7 @@ fn direct_bundled_source_error_gives_an_agent_an_exact_recovery() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "DIRECT_SOURCE_REQUIRED: --direct cannot install the skilld-maintained Skill. Run: skilld install skilld --global\n"
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead\n"
     );
 }
 
@@ -266,7 +268,7 @@ fn direct_hosted_source_error_gives_an_agent_an_exact_recovery() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "DIRECT_SOURCE_REQUIRED: --direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command.\n"
+        "DIRECT_SOURCE_REQUIRED: --direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.\n"
     );
 }
 
