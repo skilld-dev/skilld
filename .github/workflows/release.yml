@@ -82,7 +82,7 @@ jobs:
           tar -cf "${{ matrix.directory }}.tar" -C staging "${{ matrix.directory }}"
       - uses: actions/upload-artifact@v7
         with:
-          archive: false
+          compression-level: 0
           path: ${{ matrix.directory }}.tar
 
   publish:
