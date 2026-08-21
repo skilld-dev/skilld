@@ -46,7 +46,7 @@ enum Command {
     Search { query: Vec<String> },
     /// Install a Skill or restore lockfile state.
     #[command(
-        long_about = "Install a Skill or restore lockfile state.\n\nAccepted SOURCE values:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      These public GitHub Repository sources require --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
+        long_about = "Install a Skill or restore lockfile state.\n\nAccepted SOURCE values:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      These public GitHub Repository sources require --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
         after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {

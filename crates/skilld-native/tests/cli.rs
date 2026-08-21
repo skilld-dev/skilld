@@ -81,6 +81,7 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "Default scope: current project.",
         "Direct installs set source status to unverified.",
         "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
+        "Verified remote Skills restore the exact locked Git commit.",
         "skilld install skilld:skilld-dev/skills/find-skill --agent codex",
         "skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex",
     ] {
