@@ -1783,6 +1783,110 @@ fn plain_update_rejects_a_source_that_moved_behind() {
 }
 
 #[test]
+fn selected_skill_update_commits_only_the_exact_subset() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta", "gamma"] {
+        host.install_request(InstallRequest {
+            source: Some(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+
+    let lines = host
+        .update_selected(&["gamma".to_owned(), "alpha".to_owned()])
+        .unwrap();
+
+    assert_eq!(lines, ["Updated Skill gamma.", "Updated Skill alpha."]);
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["gamma", "alpha"]);
+    for (name, version) in [("alpha", "second"), ("beta", "first"), ("gamma", "second")] {
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: {version}\n---\n")
+        );
+    }
+}
+
+#[test]
+fn selected_skill_update_rejects_empty_duplicate_and_invalid_names() {
+    let temporary = tempfile::tempdir().unwrap();
+    let host = LocalHost::new(
+        temporary.path().join("project"),
+        temporary.path().join("data"),
+    );
+
+    let empty = host.update_selected(&[]).unwrap_err();
+    let duplicate = host
+        .update_selected(&["alpha".to_owned(), "alpha".to_owned()])
+        .unwrap_err();
+    let invalid = host.update_selected(&["../alpha".to_owned()]).unwrap_err();
+
+    assert_eq!(empty.code, "INVALID_SELECTION");
+    assert_eq!(empty.message, "Select at least one Skill");
+    assert_eq!(duplicate.code, "INVALID_SELECTION");
+    assert_eq!(duplicate.message, "Select each Skill once");
+    assert_eq!(invalid.code, "INVALID_SOURCE");
+}
+
+#[test]
+fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta", "gamma"] {
+        host.install_request(InstallRequest {
+            source: Some(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+    *provider.fail_name.lock().unwrap() = Some("gamma");
+
+    let error = host
+        .update_selected(&["alpha".to_owned(), "gamma".to_owned()])
+        .unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "gamma"]);
+    for name in ["alpha", "beta", "gamma"] {
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: first\n---\n")
+        );
+    }
+}
+
+#[test]
 fn verify_reports_changed_bytes_and_stale_sources() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

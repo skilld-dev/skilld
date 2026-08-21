@@ -2,7 +2,7 @@ mod embedded_skill;
 mod native_auth;
 
 use std::env;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -11,13 +11,17 @@ use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::{
     CommandError, DetectionEnvironment, Host, LocalHost, NativeRemoteConfig, OutputContext,
-    SkilldRemote, TargetRoots, run_stdio_probe, run_with_output,
+    SkilldRemote, TargetRoots, interactive_update_requested, run_stdio_probe, run_with_output,
 };
 use skilld_core::{
     InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
     SourceSelector, TrustedRootPin,
 };
 use skilld_native::NativeHttpAdapter;
+use skilld_native::update_ui::{
+    CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
+    write_static_summary,
+};
 use terminal_size::Width;
 
 fn main() -> ExitCode {
@@ -32,6 +36,18 @@ fn main() -> ExitCode {
         return run_search_output_probe();
     }
 
+    let args = env::args_os().collect::<Vec<_>>();
+    let interactive = interactive_update_requested(args.clone()).is_ok_and(|requested| requested);
+    if interactive {
+        if let Err(error) = require_interactive_tty(
+            std::io::stdin().is_terminal(),
+            std::io::stdout().is_terminal(),
+        ) {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    }
+
     let project_root = match env::current_dir() {
         Ok(path) => path,
         Err(error) => {
@@ -42,16 +58,43 @@ fn main() -> ExitCode {
     let global_root = global_root();
     let detection = detection_environment();
     let account = Arc::new(NativeAccount::new());
-    let host = LocalHost::new(project_root, global_root)
-        .with_target_roots(target_roots())
-        .with_detection_environment(detection.clone())
-        .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
-        .with_account_provider(account.clone())
-        .with_remote_provider(Arc::new(SkilldRemote::new(
-            Arc::new(NativeHttpAdapter::new()),
-            account,
-            native_remote_config(),
-        )));
+    let host = Arc::new(
+        LocalHost::new(project_root, global_root)
+            .with_target_roots(target_roots())
+            .with_detection_environment(detection.clone())
+            .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
+            .with_account_provider(account.clone())
+            .with_remote_provider(Arc::new(SkilldRemote::new(
+                Arc::new(NativeHttpAdapter::new()),
+                account,
+                native_remote_config(),
+            ))),
+    );
+
+    if interactive {
+        let interactive_host = Arc::new(CommandInteractiveUpdateHost::new(host));
+        return match run_interactive_update(interactive_host, !environment_present("NO_COLOR")) {
+            Ok(summary) => {
+                let exit_code = summary.exit_code();
+                let mut stdout = std::io::stdout().lock();
+                if let Err(error) = write_static_summary(&summary, &mut stdout) {
+                    eprintln!("{error}");
+                    ExitCode::from(2)
+                } else if stdout.flush().is_err() {
+                    eprintln!(
+                        "TERMINAL_UNAVAILABLE: The Skill update summary could not be written."
+                    );
+                    ExitCode::from(2)
+                } else {
+                    ExitCode::from(exit_code)
+                }
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
@@ -63,7 +106,7 @@ fn main() -> ExitCode {
         env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
         terminal_width(),
     );
-    let result = run_with_output(env::args_os(), &host, output, &mut stdout, &mut stderr);
+    let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut stderr);
     ExitCode::from(result.exit_code)
 }
 
