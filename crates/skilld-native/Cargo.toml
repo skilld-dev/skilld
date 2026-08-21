@@ -22,6 +22,8 @@ skilld-command.workspace = true
 
 skilld-core.workspace = true
 
+skilld-ui.workspace = true
+
 tempfile.workspace = true
 
 terminal_size.workspace = true
@@ -41,3 +43,6 @@ unicode-width.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.29.0", features = [ "term" ] }
+
+[dev-dependencies]
+skilld-ui.workspace = true

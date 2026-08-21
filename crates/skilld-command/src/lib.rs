@@ -34,6 +34,7 @@ use skilld_core::{
     UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
     classify_update_comparison, select_target_ids,
 };
+use skilld_ui::{Line, Screen};
 
 use output::{
     OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
@@ -200,23 +201,19 @@ pub trait Host {
         ))
     }
 
-    fn verify(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn verify(&self, _name: Option<&str>) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "source verification is unavailable on this host",
         ))
     }
 
-    fn update(
-        &self,
-        _name: Option<&str>,
-        _scope: InstallScope,
-    ) -> Result<Vec<String>, CommandError> {
+    fn update(&self, _name: Option<&str>, _scope: InstallScope) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill update is unavailable on this host",
         ))
     }
 
-    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<Line>, CommandError> {
         validate_update_selection(items)?;
         Err(CommandError::unsupported_host(
             "Selected Skill updates are unavailable on this host",
@@ -229,7 +226,7 @@ pub trait Host {
         ))
     }
 
-    fn outdated(&self, _all: bool) -> Result<Vec<String>, CommandError> {
+    fn outdated(&self, _all: bool) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "Outdated Skill reports are unavailable on this host",
         ))
@@ -247,7 +244,7 @@ pub trait Host {
         ))
     }
 
-    fn config_list(&self) -> Result<Vec<String>, CommandError> {
+    fn config_list(&self) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "configuration is unavailable on this host",
         ))
@@ -402,7 +399,7 @@ where
 }
 
 enum CommandOutput {
-    Lines(Vec<String>),
+    Screen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
 }
@@ -503,13 +500,12 @@ where
     }
 
     match dispatch(cli.command, host) {
-        Ok(CommandOutput::Lines(lines)) => {
-            let mut bytes = Vec::new();
-            for line in lines {
-                bytes.extend_from_slice(line.as_bytes());
-                bytes.push(b'\n');
-            }
-            write_success(&bytes, mode, stdout, stderr)
+        Ok(CommandOutput::Screen(screen)) => {
+            let bytes = match mode {
+                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Plain | OutputMode::JsonV1 => screen.render_plain(),
+            };
+            write_success(bytes.as_bytes(), mode, stdout, stderr)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
             Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
@@ -697,56 +693,67 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             })?;
             let mut lines = names
                 .into_iter()
-                .map(|name| format!("Installed Skill {name}."))
+                .map(|name| Line::success(format!("Installed Skill {name}.")))
                 .collect::<Vec<_>>();
             if direct {
-                lines.push("Review the unverified Skill before use.".to_owned());
+                lines.push(Line::hint("Review the unverified Skill before use."));
             }
-            Ok(CommandOutput::Lines(lines))
+            Ok(CommandOutput::Screen(Screen::new(lines)))
         }
-        Command::List { global } => host.list(scope(global)).map(CommandOutput::Lines),
-        Command::View { skill, global } => {
-            render_view(host.view(&skill, scope(global))?).map(CommandOutput::Lines)
-        }
+        Command::List { global } => host.list(scope(global)).map(|names| {
+            CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
+        }),
+        Command::View { skill, global } => render_view(host.view(&skill, scope(global))?)
+            .map(|lines| CommandOutput::Screen(Screen::new(lines))),
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
-            Ok(CommandOutput::Lines(vec![format!(
-                "Removed Skill {skill}."
-            )]))
+            Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
+                format!("Removed Skill {skill}."),
+            )])))
         }
         Command::Auth {
             command: AuthCommand::Status,
-        } => Ok(CommandOutput::Lines(vec![if host.auth_status()? {
-            "Authenticated.".to_owned()
-        } else {
-            "Not authenticated.".to_owned()
-        }])),
+        } => Ok(CommandOutput::Screen(Screen::new(vec![
+            if host.auth_status()? {
+                Line::success("Authenticated.")
+            } else {
+                Line::plain("Not authenticated.")
+            },
+        ]))),
         Command::Auth {
             command: AuthCommand::Login,
         } => {
             host.auth_login()?;
-            Ok(CommandOutput::Lines(vec![
-                "Authentication started.".to_owned(),
-            ]))
+            Ok(CommandOutput::Screen(Screen::new(vec![Line::plain(
+                "Authentication started.",
+            )])))
         }
         Command::Auth {
             command: AuthCommand::Logout,
         } => {
             host.auth_logout()?;
-            Ok(CommandOutput::Lines(vec!["Logged out.".to_owned()]))
+            Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
+                "Logged out.",
+            )])))
         }
         Command::Config {
             command: ConfigCommand::Get { key },
-        } => Ok(CommandOutput::Lines(vec![host.config_get(&key)?])),
+        } => Ok(CommandOutput::Screen(Screen::new(vec![Line::plain(
+            host.config_get(&key)?,
+        )]))),
         Command::Config {
             command: ConfigCommand::Set { key, value },
         } => {
             host.config_set(&key, &value)?;
-            Ok(CommandOutput::Lines(vec![format!("Set {key}.")]))
+            Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
+                format!("Set {key}."),
+            )])))
         }
         Command::Config {
             command: ConfigCommand::List,
-        } => host.config_list().map(CommandOutput::Lines),
+        } => host
+            .config_list()
+            .map(|lines| CommandOutput::Screen(Screen::new(lines))),
         Command::Search { query } => {
             let query = query.join(" ").trim().to_owned();
             if query.is_empty() || query.len() > 200 {
@@ -790,19 +797,26 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                     .map(CommandOutput::UpdateCheck)
             } else {
                 host.update(skill.as_deref(), scope(global))
-                    .map(CommandOutput::Lines)
+                    .map(|lines| CommandOutput::Screen(Screen::new(lines)))
             }
         }
-        Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
-        Command::Outdated { all } => host.outdated(all).map(CommandOutput::Lines),
+        Command::Verify { skill } => host
+            .verify(skill.as_deref())
+            .map(|lines| CommandOutput::Screen(Screen::new(lines))),
+        Command::Outdated { all } => host
+            .outdated(all)
+            .map(|lines| CommandOutput::Screen(Screen::new(lines))),
     }
 }
 
-fn render_view(view: SkillView) -> Result<Vec<String>, CommandError> {
+fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     let source = match view.skill.source {
-        LockedSource::Local { path } => format!("local {path}"),
-        LockedSource::BundledSkilld => "skilld-maintained Skill".to_owned(),
-        LockedSource::Remote { source, .. } => source,
+        LockedSource::Local { path } => Line::field("Source", format!("local {path}")),
+        LockedSource::BundledSkilld => Line::field("Source", "skilld-maintained Skill"),
+        LockedSource::Remote { source, .. } => match github_url(&source) {
+            Some(url) => Line::linked_field("Source", source, url),
+            None => Line::field("Source", source),
+        },
     };
     let targets = if view.skill.targets.is_empty() {
         "none".to_owned()
@@ -815,12 +829,23 @@ fn render_view(view: SkillView) -> Result<Vec<String>, CommandError> {
             .join(", ")
     };
     Ok(vec![
-        format!("Name: {}", view.name),
-        format!("Path: {}", view.canonical_path.display()),
-        format!("Source: {source}"),
-        format!("Source status: {}", view.skill.source_status.as_str()),
-        format!("Agent targets: {targets}"),
+        Line::field("Name", view.name),
+        Line::field("Path", view.canonical_path.display().to_string()),
+        source,
+        Line::field("Source status", view.skill.source_status.as_str()),
+        Line::field("Agent targets", targets),
     ])
+}
+
+/// A GitHub repository URL for a remote Skill source, when the source names
+/// one.
+fn github_url(source: &str) -> Option<String> {
+    let body = source.split_once(':')?.1;
+    let mut segments = body.split('/');
+    let owner = segments.next()?;
+    let repository = segments.next()?;
+    (!owner.is_empty() && !repository.is_empty())
+        .then(|| format!("https://github.com/{owner}/{repository}"))
 }
 
 fn scope(global: bool) -> InstallScope {
@@ -1301,7 +1326,7 @@ impl Host for LocalHost {
         store.write(&config)
     }
 
-    fn config_list(&self) -> Result<Vec<String>, CommandError> {
+    fn config_list(&self) -> Result<Vec<Line>, CommandError> {
         Ok(self.config_store().read()?.entries())
     }
 
@@ -1332,7 +1357,7 @@ impl Host for LocalHost {
             .map_err(CommandError::remote)
     }
 
-    fn verify(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn verify(&self, requested: Option<&str>) -> Result<Vec<Line>, CommandError> {
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
@@ -1363,7 +1388,7 @@ impl Host for LocalHost {
                         .map_err(CommandError::remote)?
                     {
                         RemoteSourceState::Current => {
-                            lines.push(format!("Verified Skill {}.", name.as_str()));
+                            lines.push(Line::success(format!("Verified Skill {}.", name.as_str())));
                         }
                         RemoteSourceState::Stale { .. } => {
                             return Err(CommandError::operation(
@@ -1379,7 +1404,10 @@ impl Host for LocalHost {
                         format!("Skill {} has an unverified source", name.as_str()),
                     ));
                 }
-                _ => lines.push(format!("Checked local Skill {}.", name.as_str())),
+                _ => lines.push(Line::plain(format!(
+                    "Checked local Skill {}.",
+                    name.as_str()
+                ))),
             }
         }
         Ok(lines)
@@ -1389,7 +1417,7 @@ impl Host for LocalHost {
         &self,
         requested: Option<&str>,
         scope: InstallScope,
-    ) -> Result<Vec<String>, CommandError> {
+    ) -> Result<Vec<Line>, CommandError> {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
@@ -1565,11 +1593,11 @@ impl Host for LocalHost {
             .map_err(CommandError::store)?;
         Ok(selected
             .into_iter()
-            .map(|selection| format!("Updated Skill {}.", selection.name))
+            .map(|selection| Line::success(format!("Updated Skill {}.", selection.name)))
             .collect())
     }
 
-    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<Line>, CommandError> {
         validate_update_selection(items)?;
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
@@ -1734,14 +1762,14 @@ impl Host for LocalHost {
         Ok(UpdatePlanV1::new(plan))
     }
 
-    fn outdated(&self, all: bool) -> Result<Vec<String>, CommandError> {
+    fn outdated(&self, all: bool) -> Result<Vec<Line>, CommandError> {
         let scopes = if all {
             vec![InstallScope::Project, InstallScope::Global]
         } else {
             vec![InstallScope::Project]
         };
         let progress = self.outdated_progress.as_ref();
-        let mut lines = Vec::new();
+        let mut lines: Vec<Line> = Vec::new();
         let mut managed = BTreeMap::<String, Vec<PathBuf>>::new();
         let mut store_roots = Vec::new();
         let mut scan = Vec::new();
@@ -1754,11 +1782,11 @@ impl Host for LocalHost {
                 Ok(names) => names,
                 Err(error) => {
                     // Without a readable lockfile, managed copies cannot be told from unmanaged ones.
-                    lines.push(format!(
+                    lines.push(Line::error(format!(
                         "Skill store unavailable in {} scope: {}",
                         scope.as_str(),
                         CommandError::store(error).message
-                    ));
+                    )));
                     if all {
                         // The ancestor scan must not report Skills this scope cannot verify.
                         suppressed_roots.extend(known.iter().map(|target| target.root.clone()));
@@ -1772,10 +1800,10 @@ impl Host for LocalHost {
                 let view = match store.view(&skill_name, &known) {
                     Ok(view) => view,
                     Err(error) => {
-                        lines.push(format!(
+                        lines.push(Line::error(format!(
                             "Skill {name} details unavailable: {}",
                             CommandError::store(error).message
-                        ));
+                        )));
                         continue;
                     }
                 };
@@ -1852,7 +1880,7 @@ impl Host for LocalHost {
         }
         progress.finish();
         if lines.is_empty() {
-            lines.push("No installed Skills found.".to_owned());
+            lines.push(Line::plain("No installed Skills found."));
         }
         Ok(lines)
     }
@@ -1932,7 +1960,7 @@ fn apply_update_selection(
     items: &[UpdatePlanItem],
     store: LocalStore,
     known: Vec<ResolvedTarget>,
-) -> Result<Vec<String>, CommandError> {
+) -> Result<Vec<Line>, CommandError> {
     let provider = host.remote_provider()?;
     let mut pending = Vec::new();
     for item in items {
@@ -2113,7 +2141,7 @@ fn apply_update_selection(
         .map_err(CommandError::store)?;
     Ok(selected
         .into_iter()
-        .map(|selection| format!("Updated Skill {}.", selection.name))
+        .map(|selection| Line::success(format!("Updated Skill {}.", selection.name)))
         .collect())
 }
 
@@ -2266,7 +2294,7 @@ fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> Command
 }
 
 impl LocalHost {
-    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<String> {
+    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<Line> {
         let name = &view.name;
         let global = if scope == InstallScope::Global {
             " --global"
@@ -2289,18 +2317,18 @@ impl LocalHost {
                     });
                 match state {
                     Ok(RemoteSourceState::Current) => {
-                        vec![format!("Current Skill {name}.")]
+                        vec![Line::success(format!("Current Skill {name}."))]
                     }
                     Ok(RemoteSourceState::Stale { .. }) => {
-                        vec![format!(
+                        vec![Line::warn(format!(
                             "Outdated Skill {name}. Run skilld update {name}{global}."
-                        )]
+                        ))]
                     }
                     Err(error) => {
-                        vec![format!(
+                        vec![Line::error(format!(
                             "Source state unavailable for Skill {name}: {}.",
                             error.message
-                        )]
+                        ))]
                     }
                 }
             }
@@ -2312,12 +2340,14 @@ impl LocalHost {
                     .map(|locked| locked.agent)
                     .collect::<Vec<_>>();
                 let agent_flags = outdated::agent_flags(&agents);
-                vec![format!(
+                vec![Line::warn(format!(
                     "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to update it."
-                )]
+                ))]
             }
-            (LockedSource::BundledSkilld, _) => vec![format!("skilld-maintained Skill {name}.")],
-            _ => vec![format!("Local Skill {name}.")],
+            (LockedSource::BundledSkilld, _) => {
+                vec![Line::plain(format!("skilld-maintained Skill {name}."))]
+            }
+            _ => vec![Line::plain(format!("Local Skill {name}."))],
         }
     }
 

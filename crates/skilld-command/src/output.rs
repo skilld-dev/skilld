@@ -1,7 +1,8 @@
 use clap::error::ErrorKind;
 use serde::Serialize;
 use skilld_core::UpdatePlanV1;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use skilld_ui::text::{grouped_number, sanitize, width, wrap};
+use skilld_ui::{Role, paint};
 
 use crate::{CommandError, CommandErrorKind};
 
@@ -179,12 +180,12 @@ fn render_plain(outcome: &SearchOutcome) -> String {
     output
 }
 
-fn render_human(outcome: &SearchOutcome, width: u16, color: bool) -> String {
-    let width = usize::from(width);
+fn render_human(outcome: &SearchOutcome, terminal_width: u16, color: bool) -> String {
+    let columns = usize::from(terminal_width);
     let mut output = String::new();
-    let heading = format!("Skill search  {}", terminal_text(&outcome.query));
-    for line in wrap(&heading, width) {
-        output.push_str(&styled(&line, "\u{1b}[1m\u{1b}[36m", color));
+    let heading = format!("Skill search  {}", sanitize(&outcome.query));
+    for line in wrap(&heading, columns) {
+        output.push_str(&paint(&line, Role::Brand, color));
         output.push('\n');
     }
     let shown = outcome.items.len();
@@ -201,8 +202,8 @@ fn render_human(outcome: &SearchOutcome, width: u16, color: bool) -> String {
 
     if outcome.items.is_empty() {
         output.push('\n');
-        let empty = format!("No Skills found for {}.", terminal_text(&outcome.query));
-        for line in wrap(&empty, width) {
+        let empty = format!("No Skills found for {}.", sanitize(&outcome.query));
+        for line in wrap(&empty, columns) {
             output.push_str(&line);
             output.push('\n');
         }
@@ -212,37 +213,37 @@ fn render_human(outcome: &SearchOutcome, width: u16, color: bool) -> String {
 
     for item in &outcome.items {
         output.push('\n');
-        let name = terminal_text(&item.name);
+        let name = sanitize(&item.name);
         let stars = format!("{} stars", grouped_number(item.stargazer_count));
-        if 2 + display_width(&name) + 2 + display_width(&stars) <= width {
-            let gap = width - 2 - display_width(&name) - display_width(&stars);
+        if 2 + width(&name) + 2 + width(&stars) <= columns {
+            let gap = columns - 2 - width(&name) - width(&stars);
             output.push_str("  ");
-            output.push_str(&styled(&name, "\u{1b}[1m", color));
+            output.push_str(&paint(&name, Role::Emphasis, color));
             output.push_str(&" ".repeat(gap));
-            output.push_str(&styled(&stars, "\u{1b}[33m", color));
+            output.push_str(&paint(&stars, Role::Warn, color));
             output.push('\n');
         } else {
-            for line in wrap(&name, width.saturating_sub(2)) {
+            for line in wrap(&name, columns.saturating_sub(2)) {
                 output.push_str("  ");
-                output.push_str(&styled(&line, "\u{1b}[1m", color));
+                output.push_str(&paint(&line, Role::Emphasis, color));
                 output.push('\n');
             }
             output.push_str("  ");
-            output.push_str(&styled(&stars, "\u{1b}[33m", color));
+            output.push_str(&paint(&stars, Role::Warn, color));
             output.push('\n');
         }
 
         if let Some(description) = &item.description {
-            for line in wrap(&terminal_text(description), width.saturating_sub(2)) {
+            for line in wrap(&sanitize(description), columns.saturating_sub(2)) {
                 output.push_str("  ");
                 output.push_str(&line);
                 output.push('\n');
             }
         }
-        let install = format!("Install: skilld install {}", terminal_text(&item.selector));
-        for line in wrap(&install, width.saturating_sub(2)) {
+        let install = format!("Install: skilld install {}", sanitize(&item.selector));
+        for line in wrap(&install, columns.saturating_sub(2)) {
             output.push_str("  ");
-            output.push_str(&styled(&line, "\u{1b}[2m", color));
+            output.push_str(&paint(&line, Role::Dim, color));
             output.push('\n');
         }
     }
@@ -264,77 +265,6 @@ fn escape_plain(value: &str) -> String {
         }
     }
     output
-}
-
-fn terminal_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect()
-}
-
-fn wrap(value: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in value.split_whitespace() {
-        let separator = usize::from(!current.is_empty());
-        if display_width(&current) + separator + display_width(word) > width && !current.is_empty()
-        {
-            lines.push(std::mem::take(&mut current));
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        if display_width(word) <= width {
-            current.push_str(word);
-        } else {
-            let mut chunk = String::new();
-            for character in word.chars() {
-                let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-                if !chunk.is_empty() && display_width(&chunk) + character_width > width {
-                    lines.push(std::mem::take(&mut chunk));
-                }
-                chunk.push(character);
-            }
-            current = chunk;
-        }
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
-}
-
-fn display_width(value: &str) -> usize {
-    UnicodeWidthStr::width(value)
-}
-
-fn grouped_number(value: u64) -> String {
-    let digits = value.to_string();
-    let mut output = String::new();
-    for (index, character) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
-            output.push(',');
-        }
-        output.push(character);
-    }
-    output
-}
-
-fn styled(value: &str, style: &str, color: bool) -> String {
-    if color {
-        format!("{style}{value}\u{1b}[0m")
-    } else {
-        value.to_owned()
-    }
 }
 
 #[derive(Serialize)]

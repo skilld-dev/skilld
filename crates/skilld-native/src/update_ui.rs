@@ -21,10 +21,10 @@ use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Tabs};
 use skilld_command::{CommandError, Host};
 use skilld_core::{CommitHistory, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter};
+use skilld_ui::spinner;
+use skilld_ui::time::relative_time;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use url::Url;
-
-const SPINNER: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ComparisonId(String);
@@ -837,7 +837,7 @@ pub fn update(mut model: Model, message: Message) -> Transition {
             }
         }
         Message::Tick => {
-            model.spinner = (model.spinner + 1) % SPINNER.len();
+            model.spinner = model.spinner.wrapping_add(1);
         }
         Message::Key(key) => update_key(&mut model, key, &mut effects),
     }
@@ -1029,8 +1029,8 @@ fn render_body(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, area:
         Phase::LoadingCandidates => {
             frame.render_widget(
                 Paragraph::new(format!(
-                    "{} Loading outdated Skills...",
-                    SPINNER[model.spinner]
+                    "{} Loading outdated Skills…",
+                    spinner::frame(model.spinner)
                 )),
                 area,
             );
@@ -1073,18 +1073,18 @@ fn render_outdated(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, a
                 commit_count,
                 ..
             } => {
-                let checked = if row.selected { 'x' } else { ' ' };
+                let checked = if row.selected { "◉" } else { "◯" };
                 if compact {
-                    ListItem::new(truncate(&format!("[{checked}] {name}"), width))
+                    ListItem::new(truncate(&format!("{checked} {name}"), width))
                 } else {
-                    let first = format!("[{checked}] {name:<28} {repository}");
+                    let first = format!("{checked} {name:<28} {repository}");
                     let commits = if *commit_count == 1 {
                         "1 commit".to_owned()
                     } else {
                         format!("{commit_count} commits")
                     };
                     let second = format!(
-                        "    {} -> {}  {commits}",
+                        "    {} → {}  {commits}",
                         short_sha(locked_commit_sha),
                         short_sha(latest_commit_sha)
                     );
@@ -1096,10 +1096,10 @@ fn render_outdated(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, a
             }
             UpdateCandidate::Unavailable { name, error } => {
                 if compact {
-                    ListItem::new(truncate(&format!("[!] {name}: {}", error.code), width))
+                    ListItem::new(truncate(&format!("⚠ {name}: {}", error.code), width))
                 } else {
                     ListItem::new(Text::from(vec![
-                        Line::from(truncate(&format!("[!] {name}: {}", error.code), width)),
+                        Line::from(truncate(&format!("⚠ {name}: {}", error.code), width)),
                         Line::from(truncate(&format!("    {}", error.message), width)),
                     ]))
                     .style(Style::default().fg(theme(color, Color::Red)))
@@ -1159,8 +1159,8 @@ fn render_commits(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, ar
             }
             Some(CommitState::Loading) => {
                 lines.push(Line::from(format!(
-                    "  {} Loading commits...",
-                    SPINNER[model.spinner]
+                    "  {} Loading commits…",
+                    spinner::frame(model.spinner)
                 )));
             }
             Some(CommitState::Failed(error)) => {
@@ -1171,11 +1171,11 @@ fn render_commits(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, ar
             }
             Some(CommitState::Ready(page)) => {
                 for commit in &page.commits {
-                    let date = commit.timestamp.get(..10).unwrap_or(&commit.timestamp);
+                    let date = relative_time(&commit.timestamp, std::time::SystemTime::now());
                     let details = if model.width >= 100 {
                         format!("{}  {date}", commit.author)
                     } else {
-                        date.to_owned()
+                        date
                     };
                     lines.push(Line::from(truncate(
                         &format!(
@@ -1217,8 +1217,8 @@ fn status_text(model: &Model) -> String {
     match model.phase {
         Phase::LoadingCandidates => "Loading update plan".to_owned(),
         Phase::Applying => format!(
-            "{} Updating {}...",
-            SPINNER[model.spinner],
+            "{} Updating {}…",
+            spinner::frame(model.spinner),
             skill_count(model.selected_names().len())
         ),
         Phase::FailedLoad(_) => "Update plan failed".to_owned(),

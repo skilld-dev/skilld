@@ -54,7 +54,7 @@ fn model_selects_outdated_skills_and_generates_visible_key_help() {
     let snapshot = render_snapshot(&transition.model, false);
 
     assert!(transition.effects.is_empty());
-    assert!(snapshot.contains("> [ ] review-skill"));
+    assert!(snapshot.contains("> ◯ review-skill"));
     assert!(snapshot.contains("2 selected"));
     assert!(snapshot.contains("↑/↓ move"));
     assert!(snapshot.contains("space select"));
@@ -124,7 +124,7 @@ fn view_reflows_at_narrow_width_and_keeps_the_cursor_in_the_viewport() {
     .model;
     let snapshot = render_snapshot(&model, false);
 
-    assert!(snapshot.contains("> [x] web-perf"));
+    assert!(snapshot.contains("> ◉ web-perf"));
     assert!(!snapshot.contains("cloudflare/skills"));
     assert!(
         snapshot
@@ -236,7 +236,7 @@ fn one_unavailable_skill_keeps_other_updates_selectable() {
     .model;
     let snapshot = render_snapshot(&model, false);
 
-    assert!(snapshot.contains("[!] review-skill: RATE_LIMITED"));
+    assert!(snapshot.contains("⚠ review-skill: RATE_LIMITED"));
     assert!(snapshot.contains("1 selected. 1 unavailable"));
     assert!(snapshot.contains("r retry"));
 
@@ -417,14 +417,19 @@ impl Host for PlanHost {
         Ok(self.plan.clone())
     }
 
-    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+    fn update_selected(
+        &self,
+        items: &[UpdatePlanItem],
+    ) -> Result<Vec<skilld_ui::Line>, CommandError> {
         self.selections.lock().unwrap().push(items.to_vec());
         if let Some(error) = self.apply_error.clone() {
             return Err(error);
         }
         Ok(items
             .iter()
-            .map(|item| format!("Updated Skill {}.", item.name().as_str()))
+            .map(|item| {
+                skilld_ui::Line::success(format!("Updated Skill {}.", item.name().as_str()))
+            })
             .collect())
     }
 }

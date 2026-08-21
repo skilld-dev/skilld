@@ -298,7 +298,7 @@ fn outdated_reports_current_and_stale_project_skills() {
 }
 
 #[test]
-fn outdated_system_reports_a_stale_global_skill_with_the_global_update() {
+fn outdated_all_reports_a_stale_global_skill_with_the_global_update() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -327,7 +327,7 @@ fn outdated_system_reports_a_stale_global_skill_with_the_global_update() {
 }
 
 #[test]
-fn outdated_system_links_unmanaged_skills_to_a_repository() {
+fn outdated_all_links_unmanaged_skills_to_a_repository() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -356,7 +356,7 @@ fn outdated_system_links_unmanaged_skills_to_a_repository() {
 }
 
 #[test]
-fn outdated_system_reports_unmanaged_skills_without_a_match() {
+fn outdated_all_reports_unmanaged_skills_without_a_match() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -383,7 +383,7 @@ fn outdated_system_reports_unmanaged_skills_without_a_match() {
 }
 
 #[test]
-fn outdated_system_surfaces_a_search_failure_and_keeps_scanning() {
+fn outdated_all_surfaces_a_search_failure_and_keeps_scanning() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -412,7 +412,7 @@ fn outdated_system_surfaces_a_search_failure_and_keeps_scanning() {
 }
 
 #[test]
-fn outdated_system_reports_a_managed_skill_once() {
+fn outdated_all_reports_a_managed_skill_once() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -517,7 +517,7 @@ fn outdated_survives_a_source_state_failure() {
 }
 
 #[test]
-fn outdated_system_survives_a_corrupt_global_store() {
+fn outdated_all_survives_a_corrupt_global_store() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -553,7 +553,7 @@ fn outdated_system_survives_a_corrupt_global_store() {
 }
 
 #[test]
-fn outdated_system_groups_agents_sharing_one_directory() {
+fn outdated_all_groups_agents_sharing_one_directory() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -651,7 +651,7 @@ fn outdated_reports_the_bundled_skill_by_its_source() {
 }
 
 #[test]
-fn outdated_system_runs_candidate_searches_in_parallel_with_a_bound() {
+fn outdated_all_runs_candidate_searches_in_parallel_with_a_bound() {
     use std::time::Instant;
 
     let temporary = tempfile::tempdir().unwrap();
@@ -715,7 +715,7 @@ fn ancestor_roots_continue_to_the_root_outside_home() {
 }
 
 #[test]
-fn outdated_system_finds_skills_in_parent_directories() {
+fn outdated_all_finds_skills_in_parent_directories() {
     let temporary = tempfile::tempdir().unwrap();
     let nested = temporary.path().join("work/app");
     fs::create_dir_all(&nested).unwrap();

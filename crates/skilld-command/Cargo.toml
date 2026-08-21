@@ -24,6 +24,8 @@ sha2.workspace = true
 
 skilld-core.workspace = true
 
+skilld-ui.workspace = true
+
 tempfile.workspace = true
 
 unicode-width.workspace = true

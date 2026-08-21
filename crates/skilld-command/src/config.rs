@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use skilld_core::{AgentTargetId, InstallMode};
+use skilld_ui::Line;
 
 use crate::CommandError;
 
@@ -53,17 +54,17 @@ impl LocalConfig {
         }
     }
 
-    pub fn entries(&self) -> Vec<String> {
+    pub fn entries(&self) -> Vec<Line> {
+        let targets = self
+            .agent_targets
+            .iter()
+            .map(|target| target.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mode = self.install_mode.as_str();
         vec![
-            format!(
-                "agent.targets={}",
-                self.agent_targets
-                    .iter()
-                    .map(|target| target.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            format!("install.mode={}", self.install_mode.as_str()),
+            Line::field_plain(format!("agent.targets={targets}"), "agent.targets", targets),
+            Line::field_plain(format!("install.mode={mode}"), "install.mode", mode),
         ]
     }
 }
