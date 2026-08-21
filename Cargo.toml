@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/skilld-auth",
-    "crates/skilld-command",
-    "crates/skilld-core",
-    "crates/skilld-native",
-    "crates/skilld-ui",
-    "crates/skilld-wasi",
+  "crates/skilld-auth",
+  "crates/skilld-command",
+  "crates/skilld-core",
+  "crates/skilld-native",
+  "crates/skilld-ui",
+  "crates/skilld-wasi",
 ]
 resolver = "3"
 
