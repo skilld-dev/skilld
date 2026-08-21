@@ -1411,7 +1411,7 @@ impl RemoteProvider for FakeProvider {
         if *self.fail_prepare.lock().unwrap() {
             return Err(RemoteError::new("CHECK_BLOCKED", "a required check failed"));
         }
-        let mut prepared = self.prepared(selector);
+        let mut prepared = self.prepared(selector, _direct);
         let LockedSource::Remote { commit_sha, .. } = &mut prepared.locked_source else {
             unreachable!("the fixture uses a remote source")
         };
@@ -1686,7 +1686,7 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
         .with_remote_provider(provider.clone());
     for name in ["alpha", "beta"] {
         host.install_request(InstallRequest {
-            source: Some(InstallSource::Remote(format!(
+            operation: InstallOperation::Install(InstallSource::Remote(format!(
                 "skilld:skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
@@ -1729,7 +1729,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
         .with_remote_provider(provider.clone());
     for name in ["alpha", "beta"] {
         host.install_request(InstallRequest {
-            source: Some(InstallSource::Remote(format!(
+            operation: InstallOperation::Install(InstallSource::Remote(format!(
                 "skilld:skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
@@ -1773,7 +1773,7 @@ fn plain_update_rejects_a_source_that_moved_behind() {
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
-        source: Some(InstallSource::Remote(
+        operation: InstallOperation::Install(InstallSource::Remote(
             "skilld:skilld-dev/skills/alpha".to_owned(),
         )),
         scope: InstallScope::Project,
@@ -1793,6 +1793,110 @@ fn plain_update_rejects_a_source_that_moved_behind() {
         fs::read_to_string(project.join(".skills/alpha/SKILL.md")).unwrap(),
         "---\nname: alpha\ndescription: first\n---\n"
     );
+}
+
+#[test]
+fn selected_skill_update_commits_only_the_exact_subset() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta", "gamma"] {
+        host.install_request(InstallRequest {
+            operation: InstallOperation::Install(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+
+    let lines = host
+        .update_selected(&["gamma".to_owned(), "alpha".to_owned()])
+        .unwrap();
+
+    assert_eq!(lines, ["Updated Skill gamma.", "Updated Skill alpha."]);
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["gamma", "alpha"]);
+    for (name, version) in [("alpha", "second"), ("beta", "first"), ("gamma", "second")] {
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: {version}\n---\n")
+        );
+    }
+}
+
+#[test]
+fn selected_skill_update_rejects_empty_duplicate_and_invalid_names() {
+    let temporary = tempfile::tempdir().unwrap();
+    let host = LocalHost::new(
+        temporary.path().join("project"),
+        temporary.path().join("data"),
+    );
+
+    let empty = host.update_selected(&[]).unwrap_err();
+    let duplicate = host
+        .update_selected(&["alpha".to_owned(), "alpha".to_owned()])
+        .unwrap_err();
+    let invalid = host.update_selected(&["../alpha".to_owned()]).unwrap_err();
+
+    assert_eq!(empty.code, "INVALID_SELECTION");
+    assert_eq!(empty.message, "Select at least one Skill");
+    assert_eq!(duplicate.code, "INVALID_SELECTION");
+    assert_eq!(duplicate.message, "Select each Skill once");
+    assert_eq!(invalid.code, "INVALID_SOURCE");
+}
+
+#[test]
+fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta", "gamma"] {
+        host.install_request(InstallRequest {
+            operation: InstallOperation::Install(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+    *provider.fail_name.lock().unwrap() = Some("gamma");
+
+    let error = host
+        .update_selected(&["alpha".to_owned(), "gamma".to_owned()])
+        .unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "gamma"]);
+    for name in ["alpha", "beta", "gamma"] {
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: first\n---\n")
+        );
+    }
 }
 
 #[test]
@@ -1872,7 +1976,7 @@ fn update_check_carries_the_exact_comparison_and_commit_history() {
     let host = LocalHost::new(project, temporary.path().join("data"))
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
-        source: Some(InstallSource::Remote(
+        operation: InstallOperation::Install(InstallSource::Remote(
             "skilld:skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
@@ -2086,7 +2190,7 @@ fn cli_plain_restore_rejects_an_unverified_source_with_the_recovery_command() {
         &mut stderr,
     );
 
-    assert_eq!(restored.exit_code, 2);
+    assert_eq!(restored.exit_code, 1);
     assert!(stdout.is_empty());
     assert_eq!(
         String::from_utf8(stderr).unwrap(),
