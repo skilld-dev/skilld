@@ -26,7 +26,7 @@ use skilld_core::{
     InstallRequest, InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
 };
 
-const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Run: skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex";
+const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command.";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -47,7 +47,7 @@ enum Command {
     /// Install a Skill or restore lockfile state.
     #[command(
         long_about = "Install a Skill or restore lockfile state.\n\nAccepted SOURCE values:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      These public GitHub Repository sources require --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
-        after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/vue --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
+        after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
         /// Select the Skill source. Omit SOURCE to restore lockfile state.
@@ -244,10 +244,20 @@ impl CommandError {
         }
     }
 
-    fn direct_source_required() -> Self {
+    fn direct_local_source() -> Self {
         Self {
             code: "DIRECT_SOURCE_REQUIRED",
-            message: DIRECT_SOURCE_GUIDANCE.to_owned(),
+            message:
+                "--direct cannot install a local Skill. Remove --direct and retry the same command."
+                    .to_owned(),
+        }
+    }
+
+    fn direct_bundled_source() -> Self {
+        Self {
+            code: "DIRECT_SOURCE_REQUIRED",
+            message: "--direct cannot install the skilld-maintained Skill. Run: skilld install skilld --global"
+                .to_owned(),
         }
     }
 
@@ -381,8 +391,14 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
                     (true, InstallSource::Remote(source)) => {
                         InstallOperation::Install(InstallSource::DirectRemote(source))
                     }
-                    (true, _) => {
-                        return Err(CommandError::direct_source_required());
+                    (true, InstallSource::DirectRemote(source)) => {
+                        InstallOperation::Install(InstallSource::DirectRemote(source))
+                    }
+                    (true, InstallSource::Local(_)) => {
+                        return Err(CommandError::direct_local_source());
+                    }
+                    (true, InstallSource::BundledSkilld) => {
+                        return Err(CommandError::direct_bundled_source());
                     }
                     (false, source) => InstallOperation::Install(source),
                 },

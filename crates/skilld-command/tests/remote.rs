@@ -690,7 +690,7 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
 }
 
 #[test]
-fn direct_install_error_gives_an_agent_a_copyable_source_command() {
+fn direct_install_error_gives_an_agent_an_exact_recovery() {
     let remote = SkilldRemote::new(
         Arc::new(FakeHttp::default()),
         Arc::new(NoTokenProvider),
@@ -703,7 +703,7 @@ fn direct_install_error_gives_an_agent_a_copyable_source_command() {
     assert_eq!(error.code, "DIRECT_SOURCE_REQUIRED");
     assert_eq!(
         error.message,
-        "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Run: skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex"
+        "--direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command."
     );
 }
 

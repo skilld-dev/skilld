@@ -81,6 +81,7 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "Default scope: current project.",
         "Direct installs set source status to unverified.",
         "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
+        "skilld install skilld:skilld-dev/skills/find-skill --agent codex",
         "skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex",
     ] {
         assert!(help.contains(guidance), "missing help guidance: {guidance}");
@@ -88,7 +89,7 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
 }
 
 #[test]
-fn direct_source_error_gives_an_agent_a_copyable_command() {
+fn direct_local_source_error_gives_an_agent_an_exact_recovery() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     let data = temporary.path().join("data");
@@ -102,7 +103,56 @@ fn direct_source_error_gives_an_agent_a_copyable_command() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "DIRECT_SOURCE_REQUIRED: --direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Run: skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n"
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install a local Skill. Remove --direct and retry the same command.\n"
+    );
+}
+
+#[test]
+fn direct_bundled_source_error_gives_an_agent_an_exact_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(&project, &data, &home, &["install", "skilld", "--direct"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install the skilld-maintained Skill. Run: skilld install skilld --global\n"
+    );
+}
+
+#[test]
+fn direct_hosted_source_error_gives_an_agent_an_exact_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(
+        &project,
+        &data,
+        &home,
+        &[
+            "install",
+            "skilld:skilld-dev/skills/find-skill",
+            "--direct",
+            "--agent",
+            "codex",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Remove --direct and retry the same command.\n"
     );
 }
 
