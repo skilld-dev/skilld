@@ -15,9 +15,6 @@ catalogs:
     '@arethetypeswrong/cli':
       specifier: ^0.18.5
       version: 0.18.5
-    '@bytecodealliance/preview2-shim':
-      specifier: 0.20.2
-      version: 0.20.2
     '@redocly/cli':
       specifier: ^2.46.2
       version: 2.46.2
@@ -33,9 +30,6 @@ catalogs:
     typescript:
       specifier: npm:@typescript/typescript6@^6.0.2
       version: 6.0.2
-    ws:
-      specifier: ^8.21.0
-      version: 8.21.2
     yaml:
       specifier: ^2.9.0
       version: 2.9.0
@@ -112,12 +106,6 @@ importers:
 
   packages/cli-linux-x64-musl: {}
 
-  packages/cli-wasm32-wasi:
-    dependencies:
-      '@bytecodealliance/preview2-shim':
-        specifier: 'catalog:'
-        version: 0.20.2
-
   packages/cli-win32-arm64-msvc: {}
 
   packages/cli-win32-x64-msvc: {}
@@ -127,9 +115,6 @@ importers:
       '@ai-sdk/harness':
         specifier: 'catalog:'
         version: 1.0.77(ws@8.21.2)(zod@4.4.3)
-      ws:
-        specifier: 'catalog:'
-        version: 8.21.2
       yaml:
         specifier: 'catalog:'
         version: 2.9.0
@@ -342,9 +327,6 @@ packages:
 
   '@braidai/lang@1.1.2':
     resolution: {integrity: sha512-qBcknbBufNHlui137Hft8xauQMTZDKdophmLFv05r2eNmdIv/MlPuP4TdUknHG68UdWLgVZwgxVe735HzJNIwA==}
-
-  '@bytecodealliance/preview2-shim@0.20.2':
-    resolution: {integrity: sha512-Bp1cer1jztaQamLv1YKdc4MimI9LNAAKM2lNxOtGTLs7/At5KlA0fW1HWTi3ZJ5McaWNwJUDWSe5Lr0EgUpsnA==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -3250,8 +3232,6 @@ snapshots:
     optional: true
 
   '@braidai/lang@1.1.2': {}
-
-  '@bytecodealliance/preview2-shim@0.20.2': {}
 
   '@clack/core@1.4.3':
     dependencies:
@@ -6250,7 +6230,8 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
 
-  ws@8.21.2: {}
+  ws@8.21.2:
+    optional: true
 
   xml-name-validator@5.0.0: {}
 
