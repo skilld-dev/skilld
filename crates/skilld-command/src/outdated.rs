@@ -1,11 +1,40 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use skilld_core::{AgentTargetId, InstallScope, SkillName};
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
+
+pub trait OutdatedProgress: Send + Sync {
+    fn found(&self, _line: &str) {}
+    fn checking(&self, _name: &str) {}
+    fn finish(&self) {}
+}
+
+pub struct NoOutdatedProgress;
+
+impl OutdatedProgress for NoOutdatedProgress {}
+
+/// Directories from `start` up to and including `stop`.
+/// When `stop` is not an ancestor of `start`, every ancestor up to the
+/// filesystem root is included, so a project outside the home directory
+/// still reports its own Skills.
+pub fn ancestor_roots(start: &Path, stop: &Path) -> Vec<PathBuf> {
+    let start = normalize_path(start);
+    let stop = normalize_path(stop);
+    let mut roots = Vec::new();
+    let mut current = start.as_path();
+    loop {
+        roots.push(current.to_path_buf());
+        if current == stop || current.parent().is_none() {
+            break;
+        }
+        current = current.parent().expect("a checked parent exists");
+    }
+    roots
+}
 
 pub(crate) struct UnmanagedSkill {
     pub name: String,
@@ -87,6 +116,19 @@ pub(crate) fn scan_unmanaged(
     }
     skills.sort_by(|left, right| left.name.cmp(&right.name).then(left.path.cmp(&right.path)));
     skills
+}
+
+pub(crate) fn found_line(skill: &UnmanagedSkill) -> String {
+    format!(
+        "{} ({}, unmanaged)",
+        skill.name,
+        skill
+            .agents
+            .iter()
+            .map(|agent| agent.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<String> {

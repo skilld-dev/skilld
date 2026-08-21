@@ -1,12 +1,13 @@
+use skilld_command::OutputContext;
+
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::time::Instant;
-
-use skilld_command::OutputContext;
 
 const ERASE_LINE: &[u8] = b"\r\x1b[2K";
 
@@ -158,6 +159,60 @@ where
         Some("verify") => Some("Verifying"),
         Some("update") => Some("Updating"),
         _ => None,
+    }
+}
+
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Streams `skilld outdated` progress to a terminal: found Skills print as
+/// lines, remote verification rewrites one spinner line, and `finish` erases
+/// it so only results remain.
+pub struct OutdatedProgressLine {
+    enabled: bool,
+    frame: std::sync::atomic::AtomicUsize,
+}
+
+impl OutdatedProgressLine {
+    pub fn for_terminal(is_terminal: bool) -> Self {
+        Self {
+            enabled: is_terminal,
+            frame: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn erase(&self) {
+        if self.enabled {
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_all(b"\r\x1b[2K");
+            let _ = stderr.flush();
+        }
+    }
+}
+
+impl skilld_command::OutdatedProgress for OutdatedProgressLine {
+    fn found(&self, line: &str) {
+        if !self.enabled {
+            return;
+        }
+        self.erase();
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "• {line}");
+        let _ = stderr.flush();
+    }
+
+    fn checking(&self, name: &str) {
+        if !self.enabled {
+            return;
+        }
+        let frame =
+            SPINNER_FRAMES[self.frame.fetch_add(1, Ordering::Relaxed) % SPINNER_FRAMES.len()];
+        let mut stderr = std::io::stderr().lock();
+        let _ = write!(stderr, "\r\x1b[2K{frame} Checking {name}…");
+        let _ = stderr.flush();
+    }
+
+    fn finish(&self) {
+        self.erase();
     }
 }
 

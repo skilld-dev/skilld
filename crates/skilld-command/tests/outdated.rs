@@ -691,3 +691,108 @@ fn outdated_system_runs_candidate_searches_in_parallel_with_a_bound() {
     let output = String::from_utf8(stdout).unwrap();
     assert!(output.contains("No Repository match for 16 Skills"));
 }
+
+#[test]
+fn ancestor_roots_stop_at_home() {
+    let home = Path::new("/home/user");
+    let roots = skilld_command::ancestor_roots(&home.join("pkg/app"), home);
+    assert_eq!(
+        roots,
+        vec![
+            Path::new("/home/user/pkg/app").to_path_buf(),
+            Path::new("/home/user/pkg").to_path_buf(),
+            Path::new("/home/user").to_path_buf(),
+        ]
+    );
+}
+
+#[test]
+fn ancestor_roots_continue_to_the_root_outside_home() {
+    let roots = skilld_command::ancestor_roots(Path::new("/tmp/work/app"), Path::new("/home/user"));
+    assert_eq!(roots.first().unwrap(), Path::new("/tmp/work/app"));
+    assert_eq!(roots.last().unwrap(), Path::new("/"));
+    assert_eq!(roots.len(), 4);
+}
+
+#[test]
+fn outdated_system_finds_skills_in_parent_directories() {
+    let temporary = tempfile::tempdir().unwrap();
+    let nested = temporary.path().join("work/app");
+    fs::create_dir_all(&nested).unwrap();
+    unmanaged_skill(temporary.path(), ".claude", "parent-skill");
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(nested, temporary.path().join("data")).with_remote_provider(provider);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--system"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains("No Repository match for 1 Skill (parent-skill (claude-code))."),
+        "expected the parent directory Skill, got: {output}"
+    );
+}
+
+struct RecordingProgress {
+    found: Mutex<Vec<String>>,
+    checking: Mutex<Vec<String>>,
+    finished: Mutex<bool>,
+}
+
+impl skilld_command::OutdatedProgress for RecordingProgress {
+    fn found(&self, line: &str) {
+        self.found.lock().unwrap().push(line.to_owned());
+    }
+
+    fn checking(&self, name: &str) {
+        self.checking.lock().unwrap().push(name.to_owned());
+    }
+
+    fn finish(&self) {
+        *self.finished.lock().unwrap() = true;
+    }
+}
+
+#[test]
+fn outdated_reports_found_skills_before_remote_checks() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let home = temporary.path();
+    unmanaged_skill(home, ".claude", "vue-testing");
+    let provider = Arc::new(Provider::new(
+        "---\nname: example\ndescription: first\n---\n",
+    ));
+    let progress = Arc::new(RecordingProgress {
+        found: Mutex::new(vec![]),
+        checking: Mutex::new(vec![]),
+        finished: Mutex::new(false),
+    });
+    let host = LocalHost::new(project, home.join("data"))
+        .with_remote_provider(provider)
+        .with_outdated_progress(progress.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--system"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        *progress.found.lock().unwrap(),
+        vec!["vue-testing (claude-code, unmanaged)".to_owned()]
+    );
+    assert_eq!(*progress.checking.lock().unwrap(), vec!["vue-testing"]);
+    assert!(*progress.finished.lock().unwrap());
+}

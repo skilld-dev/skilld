@@ -60,18 +60,26 @@ fn main() -> ExitCode {
     let global_root = global_root();
     let detection = detection_environment();
     let account = Arc::new(NativeAccount::new());
-    let host = Arc::new(
-        LocalHost::new(project_root, global_root)
-            .with_target_roots(target_roots())
-            .with_detection_environment(detection.clone())
-            .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
-            .with_account_provider(account.clone())
-            .with_remote_provider(Arc::new(SkilldRemote::new(
-                Arc::new(NativeHttpAdapter::new()),
-                account,
-                native_remote_config(),
-            ))),
-    );
+    let host = LocalHost::new(project_root, global_root)
+        .with_target_roots(target_roots())
+        .with_detection_environment(detection.clone())
+        .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
+        .with_account_provider(account.clone())
+        .with_remote_provider(Arc::new(SkilldRemote::new(
+            Arc::new(NativeHttpAdapter::new()),
+            account,
+            native_remote_config(),
+        )));
+    let host = if args.iter().skip(1).any(|arg| arg == "outdated")
+        && !args.iter().any(|arg| arg == "--json" || arg == "--plain")
+    {
+        host.with_outdated_progress(Arc::new(status::OutdatedProgressLine::for_terminal(
+            std::io::stderr().is_terminal(),
+        )))
+    } else {
+        host
+    };
+    let host = Arc::new(host);
 
     if interactive {
         let interactive_host = Arc::new(CommandInteractiveUpdateHost::new(host));

@@ -1,6 +1,7 @@
 mod config;
 mod local_store;
 mod outdated;
+pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
 mod output;
 mod remote;
 
@@ -893,6 +894,7 @@ pub struct LocalHost {
     bundled_skill: Option<Arc<dyn BundledSkillProvider>>,
     remote: Option<Arc<dyn RemoteProvider>>,
     account: Option<Arc<dyn AccountProvider>>,
+    outdated_progress: Arc<dyn outdated::OutdatedProgress>,
 }
 
 impl LocalHost {
@@ -913,6 +915,7 @@ impl LocalHost {
             bundled_skill: None,
             remote: None,
             account: None,
+            outdated_progress: Arc::new(outdated::NoOutdatedProgress),
         }
     }
 
@@ -942,6 +945,11 @@ impl LocalHost {
 
     pub fn with_account_provider(mut self, provider: Arc<dyn AccountProvider>) -> Self {
         self.account = Some(provider);
+        self
+    }
+
+    pub fn with_outdated_progress(mut self, progress: Arc<dyn outdated::OutdatedProgress>) -> Self {
+        self.outdated_progress = progress;
         self
     }
 
@@ -1732,10 +1740,13 @@ impl Host for LocalHost {
         } else {
             vec![InstallScope::Project]
         };
+        let progress = self.outdated_progress.as_ref();
         let mut lines = Vec::new();
         let mut managed = BTreeMap::<String, Vec<PathBuf>>::new();
         let mut store_roots = Vec::new();
         let mut scan = Vec::new();
+        let mut suppressed_roots = BTreeSet::new();
+        let mut views = Vec::new();
         for scope in scopes {
             let known = self.known_targets(scope)?;
             let store = self.store(scope);
@@ -1748,6 +1759,10 @@ impl Host for LocalHost {
                         scope.as_str(),
                         CommandError::store(error).message
                     ));
+                    if system {
+                        // The ancestor scan must not report Skills this scope cannot verify.
+                        suppressed_roots.extend(known.iter().map(|target| target.root.clone()));
+                    }
                     continue;
                 }
             };
@@ -1774,7 +1789,8 @@ impl Host for LocalHost {
                     .entry(name.clone())
                     .or_default()
                     .extend(paths.iter().cloned());
-                lines.extend(self.report_outdated_view(&view, scope));
+                progress.found(&format!("{name} ({} scope)", scope.as_str()));
+                views.push((view, scope));
             }
             if system {
                 store_roots.push(store.root().to_path_buf());
@@ -1782,17 +1798,47 @@ impl Host for LocalHost {
             }
         }
         if system {
-            let skills = outdated::scan_unmanaged(&scan, &store_roots, &managed);
+            // Global Agent directories keep the global scope, so ancestor roots
+            // scan after them and skip roots another scope already claimed.
+            let mut claimed = scan
+                .iter()
+                .flat_map(|(_, targets)| targets.iter().map(|target| target.root.clone()))
+                .collect::<BTreeSet<_>>();
+            claimed.extend(suppressed_roots);
+            for root in outdated::ancestor_roots(&self.project_root, &self.target_roots.home) {
+                for target in skilld_core::AGENT_TARGETS {
+                    if let Ok(resolved) =
+                        ResolvedTarget::new(target.id, root.join(target.project_skills_dir))
+                        && !claimed.contains(&resolved.root)
+                    {
+                        scan.push((InstallScope::Project, vec![resolved]));
+                    }
+                }
+            }
+        }
+        let unmanaged = if system {
+            outdated::scan_unmanaged(&scan, &store_roots, &managed)
+        } else {
+            Vec::new()
+        };
+        for skill in &unmanaged {
+            progress.found(&outdated::found_line(skill));
+        }
+        for (view, scope) in &views {
+            progress.checking(&view.name);
+            lines.extend(self.report_outdated_view(view, *scope));
+        }
+        if system {
             #[cfg(not(target_os = "wasi"))]
-            let results = search_candidates_parallel(self, &skills);
+            let results = search_candidates_parallel(self, &unmanaged);
             #[cfg(target_os = "wasi")]
-            let results = skills
+            let results = unmanaged
                 .iter()
                 .map(|skill| self.search_candidate(&skill.name))
                 .collect::<Vec<_>>();
             let mut no_match = Vec::new();
             let mut failures = BTreeMap::<String, Vec<&outdated::UnmanagedSkill>>::new();
-            for (skill, result) in skills.iter().zip(results) {
+            for (skill, result) in unmanaged.iter().zip(results) {
                 match result {
                     Ok(Some(candidate)) => {
                         lines.extend(outdated::render_unmanaged(skill, Some(&candidate)))
@@ -1804,6 +1850,7 @@ impl Host for LocalHost {
             lines.extend(outdated::render_no_match(&no_match));
             lines.extend(outdated::render_search_failures(&failures));
         }
+        progress.finish();
         if lines.is_empty() {
             lines.push("No installed Skills found.".to_owned());
         }
@@ -1837,6 +1884,7 @@ fn search_candidates_parallel(
                         if index >= skills.len() {
                             break;
                         }
+                        host.outdated_progress.checking(&skills[index].name);
                         let result = host.search_candidate(&skills[index].name);
                         slots.lock().unwrap()[index] = Some(result);
                     }
