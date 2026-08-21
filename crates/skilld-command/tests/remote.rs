@@ -1311,6 +1311,24 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
 }
 
 #[test]
+fn direct_install_error_gives_an_agent_an_exact_recovery() {
+    let remote = SkilldRemote::new(
+        Arc::new(FakeHttp::default()),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    );
+    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+
+    let error = remote.prepare(&selector, true).unwrap_err();
+
+    assert_eq!(error.code, "DIRECT_SOURCE_REQUIRED");
+    assert_eq!(
+        error.message,
+        "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again."
+    );
+}
+
+#[test]
 fn direct_github_access_rejects_private_repositories() {
     let http = Arc::new(FakeHttp::with([response(
         200,

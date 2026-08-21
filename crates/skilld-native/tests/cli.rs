@@ -170,6 +170,109 @@ fn version_reports_the_rust_package_version() {
 }
 
 #[test]
+fn install_help_gives_agents_actionable_source_and_target_grammar() {
+    let output = Command::new(binary())
+        .args(["install", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout).unwrap();
+    for guidance in [
+        "skilld:OWNER/REPOSITORY/SKILL",
+        "github:OWNER/REPOSITORY/SKILL_PATH",
+        "github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH",
+        "github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG",
+        "github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA",
+        "https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH",
+        "Values: claude-code, cursor, windsurf, cline, codex, github-copilot,",
+        "gemini-cli, goose, amp, opencode, roo, antigravity.",
+        "Repeat --agent to select several.",
+        "Default: every Agent target skilld detects.",
+        "If skilld detects none, it uses agent.targets.",
+        "Values: copy, symlink. The default comes from install.mode.",
+        "A fresh configuration sets install.mode to copy.",
+        "The default is the current project.",
+        "A direct install records the unverified source status.",
+        "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
+        "Verified remote Skills restore the exact locked Git commit.",
+        "skilld install skilld:skilld-dev/skills/find-skill --agent codex",
+        "skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex",
+    ] {
+        assert!(help.contains(guidance), "missing help guidance: {guidance}");
+    }
+}
+
+#[test]
+fn direct_local_source_error_gives_an_agent_an_exact_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(&project, &data, &home, &["install", "./skill", "--direct"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install a local Skill. Remove --direct, then run the same command again.\n"
+    );
+}
+
+#[test]
+fn direct_bundled_source_error_gives_an_agent_an_exact_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(&project, &data, &home, &["install", "skilld", "--direct"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead\n"
+    );
+}
+
+#[test]
+fn direct_hosted_source_error_gives_an_agent_an_exact_recovery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(
+        &project,
+        &data,
+        &home,
+        &[
+            "install",
+            "skilld:skilld-dev/skills/find-skill",
+            "--direct",
+            "--agent",
+            "codex",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.\n"
+    );
+}
+
+#[test]
 fn interactive_update_requires_terminal_input_and_output() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

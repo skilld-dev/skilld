@@ -38,6 +38,8 @@ use output::{
     resolve_mode,
 };
 
+const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "skilld",
@@ -60,16 +62,36 @@ pub struct Cli {
 enum Command {
     /// Search for Skills.
     Search { query: Vec<String> },
-    /// Install a Skill or restore lockfile state.
+    /// Install a Skill, or restore the Skills recorded in your lockfile.
+    #[command(
+        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Public GitHub Repository paths. Each one requires --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
+    )]
     Install {
+        /// The Skill source to install. Omit SOURCE to restore .skills/skilld-lock.yaml.
+        #[arg(value_name = "SOURCE")]
         source: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            long_help = "Install to your account-level Agent targets. The default is the current project."
+        )]
         global: bool,
-        #[arg(long = "agent")]
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
+        )]
         agents: Vec<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "MODE",
+            long_help = "Choose how each Agent target receives the Skill.\nValues: copy, symlink. The default comes from install.mode. A fresh configuration sets install.mode to copy."
+        )]
         mode: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct install records the unverified source status."
+        )]
         direct: bool,
     },
     /// List installed Skills.
@@ -273,6 +295,20 @@ impl CommandError {
 
     pub fn input(message: impl Into<String>) -> Self {
         Self::usage("INVALID_SOURCE", message)
+    }
+
+    fn direct_local_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot install a local Skill. Remove --direct, then run the same command again.",
+        )
+    }
+
+    fn direct_bundled_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead",
+        )
     }
 
     pub fn config(message: impl Into<String>) -> Self {
@@ -602,10 +638,14 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                     (true, InstallSource::Remote(source)) => {
                         InstallOperation::Install(InstallSource::DirectRemote(source))
                     }
-                    (true, _) => {
-                        return Err(CommandError::input(
-                            "--direct needs an explicit public GitHub Repository selector",
-                        ));
+                    (true, InstallSource::DirectRemote(source)) => {
+                        InstallOperation::Install(InstallSource::DirectRemote(source))
+                    }
+                    (true, InstallSource::Local(_)) => {
+                        return Err(CommandError::direct_local_source());
+                    }
+                    (true, InstallSource::BundledSkilld) => {
+                        return Err(CommandError::direct_bundled_source());
                     }
                     (false, source) => InstallOperation::Install(source),
                 },
