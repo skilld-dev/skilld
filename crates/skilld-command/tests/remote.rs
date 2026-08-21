@@ -798,7 +798,7 @@ fn cli_direct_restore_uses_the_locked_commit() {
     stderr.clear();
 
     let restored = run(
-        ["skilld", "install", "--direct", "--agent", "codex"],
+        ["skilld", "install", "--direct"],
         &host,
         &mut stdout,
         &mut stderr,

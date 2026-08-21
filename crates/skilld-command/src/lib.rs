@@ -757,7 +757,12 @@ impl LocalHost {
     }
 
     fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
-        let (targets, known) = self.select_installs(request)?;
+        let (targets, known) = if request.targets.is_empty() {
+            (None, self.known_targets(request.scope)?)
+        } else {
+            let (targets, known) = self.select_installs(request)?;
+            (Some(targets), known)
+        };
         let store = self.store(request.scope);
         let names = store.list(&known).map_err(CommandError::store)?;
         if names.is_empty() {
@@ -776,24 +781,46 @@ impl LocalHost {
             let view = store
                 .view(&skill_name, &known)
                 .map_err(CommandError::store)?;
-            let restored_targets = targets
-                .iter()
-                .map(|target| {
-                    let mode = if request.mode.is_some() {
-                        target.mode
-                    } else {
-                        view.skill
-                            .targets
+            let restored_targets = if let Some(targets) = &targets {
+                targets
+                    .iter()
+                    .map(|target| {
+                        let mode = if request.mode.is_some() {
+                            target.mode
+                        } else {
+                            view.skill
+                                .targets
+                                .iter()
+                                .find(|locked| locked.agent == target.target.agent)
+                                .map_or(target.mode, |locked| locked.mode)
+                        };
+                        TargetInstall {
+                            target: target.target.clone(),
+                            mode,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                view.skill
+                    .targets
+                    .iter()
+                    .map(|locked| {
+                        known
                             .iter()
-                            .find(|locked| locked.agent == target.target.agent)
-                            .map_or(target.mode, |locked| locked.mode)
-                    };
-                    TargetInstall {
-                        target: target.target.clone(),
-                        mode,
-                    }
-                })
-                .collect::<Vec<_>>();
+                            .find(|target| target.agent == locked.agent)
+                            .cloned()
+                            .map(|target| TargetInstall {
+                                target,
+                                mode: request.mode.unwrap_or(locked.mode),
+                            })
+                            .ok_or_else(|| {
+                                CommandError::domain(DomainError::InvalidTarget(
+                                    locked.agent.to_string(),
+                                ))
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
             match view.skill.source {
                 LockedSource::Local { path } => {
                     let (source, locked_source) =
