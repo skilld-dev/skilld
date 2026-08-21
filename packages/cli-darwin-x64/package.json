@@ -1,5 +1,5 @@
 {
-  "name": "@skilld/cli-darwin-x64",
+  "name": "skilld-cli-darwin-x64",
   "version": "3.0.0-beta.0",
   "description": "macOS x64 executable for the skilld CLI",
   "license": "MIT",

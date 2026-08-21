@@ -14,14 +14,14 @@ it('maps every supported host to one native package', () => {
     nativePackage({ platform: 'win32', arch: 'arm64' }),
     nativePackage({ platform: 'win32', arch: 'x64' }),
   ], [
-    '@skilld/cli-darwin-arm64',
-    '@skilld/cli-darwin-x64',
-    '@skilld/cli-linux-arm64-gnu',
-    '@skilld/cli-linux-arm64-musl',
-    '@skilld/cli-linux-x64-gnu',
-    '@skilld/cli-linux-x64-musl',
-    '@skilld/cli-win32-arm64-msvc',
-    '@skilld/cli-win32-x64-msvc',
+    'skilld-cli-darwin-arm64',
+    'skilld-cli-darwin-x64',
+    'skilld-cli-linux-arm64-gnu',
+    'skilld-cli-linux-arm64-musl',
+    'skilld-cli-linux-x64-gnu',
+    'skilld-cli-linux-x64-musl',
+    'skilld-cli-win32-arm64-msvc',
+    'skilld-cli-win32-x64-msvc',
   ])
   assert.equal(detectLibc({ getReport: () => ({ header: { glibcVersionRuntime: '2.39' } }) }), 'gnu')
   assert.equal(detectLibc({ getReport: () => ({ header: {} }) }), 'musl')
@@ -38,7 +38,7 @@ it('selects only the native executable', async () => {
     return '/native/skilld'
   })
 
-  assert.deepEqual(requests, [['@skilld/cli-linux-x64-gnu', 'bin/skilld']])
+  assert.deepEqual(requests, [['skilld-cli-linux-x64-gnu', 'bin/skilld']])
   assert.deepEqual(result, { _tag: 'Native', executable: '/native/skilld' })
 })
 

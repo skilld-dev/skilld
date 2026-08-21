@@ -122,7 +122,7 @@ it('rejects a release when Harness has a different v3 version', async () => {
   const root = await temporaryDirectory()
   await writeReleaseManifests(root, '3.0.0-alpha.2', '2.4.0')
   await writeFile(join(root, 'packages/harness/package.json'), JSON.stringify({
-    name: '@skilld/harness',
+    name: 'skilld-harness',
     version: '3.0.0-alpha.1',
   }))
 
@@ -190,9 +190,9 @@ it('fails when the registry returns another package version', () => {
 
 it('skips a shared package that a partial release already published', () => {
   const decision = packagePublishDecision({
-    packageName: '@skilld/cli-linux-x64-gnu',
+    packageName: 'skilld-cli-linux-x64-gnu',
     response: {
-      body: { name: '@skilld/cli-linux-x64-gnu', version: '3.0.0-alpha.1' },
+      body: { name: 'skilld-cli-linux-x64-gnu', version: '3.0.0-alpha.1' },
       status: 200,
     },
     version: '3.0.0-alpha.1',
@@ -200,7 +200,7 @@ it('skips a shared package that a partial release already published', () => {
 
   assert.deepEqual(decision, {
     _tag: 'Skip',
-    packageName: '@skilld/cli-linux-x64-gnu',
+    packageName: 'skilld-cli-linux-x64-gnu',
     version: '3.0.0-alpha.1',
   })
 })
@@ -237,7 +237,7 @@ async function writeNativePackage(root, spec) {
 async function writeReleaseManifests(root, sharedVersion, protocolVersion) {
   const manifests = [
     ['package.json', { name: 'skilld', version: sharedVersion }],
-    ['packages/harness/package.json', { name: '@skilld/harness', version: sharedVersion }],
+    ['packages/harness/package.json', { name: 'skilld-harness', version: sharedVersion }],
     ['packages/protocol/package.json', { name: 'skilld-protocol', version: protocolVersion }],
     ...nativePackageSpecs.map(spec => [
       `packages/${spec.directory}/package.json`,

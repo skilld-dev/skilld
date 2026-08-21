@@ -1,4 +1,4 @@
-# @skilld/harness
+# skilld-harness
 
 Run visible skilld-maintained Skills through an AI SDK Harness.
 
@@ -8,7 +8,7 @@ It then promotes generated Skills with an atomic directory rename.
 ## Install
 
 ```sh
-pnpm add @skilld/harness @ai-sdk/harness ws zod
+pnpm add skilld-harness @ai-sdk/harness ws zod
 ```
 
 Use Node 22 or newer.
@@ -17,7 +17,7 @@ The sandbox must provide POSIX `sh`, `rm`, `mkdir`, and GNU `find`.
 ## Run a Skill
 
 ```ts
-import { createSkillHarness } from '@skilld/harness'
+import { createSkillHarness } from 'skilld-harness'
 
 const skillHarness = createSkillHarness({
   harness,
@@ -42,13 +42,13 @@ The default adapter uses the Node global fetch implementation.
 
 ## Visible Skills
 
-Import `@skilld/harness/skills` to load the published Skill instructions.
+Import `skilld-harness/skills` to load the published Skill instructions.
 
 ```ts
 import {
   loadSkilldMaintainedSkill,
   skilldMaintainedSkillNames,
-} from '@skilld/harness/skills'
+} from 'skilld-harness/skills'
 
 const names = await skilldMaintainedSkillNames()
 const skill = await loadSkilldMaintainedSkill('generate-project-skill')

@@ -11,8 +11,8 @@ Every public export, command, error, route, and document uses these terms.
 | Skill | Agent Skills specification | external standard | Agent, skilld CLI, Harness | Skill |
 | skilld-maintained Skill | `skills/*` | published asset | Agent, Harness | skilld-maintained Skill |
 | skilld CLI | `skilld` | published CLI | developer, CI | skilld CLI |
-| Harness | `@skilld/harness` | published package | application, CI | Harness |
-| Skill run | `@skilld/harness` | published type | Harness consumer | Skill run |
+| Harness | `skilld-harness` | published package | application, CI | Harness |
+| Skill run | `skilld-harness` | published type | Harness consumer | Skill run |
 | Repository | GitHub | external standard | skilld.dev, skilld CLI | repository |
 | Account | GitHub and skilld.dev | external standard | GitHub App, skilld.dev | account |
 | Artifact | `skilld.dev/api/v1` | published protocol | skilld CLI | Artifact |
@@ -106,7 +106,7 @@ None recorded.
 
 **Is:** the JavaScript package that runs skilld-maintained Skills with strict output checks.
 
-**Use for:** `@skilld/harness` and its public interface.
+**Use for:** `skilld-harness` and its public interface.
 
 **Never:** CLI engine, generator CLI, manager runtime.
 

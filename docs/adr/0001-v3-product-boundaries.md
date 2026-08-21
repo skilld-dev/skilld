@@ -16,7 +16,7 @@ The combined runtime also makes management slower and harder to port.
 
 The skilld CLI becomes Rust.
 
-Generation moves to visible skilld-maintained Skills and the JavaScript `@skilld/harness` package.
+Generation moves to visible skilld-maintained Skills and the JavaScript `skilld-harness` package.
 
 skilld-maintained Skills remain usable directly through an Agent.
 

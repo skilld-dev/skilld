@@ -37,24 +37,24 @@
     "node": ">=18.18.0"
   },
   "scripts": {
-    "build": "pnpm --filter skilld-protocol build && pnpm --filter @skilld/harness build && cargo build --workspace",
+    "build": "pnpm --filter skilld-protocol build && pnpm --filter skilld-harness build && cargo build --workspace",
     "lint": "eslint . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
     "lint:fix": "eslint . --fix && cargo fmt --all",
-    "typecheck": "pnpm --filter skilld-protocol typecheck && pnpm --filter @skilld/harness typecheck",
+    "typecheck": "pnpm --filter skilld-protocol typecheck && pnpm --filter skilld-harness typecheck",
     "test": "vitest",
-    "test:run": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter @skilld/harness test:run && cargo test --workspace",
+    "test:run": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run && cargo test --workspace",
     "prepack": "pnpm test:loader",
     "test:loader": "vitest run --config vitest.config.mjs"
   },
   "optionalDependencies": {
-    "@skilld/cli-darwin-arm64": "workspace:3.0.0-beta.0",
-    "@skilld/cli-darwin-x64": "workspace:3.0.0-beta.0",
-    "@skilld/cli-linux-arm64-gnu": "workspace:3.0.0-beta.0",
-    "@skilld/cli-linux-arm64-musl": "workspace:3.0.0-beta.0",
-    "@skilld/cli-linux-x64-gnu": "workspace:3.0.0-beta.0",
-    "@skilld/cli-linux-x64-musl": "workspace:3.0.0-beta.0",
-    "@skilld/cli-win32-arm64-msvc": "workspace:3.0.0-beta.0",
-    "@skilld/cli-win32-x64-msvc": "workspace:3.0.0-beta.0"
+    "skilld-cli-darwin-arm64": "workspace:3.0.0-beta.0",
+    "skilld-cli-darwin-x64": "workspace:3.0.0-beta.0",
+    "skilld-cli-linux-arm64-gnu": "workspace:3.0.0-beta.0",
+    "skilld-cli-linux-arm64-musl": "workspace:3.0.0-beta.0",
+    "skilld-cli-linux-x64-gnu": "workspace:3.0.0-beta.0",
+    "skilld-cli-linux-x64-musl": "workspace:3.0.0-beta.0",
+    "skilld-cli-win32-arm64-msvc": "workspace:3.0.0-beta.0",
+    "skilld-cli-win32-x64-msvc": "workspace:3.0.0-beta.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
