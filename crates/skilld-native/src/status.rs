@@ -204,9 +204,11 @@ pub struct OutdatedProgressLine {
 }
 
 impl OutdatedProgressLine {
-    pub fn for_terminal(is_terminal: bool) -> Self {
+    /// Progress streams only for humans on a terminal. Agents, CI, and pipes
+    /// get quiet stderr.
+    pub fn for_terminal(is_terminal: bool, active_agent: bool) -> Self {
         Self {
-            enabled: is_terminal,
+            enabled: is_terminal && !active_agent,
             frame: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -371,6 +373,23 @@ mod tests {
             ),
             line if !line.is_disabled()
         ));
+    }
+
+    #[test]
+    fn outdated_progress_stays_quiet_for_agents() {
+        use skilld_command::OutdatedProgress;
+
+        let agent = super::OutdatedProgressLine::for_terminal(true, true);
+        agent.found("example (project scope)");
+        agent.checking("example");
+        agent.finish();
+        assert!(!agent.enabled);
+
+        let human = super::OutdatedProgressLine::for_terminal(true, false);
+        assert!(human.enabled);
+
+        let piped = super::OutdatedProgressLine::for_terminal(false, false);
+        assert!(!piped.enabled);
     }
 
     struct Writer(std::sync::Arc<Mutex<Vec<u8>>>);

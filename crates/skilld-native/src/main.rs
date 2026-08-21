@@ -75,6 +75,7 @@ fn main() -> ExitCode {
     {
         host.with_outdated_progress(Arc::new(status::OutdatedProgressLine::for_terminal(
             std::io::stderr().is_terminal(),
+            active_agent_detected(),
         )))
     } else {
         host
