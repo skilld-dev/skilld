@@ -22,7 +22,7 @@ const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_RETRIES: usize = 2;
 const MAX_POLLS: usize = 120;
-const MAX_POLL_DURATION_MS: u64 = 10 * 60 * 1_000;
+const MAX_POLL_DURATION_MS: u64 = 60 * 1_000;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -431,12 +431,7 @@ impl SkilldRemote {
                     poll_duration_ms = poll_duration_ms
                         .checked_add(poll_after_ms)
                         .filter(|duration| *duration <= MAX_POLL_DURATION_MS)
-                        .ok_or_else(|| {
-                            RemoteError::new(
-                                "RESOLUTION_TIMEOUT",
-                                "the Resolution exceeded the poll duration",
-                            )
-                        })?;
+                        .ok_or_else(resolution_timeout)?;
                     self.sleeper.sleep(
                         Duration::from_millis(poll_after_ms),
                         self.cancellation.as_ref(),
@@ -479,10 +474,7 @@ impl SkilldRemote {
                 }
             }
         }
-        Err(RemoteError::new(
-            "RESOLUTION_TIMEOUT",
-            "the Resolution did not finish within the poll limit",
-        ))
+        Err(resolution_timeout())
     }
 
     fn grant(&self, artifact_id: &str) -> Result<ArtifactGrant, RemoteError> {
@@ -970,6 +962,13 @@ fn valid_resolution_id(value: &str) -> bool {
 
 fn cancelled() -> RemoteError {
     RemoteError::new("CANCELLED", "the remote operation was cancelled")
+}
+
+fn resolution_timeout() -> RemoteError {
+    RemoteError::new(
+        "RESOLUTION_TIMEOUT",
+        "Artifact creation stayed pending too long. Retry the same command.",
+    )
 }
 
 fn invalid_github() -> RemoteError {

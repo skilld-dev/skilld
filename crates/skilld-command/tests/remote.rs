@@ -74,6 +74,25 @@ impl Sleeper for NoSleep {
     }
 }
 
+#[derive(Default)]
+struct RecordingSleeper {
+    elapsed: Mutex<Duration>,
+}
+
+impl Sleeper for RecordingSleeper {
+    fn sleep(
+        &self,
+        duration: Duration,
+        cancellation: &dyn Cancellation,
+    ) -> Result<(), RemoteError> {
+        if cancellation.is_cancelled() {
+            return Err(RemoteError::new("CANCELLED", "cancelled"));
+        }
+        *self.elapsed.lock().unwrap() += duration;
+        Ok(())
+    }
+}
+
 struct FixedToken;
 
 impl TokenProvider for FixedToken {
@@ -349,6 +368,43 @@ fn a_resolution_cannot_change_its_identity_while_polling() {
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
     assert_eq!(error.code, "INVALID_RESPONSE");
+}
+
+#[test]
+fn a_pending_resolution_times_out_after_at_most_sixty_seconds() {
+    let resolution_id = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
+    let pending = || {
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "state": "pending",
+                "resolutionId": resolution_id,
+                "stage": "checking",
+                "pollAfterMs": 30_000
+            }))
+            .unwrap(),
+        )
+    };
+    let http = Arc::new(FakeHttp::with([pending(), pending(), pending()]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(sleeper.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "RESOLUTION_TIMEOUT");
+    assert_eq!(
+        error.message,
+        "Artifact creation stayed pending too long. Retry the same command."
+    );
+    assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(60));
+    assert_eq!(http.requests.lock().unwrap().len(), 3);
 }
 
 #[test]
