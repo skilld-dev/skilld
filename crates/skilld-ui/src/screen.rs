@@ -13,6 +13,45 @@ pub const GLYPH_SUCCESS: &str = "✓";
 pub const GLYPH_WARN: &str = "⚠";
 /// The failure glyph prefixing errors and required action.
 pub const GLYPH_ERROR: &str = "✗";
+/// The neutral glyph prefixing informational rows.
+pub const GLYPH_NOTE: &str = "•";
+
+/// A marker selects the glyph and role for a row or group heading.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Marker {
+    /// Completed work: green check.
+    Success,
+    /// Attention: yellow warning.
+    Warn,
+    /// Failure: red cross.
+    Error,
+    /// Information: brand bullet.
+    Note,
+}
+
+impl Marker {
+    const fn glyph(self) -> &'static str {
+        match self {
+            Self::Success => GLYPH_SUCCESS,
+            Self::Warn => GLYPH_WARN,
+            Self::Error => GLYPH_ERROR,
+            Self::Note => GLYPH_NOTE,
+        }
+    }
+
+    const fn role(self) -> Role {
+        match self {
+            Self::Success => Role::Success,
+            Self::Warn => Role::Warn,
+            Self::Error => Role::Error,
+            Self::Note => Role::Brand,
+        }
+    }
+
+    fn paint_glyph(self, color: bool) -> String {
+        paint(self.glyph(), self.role(), color)
+    }
+}
 
 /// One rendered output document.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -108,6 +147,25 @@ pub enum LineKind {
         value: String,
         /// A terminal hyperlink target for the value, used when color is on.
         url: Option<String>,
+    },
+    /// One titled row with indented detail rows underneath. The Plain text
+    /// may span several sentences joined by newlines; Human renders the
+    /// title row once, then each detail on its own line.
+    Record {
+        marker: Marker,
+        title: String,
+        /// A dim badge after the title, such as an Agent list or state.
+        status: Option<String>,
+        /// Labelled detail rows shown under the title.
+        details: Vec<(&'static str, String)>,
+    },
+    /// A heading plus one row per item, so long name lists stay scannable.
+    /// The Plain text is the full sentence with every name inline.
+    Group {
+        marker: Marker,
+        heading: String,
+        /// One (name, meta) pair per rendered row.
+        items: Vec<(String, String)>,
     },
 }
 
@@ -213,6 +271,45 @@ impl Line {
         &self.plain
     }
 
+    /// A record row: `glyph title  status` with labelled detail rows
+    /// underneath. `plain` is the exact machine sentence, which may join
+    /// several sentences with newlines.
+    pub fn record(
+        marker: Marker,
+        plain: impl Into<String>,
+        title: impl Into<String>,
+        status: Option<String>,
+        details: Vec<(&'static str, String)>,
+    ) -> Self {
+        Self {
+            plain: plain.into(),
+            kind: LineKind::Record {
+                marker,
+                title: title.into(),
+                status,
+                details,
+            },
+        }
+    }
+
+    /// A group heading with one row per item. `plain` is the exact machine
+    /// sentence with every name inline.
+    pub fn group(
+        marker: Marker,
+        plain: impl Into<String>,
+        heading: impl Into<String>,
+        items: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            plain: plain.into(),
+            kind: LineKind::Group {
+                marker,
+                heading: heading.into(),
+                items,
+            },
+        }
+    }
+
     fn field_label(&self) -> Option<&str> {
         match &self.kind {
             LineKind::Field { label, .. } => Some(label),
@@ -236,6 +333,45 @@ impl Line {
                 };
                 format!("{}: {value}", paint(&label, Role::Dim, color))
             }
+            LineKind::Record {
+                marker,
+                title,
+                status,
+                details,
+            } => {
+                let mut output = format!("{} {title}", marker.paint_glyph(color));
+                if let Some(status) = status {
+                    output.push_str(&format!("  {}", paint(status, Role::Dim, color)));
+                }
+                let label_width = details
+                    .iter()
+                    .map(|(label, _)| width(label))
+                    .max()
+                    .unwrap_or(0);
+                for (label, value) in details {
+                    let label = pad_to(label, label_width);
+                    output.push('\n');
+                    output.push_str(&format!("  {}  {value}", paint(&label, Role::Dim, color)));
+                }
+                output
+            }
+            LineKind::Group {
+                marker,
+                heading,
+                items,
+            } => {
+                let mut output = format!("{} {heading}", marker.paint_glyph(color));
+                let name_width = items.iter().map(|(name, _)| width(name)).max().unwrap_or(0);
+                for (name, meta) in items {
+                    output.push('\n');
+                    let name = pad_to(name, name_width);
+                    output.push_str(&format!("  {name}"));
+                    if !meta.is_empty() {
+                        output.push_str(&format!("  {}", paint(meta, Role::Dim, color)));
+                    }
+                }
+                output
+            }
         }
     }
 }
@@ -257,7 +393,7 @@ pub(crate) fn has_hyperlink(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Screen, has_hyperlink};
+    use super::{Line, Marker, Screen, has_hyperlink};
 
     #[test]
     fn plain_rendering_matches_the_machine_contract() {
@@ -300,6 +436,78 @@ mod tests {
         assert!(!has_hyperlink(&mono));
         assert!(colored.contains("https://github.com/skilld-dev/skilld"));
         assert_eq!(mono, "Source: skilld-dev/skilld\n");
+    }
+
+    #[test]
+    fn records_render_a_title_row_with_aligned_details() {
+        let line = Line::record(
+            Marker::Warn,
+            "Unmanaged Skill vue-testing (claude-code). Candidate source sel, 0 stars.\nDelete /tmp/x, then run skilld install sel.",
+            "vue-testing",
+            Some("claude-code · unmanaged".to_owned()),
+            vec![
+                ("candidate", "sel".to_owned()),
+                ("install", "skilld install sel".to_owned()),
+            ],
+        );
+
+        assert_eq!(
+            line.render_human(false, 0),
+            concat!(
+                "⚠ vue-testing  claude-code · unmanaged\n",
+                "  candidate  sel\n",
+                "  install    skilld install sel"
+            )
+        );
+    }
+
+    #[test]
+    fn groups_render_one_row_per_item_with_aligned_names() {
+        let line = Line::group(
+            Marker::Warn,
+            "No Repository match for 2 Skills (b (codex), longer-name (amp)).",
+            "No Repository match for 2 Skills",
+            vec![
+                ("b".to_owned(), "codex".to_owned()),
+                ("longer-name".to_owned(), "amp".to_owned()),
+            ],
+        );
+
+        assert_eq!(
+            line.render_human(false, 0),
+            concat!(
+                "⚠ No Repository match for 2 Skills\n",
+                "  b            codex\n",
+                "  longer-name  amp"
+            )
+        );
+    }
+
+    #[test]
+    fn records_and_groups_keep_their_plain_sentences() {
+        let screen = Screen::new(vec![
+            Line::record(
+                Marker::Note,
+                "Local Skill example.",
+                "example",
+                Some("local".to_owned()),
+                Vec::new(),
+            ),
+            Line::group(
+                Marker::Warn,
+                "No Repository match for 1 Skill (b (codex)).",
+                "No Repository match for 1 Skill",
+                vec![("b".to_owned(), "codex".to_owned())],
+            ),
+        ]);
+
+        assert_eq!(
+            screen.render_plain(),
+            concat!(
+                "Local Skill example.\n",
+                "No Repository match for 1 Skill (b (codex)).\n"
+            )
+        );
     }
 
     #[test]

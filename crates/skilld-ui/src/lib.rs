@@ -10,7 +10,7 @@ pub mod text;
 pub mod theme;
 pub mod time;
 
-pub use screen::{Line, LineKind, Screen, plain_lines};
+pub use screen::{Line, LineKind, Marker, Screen, plain_lines};
 pub use theme::{RESET, Role, paint};
 pub use time::relative_time;
 

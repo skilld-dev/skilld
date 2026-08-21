@@ -794,8 +794,9 @@ impl LocalStore {
             ));
         }
         let bytes = fs::read(&path).map_err(fs_error)?;
-        let document: LockDocument = serde_json::from_slice(&bytes)
-            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        let document: LockDocument = serde_json::from_slice(&bytes).map_err(|_| {
+            StoreError::InvalidLockfile("the Skill lockfile is not valid JSON".to_owned())
+        })?;
         if document.version != 1 {
             return Err(StoreError::InvalidLockfile(format!(
                 "unsupported Skill lockfile version: {}",

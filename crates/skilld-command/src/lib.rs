@@ -34,7 +34,7 @@ use skilld_core::{
     UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
     classify_update_comparison, select_target_ids,
 };
-use skilld_ui::{Line, Screen};
+use skilld_ui::{Line, Marker, Screen};
 
 use output::{
     OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
@@ -2317,18 +2317,35 @@ impl LocalHost {
                     });
                 match state {
                     Ok(RemoteSourceState::Current) => {
-                        vec![Line::success(format!("Current Skill {name}."))]
+                        vec![Line::record(
+                            Marker::Success,
+                            format!("Current Skill {name}."),
+                            name,
+                            Some("current".to_owned()),
+                            Vec::new(),
+                        )]
                     }
                     Ok(RemoteSourceState::Stale { .. }) => {
-                        vec![Line::warn(format!(
-                            "Outdated Skill {name}. Run skilld update {name}{global}."
-                        ))]
+                        let update = format!("skilld update {name}{global}");
+                        vec![Line::record(
+                            Marker::Warn,
+                            format!("Outdated Skill {name}. Run {update}."),
+                            name,
+                            Some("outdated".to_owned()),
+                            vec![("update", update)],
+                        )]
                     }
                     Err(error) => {
-                        vec![Line::error(format!(
-                            "Source state unavailable for Skill {name}: {}.",
-                            error.message
-                        ))]
+                        vec![Line::record(
+                            Marker::Error,
+                            format!(
+                                "Source state unavailable for Skill {name}: {}.",
+                                error.message
+                            ),
+                            name,
+                            Some("source unavailable".to_owned()),
+                            vec![("error", error.message.clone())],
+                        )]
                     }
                 }
             }
@@ -2340,14 +2357,29 @@ impl LocalHost {
                     .map(|locked| locked.agent)
                     .collect::<Vec<_>>();
                 let agent_flags = outdated::agent_flags(&agents);
-                vec![Line::warn(format!(
-                    "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to update it."
-                ))]
+                let install = format!("skilld install {source} --direct{global}{agent_flags}");
+                vec![Line::record(
+                    Marker::Warn,
+                    format!("Unverified Skill {name}. Run {install} to update it."),
+                    name,
+                    Some("unverified".to_owned()),
+                    vec![("install", install)],
+                )]
             }
-            (LockedSource::BundledSkilld, _) => {
-                vec![Line::plain(format!("skilld-maintained Skill {name}."))]
-            }
-            _ => vec![Line::plain(format!("Local Skill {name}."))],
+            (LockedSource::BundledSkilld, _) => vec![Line::record(
+                Marker::Note,
+                format!("skilld-maintained Skill {name}."),
+                name,
+                Some("skilld-maintained".to_owned()),
+                Vec::new(),
+            )],
+            _ => vec![Line::record(
+                Marker::Note,
+                format!("Local Skill {name}."),
+                name,
+                Some("local".to_owned()),
+                Vec::new(),
+            )],
         }
     }
 
