@@ -621,6 +621,39 @@ impl InteractiveUpdateSummary {
         summary
     }
 
+    /// The exit summary with the terminal theme; `render` stays plain for
+    /// tests and non-terminal hosts.
+    pub fn render_styled(&self, color: bool) -> String {
+        let glyph =
+            |symbol: &str, role: skilld_ui::Role| skilld_ui::theme::paint(symbol, role, color);
+        if self.all_current {
+            return format!(
+                "{} All installed Skills are current.\n",
+                glyph("✓", skilld_ui::Role::Success)
+            );
+        }
+        if self.cancelled {
+            return "Skill update cancelled.\n".to_owned();
+        }
+        let updated = skill_count(self.updated);
+        let mut summary = format!(
+            "{} Updated {updated}.\n",
+            glyph("✓", skilld_ui::Role::Success)
+        );
+        for (name, error) in &self.failures {
+            summary.push_str(&format!(
+                "{} Failed Skill {name}: {}\n",
+                glyph("✗", skilld_ui::Role::Error),
+                error.message
+            ));
+            summary.push_str(&format!(
+                "  {}\n",
+                skilld_ui::theme::paint(&error.code, skilld_ui::Role::Dim, color)
+            ));
+        }
+        summary
+    }
+
     pub fn exit_code(&self) -> u8 {
         if self.interrupted {
             130
@@ -1755,12 +1788,15 @@ fn terminal_lost(_error: io::Error) -> InteractiveUpdateError {
 
 pub fn write_static_summary(
     summary: &InteractiveUpdateSummary,
+    color: bool,
     output: &mut impl Write,
 ) -> Result<(), InteractiveUpdateError> {
-    output.write_all(summary.render().as_bytes()).map_err(|_| {
-        InteractiveUpdateError::terminal(
-            "TERMINAL_UNAVAILABLE",
-            "The Skill update summary could not be written.",
-        )
-    })
+    output
+        .write_all(summary.render_styled(color).as_bytes())
+        .map_err(|_| {
+            InteractiveUpdateError::terminal(
+                "TERMINAL_UNAVAILABLE",
+                "The Skill update summary could not be written.",
+            )
+        })
 }

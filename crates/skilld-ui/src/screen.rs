@@ -157,7 +157,7 @@ pub enum LineKind {
         /// A dim badge after the title, such as an Agent list or state.
         status: Option<String>,
         /// Labelled detail rows shown under the title.
-        details: Vec<(&'static str, String)>,
+        details: Vec<Detail>,
     },
     /// A heading plus one row per item, so long name lists stay scannable.
     /// The Plain text is the full sentence with every name inline.
@@ -167,6 +167,58 @@ pub enum LineKind {
         /// One (name, meta) pair per rendered row.
         items: Vec<(String, String)>,
     },
+}
+
+/// How a record detail value renders for humans. The class, not the text,
+/// decides the look, the way syntax highlighting classes tokens.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DetailKind {
+    /// Unstyled text.
+    Plain,
+    /// A command the user can type: highlighted as code.
+    Command,
+    /// A filesystem path: dimmed.
+    Path,
+}
+
+/// One labelled row under a record title.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Detail {
+    /// The dim label.
+    pub label: &'static str,
+    /// The row value.
+    pub value: String,
+    /// How the value renders.
+    pub kind: DetailKind,
+}
+
+impl Detail {
+    /// An unstyled detail row.
+    pub fn plain(label: &'static str, value: impl Into<String>) -> Self {
+        Self {
+            label,
+            value: value.into(),
+            kind: DetailKind::Plain,
+        }
+    }
+
+    /// A command the user can type. Rendered as highlighted code.
+    pub fn command(label: &'static str, value: impl Into<String>) -> Self {
+        Self {
+            label,
+            value: value.into(),
+            kind: DetailKind::Command,
+        }
+    }
+
+    /// A filesystem path. Rendered dim.
+    pub fn path(label: &'static str, value: impl Into<String>) -> Self {
+        Self {
+            label,
+            value: value.into(),
+            kind: DetailKind::Path,
+        }
+    }
 }
 
 impl Line {
@@ -279,7 +331,7 @@ impl Line {
         plain: impl Into<String>,
         title: impl Into<String>,
         status: Option<String>,
-        details: Vec<(&'static str, String)>,
+        details: Vec<Detail>,
     ) -> Self {
         Self {
             plain: plain.into(),
@@ -345,13 +397,18 @@ impl Line {
                 }
                 let label_width = details
                     .iter()
-                    .map(|(label, _)| width(label))
+                    .map(|detail| width(detail.label))
                     .max()
                     .unwrap_or(0);
-                for (label, value) in details {
-                    let label = pad_to(label, label_width);
+                for detail in details {
+                    let label = pad_to(detail.label, label_width);
+                    let value = match detail.kind {
+                        DetailKind::Plain => detail.value.clone(),
+                        DetailKind::Command => crate::spans::paint_command(&detail.value, color),
+                        DetailKind::Path => paint(&detail.value, Role::Dim, color),
+                    };
                     output.push('\n');
-                    output.push_str(&format!("  {}  {value}", paint(&label, Role::Dim, color)));
+                    output.push_str(&format!("  {label}  {value}"));
                 }
                 output
             }
@@ -393,7 +450,7 @@ pub(crate) fn has_hyperlink(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Marker, Screen, has_hyperlink};
+    use super::{Detail, Line, Marker, Screen, has_hyperlink};
 
     #[test]
     fn plain_rendering_matches_the_machine_contract() {
@@ -446,8 +503,8 @@ mod tests {
             "vue-testing",
             Some("claude-code · unmanaged".to_owned()),
             vec![
-                ("candidate", "sel".to_owned()),
-                ("install", "skilld install sel".to_owned()),
+                Detail::plain("candidate", "sel"),
+                Detail::command("install", "skilld install sel"),
             ],
         );
 

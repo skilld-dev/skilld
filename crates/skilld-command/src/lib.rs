@@ -34,7 +34,7 @@ use skilld_core::{
     UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
     classify_update_comparison, select_target_ids,
 };
-use skilld_ui::{Line, Marker, Screen};
+use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
     OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
@@ -1868,9 +1868,11 @@ impl Host for LocalHost {
             let mut failures = BTreeMap::<String, Vec<&outdated::UnmanagedSkill>>::new();
             for (skill, result) in unmanaged.iter().zip(results) {
                 match result {
-                    Ok(Some(candidate)) => {
-                        lines.extend(outdated::render_unmanaged(skill, Some(&candidate)))
-                    }
+                    Ok(Some(candidate)) => lines.extend(outdated::render_unmanaged(
+                        skill,
+                        Some(&candidate),
+                        &self.project_root,
+                    )),
                     Ok(None) => no_match.push(skill),
                     Err(error) => failures.entry(error.message).or_default().push(skill),
                 }
@@ -2332,7 +2334,7 @@ impl LocalHost {
                             format!("Outdated Skill {name}. Run {update}."),
                             name,
                             Some("outdated".to_owned()),
-                            vec![("update", update)],
+                            vec![Detail::command("update", update)],
                         )]
                     }
                     Err(error) => {
@@ -2344,7 +2346,7 @@ impl LocalHost {
                             ),
                             name,
                             Some("source unavailable".to_owned()),
-                            vec![("error", error.message.clone())],
+                            vec![Detail::plain("error", error.message.clone())],
                         )]
                     }
                 }
@@ -2363,7 +2365,7 @@ impl LocalHost {
                     format!("Unverified Skill {name}. Run {install} to update it."),
                     name,
                     Some("unverified".to_owned()),
-                    vec![("install", install)],
+                    vec![Detail::command("install", install)],
                 )]
             }
             (LockedSource::BundledSkilld, _) => vec![Line::record(

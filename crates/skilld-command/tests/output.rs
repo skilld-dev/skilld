@@ -237,7 +237,7 @@ fn human_search_is_polished_and_respects_terminal_width() {
     assert!(stdout.contains("1 of 14 Skills"));
     assert!(stdout.contains("227,068 stars"));
     assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
-    assert!(stdout.contains("Install: skilld install"));
+    assert!(stdout.contains("skilld install"));
     assert!(
         stdout
             .lines()

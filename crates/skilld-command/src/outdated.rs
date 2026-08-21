@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use skilld_core::{AgentTargetId, InstallScope, SkillName};
-use skilld_ui::text::grouped_number;
-use skilld_ui::{Line, Marker};
+use skilld_ui::text::{display_path, grouped_number};
+use skilld_ui::{Detail, Line, Marker};
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
@@ -187,6 +187,7 @@ fn skill_count(count: usize) -> String {
 pub(crate) fn render_unmanaged(
     skill: &UnmanagedSkill,
     candidate: Option<&SkillCandidate>,
+    display_base: &Path,
 ) -> Vec<Line> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
@@ -212,13 +213,13 @@ pub(crate) fn render_unmanaged(
         skill.name.clone(),
         Some(format!("{agents} · unmanaged")),
         vec![
-            ("candidate", candidate.selector.clone()),
-            (
+            Detail::plain("candidate", candidate.selector.clone()),
+            Detail::plain(
                 "stars",
                 format!("★ {}", grouped_number(candidate.stargazer_count)),
             ),
-            ("install", install),
-            ("delete", skill.path.display().to_string()),
+            Detail::command("install", install),
+            Detail::path("delete", display_path(&skill.path, display_base)),
         ],
     )]
 }

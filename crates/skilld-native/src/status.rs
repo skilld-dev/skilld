@@ -245,6 +245,7 @@ impl skilld_command::OutdatedProgress for OutdatedProgressLine {
         }
         let frame = spinner::frame(self.frame.fetch_add(1, Ordering::Relaxed));
         let glyph = paint(frame, Role::Brand, self.color);
+        let name = paint(name, Role::Emphasis, self.color);
         let mut stderr = std::io::stderr().lock();
         let _ = write!(stderr, "\r\x1b[2K{glyph} Checking {name}…");
         let _ = stderr.flush();
