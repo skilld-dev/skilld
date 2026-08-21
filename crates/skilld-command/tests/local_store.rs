@@ -4,15 +4,414 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use skilld_command::{LocalStore, ResolvedTarget, StoreError, TargetInstall, TransactionGate};
+use skilld_command::{
+    LocalStore, PreparedStoreUpdate, ResolvedTarget, StoreError, TargetInstall, TransactionGate,
+};
 use skilld_core::{AgentTargetId, InstallMode, LockedSource, SkillName};
 
 fn source(root: &Path, parent: &str, content: &str) -> PathBuf {
-    let path = root.join(parent).join("example");
+    named_source(root, parent, "example", content)
+}
+
+fn named_source(root: &Path, parent: &str, name: &str, content: &str) -> PathBuf {
+    let path = root.join(parent).join(name);
     fs::create_dir_all(path.join("references")).unwrap();
-    fs::write(path.join("SKILL.md"), skill_text(content)).unwrap();
+    fs::write(
+        path.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: Test fixture.\n---\n\n{content}\n"),
+    )
+    .unwrap();
     fs::write(path.join("references/check.md"), "check").unwrap();
     path
+}
+
+#[test]
+fn multi_skill_batch_commits_every_skill() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let beta = named_source(temporary.path(), "old-beta", "beta", "old beta");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let new_beta = named_source(temporary.path(), "new-beta", "beta", "new beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let alpha_view = store
+        .view(
+            &SkillName::parse("alpha").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let beta_view = store
+        .view(
+            &SkillName::parse("beta").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let updated = store
+        .apply_update_batch(
+            vec![
+                PreparedStoreUpdate {
+                    source: new_alpha,
+                    locked_source: local_source(&alpha),
+                    source_status: None,
+                    targets: vec![install.clone()],
+                    expected_transaction_id: alpha_view.transaction_id,
+                    expected_skill: alpha_view.skill,
+                },
+                PreparedStoreUpdate {
+                    source: new_beta,
+                    locked_source: local_source(&beta),
+                    source_status: None,
+                    targets: vec![install],
+                    expected_transaction_id: beta_view.transaction_id,
+                    expected_skill: beta_view.skill,
+                },
+            ],
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+
+    assert_eq!(
+        updated.iter().map(SkillName::as_str).collect::<Vec<_>>(),
+        ["alpha", "beta"]
+    );
+    assert_eq!(
+        fs::read_to_string(store.root().join("alpha/SKILL.md")).unwrap(),
+        "---\nname: alpha\ndescription: Test fixture.\n---\n\nnew alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(target.root.join("beta/SKILL.md")).unwrap(),
+        "---\nname: beta\ndescription: Test fixture.\n---\n\nnew beta\n"
+    );
+}
+
+#[test]
+fn multi_skill_batch_rolls_every_skill_back_when_the_lock_write_fails() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let beta = named_source(temporary.path(), "old-beta", "beta", "old beta");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let new_beta = named_source(temporary.path(), "new-beta", "beta", "new beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let alpha_view = store
+        .view(
+            &SkillName::parse("alpha").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let beta_view = store
+        .view(
+            &SkillName::parse("beta").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let before_lock = fs::read(store.root().join("skilld-lock.yaml")).unwrap();
+
+    let error = store
+        .apply_update_batch_with_gate(
+            vec![
+                PreparedStoreUpdate {
+                    source: new_alpha,
+                    locked_source: local_source(&alpha),
+                    source_status: None,
+                    targets: vec![install.clone()],
+                    expected_transaction_id: alpha_view.transaction_id,
+                    expected_skill: alpha_view.skill,
+                },
+                PreparedStoreUpdate {
+                    source: new_beta,
+                    locked_source: local_source(&beta),
+                    source_status: None,
+                    targets: vec![install],
+                    expected_transaction_id: beta_view.transaction_id,
+                    expected_skill: beta_view.skill,
+                },
+            ],
+            std::slice::from_ref(&target),
+            &RejectLockCommit,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "injected lock failure");
+    for name in ["alpha", "beta"] {
+        let expected =
+            format!("---\nname: {name}\ndescription: Test fixture.\n---\n\nold {name}\n");
+        assert_eq!(
+            fs::read_to_string(store.root().join(name).join("SKILL.md")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            fs::read_to_string(target.root.join(name).join("SKILL.md")).unwrap(),
+            expected
+        );
+    }
+    assert_eq!(
+        fs::read(store.root().join("skilld-lock.yaml")).unwrap(),
+        before_lock
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn multi_skill_batch_rolls_symlink_targets_back_when_the_lock_write_fails() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let beta = named_source(temporary.path(), "old-beta", "beta", "old beta");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let new_beta = named_source(temporary.path(), "new-beta", "beta", "new beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Cursor,
+        temporary.path().join("project/.cursor/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Symlink,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let alpha_view = store
+        .view(
+            &SkillName::parse("alpha").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let beta_view = store
+        .view(
+            &SkillName::parse("beta").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+
+    store
+        .apply_update_batch_with_gate(
+            vec![
+                PreparedStoreUpdate {
+                    source: new_alpha,
+                    locked_source: local_source(&alpha),
+                    source_status: None,
+                    targets: vec![install.clone()],
+                    expected_transaction_id: alpha_view.transaction_id,
+                    expected_skill: alpha_view.skill,
+                },
+                PreparedStoreUpdate {
+                    source: new_beta,
+                    locked_source: local_source(&beta),
+                    source_status: None,
+                    targets: vec![install],
+                    expected_transaction_id: beta_view.transaction_id,
+                    expected_skill: beta_view.skill,
+                },
+            ],
+            std::slice::from_ref(&target),
+            &RejectLockCommit,
+        )
+        .unwrap_err();
+
+    for name in ["alpha", "beta"] {
+        let destination = target.root.join(name);
+        assert!(
+            fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+            format!("---\nname: {name}\ndescription: Test fixture.\n---\n\nold {name}\n")
+        );
+    }
+}
+
+struct PanicBeforeCommit;
+
+impl TransactionGate for PanicBeforeCommit {
+    fn before_lock_commit(&self, _lockfile: &Path) -> Result<(), StoreError> {
+        panic!("simulated process interruption");
+    }
+}
+
+#[test]
+fn next_store_access_recovers_an_interrupted_multi_skill_batch() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let beta = named_source(temporary.path(), "old-beta", "beta", "old beta");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let new_beta = named_source(temporary.path(), "new-beta", "beta", "new beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let alpha_view = store
+        .view(
+            &SkillName::parse("alpha").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let beta_view = store
+        .view(
+            &SkillName::parse("beta").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        store.apply_update_batch_with_gate(
+            vec![
+                PreparedStoreUpdate {
+                    source: new_alpha,
+                    locked_source: local_source(&alpha),
+                    source_status: None,
+                    targets: vec![install.clone()],
+                    expected_transaction_id: alpha_view.transaction_id,
+                    expected_skill: alpha_view.skill,
+                },
+                PreparedStoreUpdate {
+                    source: new_beta,
+                    locked_source: local_source(&beta),
+                    source_status: None,
+                    targets: vec![install],
+                    expected_transaction_id: beta_view.transaction_id,
+                    expected_skill: beta_view.skill,
+                },
+            ],
+            std::slice::from_ref(&target),
+            &PanicBeforeCommit,
+        )
+    }));
+    assert!(interrupted.is_err());
+
+    assert_eq!(
+        store.list(std::slice::from_ref(&target)).unwrap(),
+        ["alpha", "beta"]
+    );
+    for name in ["alpha", "beta"] {
+        let expected =
+            format!("---\nname: {name}\ndescription: Test fixture.\n---\n\nold {name}\n");
+        assert_eq!(
+            fs::read_to_string(store.root().join(name).join("SKILL.md")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            fs::read_to_string(target.root.join(name).join("SKILL.md")).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn multi_skill_batch_rejects_a_stale_store_snapshot() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old_alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let gamma = named_source(temporary.path(), "gamma-source", "gamma", "gamma");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    store
+        .install_from(
+            &old_alpha,
+            local_source(&old_alpha),
+            std::slice::from_ref(&install),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let snapshot = store
+        .view(
+            &SkillName::parse("alpha").unwrap(),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    store
+        .install_from(
+            &gamma,
+            local_source(&gamma),
+            std::slice::from_ref(&install),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+
+    let error = store
+        .apply_update_batch(
+            vec![PreparedStoreUpdate {
+                source: new_alpha,
+                locked_source: local_source(&old_alpha),
+                source_status: None,
+                targets: vec![install],
+                expected_transaction_id: snapshot.transaction_id,
+                expected_skill: snapshot.skill,
+            }],
+            std::slice::from_ref(&target),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code(), "PLAN_STALE");
+    assert_eq!(
+        fs::read_to_string(store.root().join("alpha/SKILL.md")).unwrap(),
+        "---\nname: alpha\ndescription: Test fixture.\n---\n\nold alpha\n"
+    );
 }
 
 fn skill_text(content: &str) -> String {

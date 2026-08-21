@@ -1,6 +1,6 @@
 use clap::error::ErrorKind;
 use serde::Serialize;
-use skilld_core::UpdateCheckV1;
+use skilld_core::UpdatePlanV1;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{CommandError, CommandErrorKind};
@@ -106,7 +106,7 @@ pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8>
 }
 
 pub(crate) fn render_update_check(
-    outcome: &UpdateCheckV1,
+    outcome: &UpdatePlanV1,
     mode: OutputMode,
 ) -> Result<Vec<u8>, CommandError> {
     if mode != OutputMode::JsonV1 {
