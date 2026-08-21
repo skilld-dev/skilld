@@ -152,8 +152,15 @@ impl InstallPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InstallOperation {
+    Install(InstallSource),
+    Restore,
+    DirectRestore,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstallRequest {
-    pub source: Option<InstallSource>,
+    pub operation: InstallOperation,
     pub scope: InstallScope,
     pub targets: Vec<AgentTargetId>,
     pub mode: Option<InstallMode>,

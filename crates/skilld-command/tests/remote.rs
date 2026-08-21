@@ -14,9 +14,9 @@ use skilld_command::{
 };
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
-    CheckResult, InstallMode, InstallRequest, InstallScope, InstallSource, LockedSource,
-    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource, SearchResult,
-    SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
+    CheckResult, InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource,
+    LockedSource, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
+    SearchResult, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -568,10 +568,11 @@ struct FakeProvider {
     content: Mutex<Vec<u8>>,
     stale: Mutex<bool>,
     fail_prepare: Mutex<bool>,
+    prepares: Mutex<Vec<(String, bool)>>,
 }
 
 impl FakeProvider {
-    fn prepared(&self, selector: &RemoteSelector) -> PreparedRemoteSkill {
+    fn prepared(&self, selector: &RemoteSelector, direct: bool) -> PreparedRemoteSkill {
         let bytes = self.content.lock().unwrap().clone();
         let file = PreparedFile {
             path: "SKILL.md".to_owned(),
@@ -586,11 +587,18 @@ impl FakeProvider {
                 commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 skill_path: "skills/example".to_owned(),
             },
-            source_status: SourceStatus::Verified {
-                artifact_id: format!("sha256:{digest}"),
-                content_sha256: digest.clone(),
-                installed_sha256: digest,
-                attestation_key_id: "test-key".to_owned(),
+            source_status: if direct {
+                SourceStatus::Unverified {
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
+                }
+            } else {
+                SourceStatus::Verified {
+                    artifact_id: format!("sha256:{digest}"),
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
+                    attestation_key_id: "test-key".to_owned(),
+                }
             },
         }
     }
@@ -607,12 +615,16 @@ impl RemoteProvider for FakeProvider {
     fn prepare(
         &self,
         selector: &RemoteSelector,
-        _direct: bool,
+        direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
+        self.prepares
+            .lock()
+            .unwrap()
+            .push((selector.canonical(), direct));
         if *self.fail_prepare.lock().unwrap() {
             Err(RemoteError::new("CHECK_BLOCKED", "a required check failed"))
         } else {
-            Ok(self.prepared(selector))
+            Ok(self.prepared(selector, direct))
         }
     }
 
@@ -653,6 +665,7 @@ fn provider(content: &str) -> Arc<FakeProvider> {
         content: Mutex::new(content.as_bytes().to_vec()),
         stale: Mutex::new(false),
         fail_prepare: Mutex::new(false),
+        prepares: Mutex::new(vec![]),
     })
 }
 
@@ -665,7 +678,7 @@ fn verify_reports_changed_bytes_and_stale_sources() {
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
-        source: Some(InstallSource::Remote(
+        operation: InstallOperation::Install(InstallSource::Remote(
             "skilld:skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
@@ -697,7 +710,7 @@ fn remote_install_verify_and_failed_upgrade_use_the_normal_transaction() {
     let provider = provider("---\nname: example\ndescription: first\n---\n");
     let host = LocalHost::new(project.clone(), data).with_remote_provider(provider.clone());
     let request = InstallRequest {
-        source: Some(InstallSource::Remote(
+        operation: InstallOperation::Install(InstallSource::Remote(
             "skilld:skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
@@ -753,4 +766,183 @@ fn cli_direct_install_marks_review_as_required() {
         "Installed Skill example.\nReview the unverified Skill before use.\n"
     );
     assert!(stderr.is_empty());
+}
+
+#[test]
+fn cli_direct_restore_uses_the_locked_commit() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = provider("---\nname: example\ndescription: direct\n---\n");
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let installed = run(
+        [
+            "skilld",
+            "install",
+            "github:skilld-dev/skills/skills/example",
+            "--direct",
+            "--agent",
+            "codex",
+        ],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+    assert_eq!(installed.exit_code, 0);
+    fs::remove_dir_all(project.join(".skills/example")).unwrap();
+    fs::remove_dir_all(project.join(".agents")).unwrap();
+    stdout.clear();
+    stderr.clear();
+
+    let restored = run(
+        ["skilld", "install", "--direct", "--agent", "codex"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(restored.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        "Installed Skill example.\nReview the unverified Skill before use.\n"
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        *provider.prepares.lock().unwrap(),
+        [
+            (
+                "github:skilld-dev/skills/skills/example".to_owned(),
+                true
+            ),
+            (
+                "github:skilld-dev/skills/skills/example#commit:0123456789abcdef0123456789abcdef01234567"
+                    .to_owned(),
+                true
+            )
+        ]
+    );
+    let view = host.view("example", InstallScope::Project).unwrap();
+    assert!(matches!(
+        view.skill.source_status,
+        SourceStatus::Unverified { .. }
+    ));
+    assert!(matches!(
+        view.skill.source,
+        LockedSource::Remote { ref commit_sha, .. }
+            if commit_sha == "0123456789abcdef0123456789abcdef01234567"
+    ));
+    assert_eq!(view.skill.targets[0].agent, AgentTargetId::Codex);
+    assert_eq!(view.skill.targets[0].mode, InstallMode::Copy);
+    assert!(project.join(".agents/skills/example/SKILL.md").exists());
+}
+
+#[test]
+fn cli_plain_restore_rejects_an_unverified_source_with_the_recovery_command() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = provider("---\nname: example\n---\n");
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run(
+            [
+                "skilld",
+                "install",
+                "github:skilld-dev/skills/skills/example",
+                "--direct",
+                "--agent",
+                "codex",
+            ],
+            &host,
+            &mut stdout,
+            &mut stderr,
+        )
+        .exit_code,
+        0
+    );
+    stdout.clear();
+    stderr.clear();
+
+    let restored = run(
+        ["skilld", "install", "--agent", "codex"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(restored.exit_code, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "UNVERIFIED_SOURCE: run skilld install --direct to restore an unverified Skill\n"
+    );
+    assert_eq!(provider.prepares.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn cli_verified_restore_keeps_artifact_delivery() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = provider("---\nname: example\ndescription: verified\n---\n");
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run(
+            [
+                "skilld",
+                "install",
+                "skilld:skilld-dev/skills/example",
+                "--agent",
+                "codex",
+            ],
+            &host,
+            &mut stdout,
+            &mut stderr,
+        )
+        .exit_code,
+        0
+    );
+    fs::remove_dir_all(project.join(".skills/example")).unwrap();
+    fs::remove_dir_all(project.join(".agents")).unwrap();
+    stdout.clear();
+    stderr.clear();
+
+    let restored = run(
+        ["skilld", "install", "--agent", "codex"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(restored.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        "Installed Skill example.\n"
+    );
+    assert!(stderr.is_empty());
+    assert_eq!(
+        *provider.prepares.lock().unwrap(),
+        [
+            ("skilld:skilld-dev/skills/example".to_owned(), false),
+            (
+                "skilld:skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567"
+                    .to_owned(),
+                false
+            )
+        ]
+    );
+    let view = host.view("example", InstallScope::Project).unwrap();
+    assert!(matches!(
+        view.skill.source_status,
+        SourceStatus::Verified { .. }
+    ));
 }
