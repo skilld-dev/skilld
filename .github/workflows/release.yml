@@ -115,6 +115,8 @@ jobs:
             tar -xf "$archive" -C packages
           done < <(find native-artifacts -type f -name '*.tar' | sort)
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:run
       - id: npm_tag
         name: Resolve shared npm tag
         shell: bash
