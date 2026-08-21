@@ -203,10 +203,7 @@ fn command_auth_error(error: AuthError) -> CommandError {
         AuthErrorKind::UnsupportedCapability => "UNSUPPORTED_HOST",
         _ => "SERVICE_UNAVAILABLE",
     };
-    CommandError {
-        code,
-        message: error.message().to_owned(),
-    }
+    CommandError::operation(code, error.message())
 }
 
 fn remote_auth_error(error: AuthError) -> RemoteError {

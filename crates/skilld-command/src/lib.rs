@@ -195,73 +195,88 @@ pub trait Host {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandErrorKind {
+    Usage,
+    Operation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandError {
+    pub kind: CommandErrorKind,
     pub code: &'static str,
     pub message: String,
 }
 
 impl CommandError {
-    pub fn unsupported_host(message: impl Into<String>) -> Self {
+    pub fn usage(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: "UNSUPPORTED_HOST",
+            kind: CommandErrorKind::Usage,
+            code,
             message: message.into(),
         }
+    }
+
+    pub fn operation(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            kind: CommandErrorKind::Operation,
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_host(message: impl Into<String>) -> Self {
+        Self::operation("UNSUPPORTED_HOST", message)
     }
 
     pub fn service(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn not_implemented(message: impl Into<String>) -> Self {
-        Self {
-            code: "NOT_IMPLEMENTED",
-            message: message.into(),
-        }
+        Self::operation("NOT_IMPLEMENTED", message)
     }
 
     pub fn input(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_SOURCE",
-            message: message.into(),
-        }
+        Self::usage("INVALID_SOURCE", message)
     }
 
     pub fn config(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_CONFIG",
-            message: message.into(),
-        }
+        Self::usage("INVALID_CONFIG", message)
     }
 
     pub fn filesystem(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn domain(error: DomainError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::usage(error.code(), error.to_string())
     }
 
     pub fn store(error: StoreError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::operation(error.code(), error.to_string())
     }
 
     pub fn remote(error: skilld_core::RemoteError) -> Self {
+        let kind = if matches!(
+            error.code,
+            "INVALID_SEARCH" | "INVALID_SOURCE" | "DIRECT_SOURCE_REQUIRED"
+        ) {
+            CommandErrorKind::Usage
+        } else {
+            CommandErrorKind::Operation
+        };
         Self {
+            kind,
             code: error.code,
             message: error.message,
+        }
+    }
+
+    fn exit_code(&self) -> u8 {
+        match self.kind {
+            CommandErrorKind::Usage => 2,
+            CommandErrorKind::Operation => 1,
         }
     }
 }
@@ -309,7 +324,14 @@ where
     O: Write,
     E: Write,
 {
-    let cli = match Cli::try_parse_from(args) {
+    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    let (requested_json, requested_plain) = requested_output(&args);
+    let requested_mode = if requested_json && requested_plain {
+        OutputMode::Plain
+    } else {
+        resolve_mode(requested_json, requested_plain, context)
+    };
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
             let display = matches!(
@@ -317,8 +339,33 @@ where
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             );
             let target: &mut dyn Write = if display { stdout } else { stderr };
-            if write!(target, "{error}").is_err() {
-                return CommandResult { exit_code: 2 };
+            let rendered = if requested_mode == OutputMode::JsonV1 {
+                if display {
+                    output::render_display(
+                        error.kind(),
+                        &display_path(&args),
+                        error.to_string().trim(),
+                    )
+                } else {
+                    let message = error
+                        .to_string()
+                        .lines()
+                        .next()
+                        .unwrap_or("invalid command arguments")
+                        .trim_start_matches("error: ")
+                        .to_owned();
+                    render_error(
+                        &CommandError::usage("INVALID_ARGUMENT", message),
+                        requested_mode,
+                    )
+                }
+            } else {
+                error.to_string().into_bytes()
+            };
+            if target.write_all(&rendered).is_err() {
+                return CommandResult {
+                    exit_code: if display { 1 } else { 2 },
+                };
             }
             return CommandResult {
                 exit_code: if display { 0 } else { 2 },
@@ -328,10 +375,10 @@ where
 
     let mode = resolve_mode(cli.json, cli.plain, context);
     if mode == OutputMode::JsonV1 && !matches!(&cli.command, Command::Search { .. }) {
-        let error = CommandError {
-            code: "UNSUPPORTED_OUTPUT",
-            message: "JSON output is available for Skill search only".to_owned(),
-        };
+        let error = CommandError::usage(
+            "UNSUPPORTED_OUTPUT",
+            "JSON output is available for Skill search only",
+        );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
         }
@@ -340,33 +387,87 @@ where
 
     match dispatch(cli.command, host) {
         Ok(CommandOutput::Lines(lines)) => {
+            let mut bytes = Vec::new();
             for line in lines {
-                if writeln!(stdout, "{line}").is_err() {
-                    return CommandResult { exit_code: 2 };
-                }
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
             }
-            CommandResult { exit_code: 0 }
+            write_success(&bytes, mode, stdout, stderr)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
-            Ok(bytes) => match stdout.write_all(&bytes) {
-                Ok(()) => CommandResult { exit_code: 0 },
-                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
-                    CommandResult { exit_code: 0 }
-                }
-                Err(_) => CommandResult { exit_code: 2 },
-            },
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
             Err(error) => {
                 if stderr.write_all(&render_error(&error, mode)).is_err() {
-                    return CommandResult { exit_code: 2 };
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
                 }
-                CommandResult { exit_code: 2 }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
             }
         },
         Err(error) => {
             if stderr.write_all(&render_error(&error, mode)).is_err() {
-                return CommandResult { exit_code: 2 };
+                return CommandResult {
+                    exit_code: error.exit_code(),
+                };
             }
-            CommandResult { exit_code: 2 }
+            CommandResult {
+                exit_code: error.exit_code(),
+            }
+        }
+    }
+}
+
+fn requested_output(args: &[OsString]) -> (bool, bool) {
+    let mut json = false;
+    let mut plain = false;
+    for argument in args.iter().skip(1) {
+        if argument == "--" {
+            break;
+        }
+        if argument == "--json" {
+            json = true;
+        } else if argument == "--plain" {
+            plain = true;
+        }
+    }
+    (json, plain)
+}
+
+fn display_path(args: &[OsString]) -> String {
+    let commands = [
+        "search", "install", "list", "view", "remove", "upgrade", "verify", "auth", "config",
+    ];
+    let mut path = vec!["skilld"];
+    if let Some(command) = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .find(|argument| commands.contains(argument))
+    {
+        path.push(command);
+    }
+    path.join(" ")
+}
+
+fn write_success<O: Write, E: Write>(
+    bytes: &[u8],
+    mode: OutputMode,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult {
+    match stdout.write_all(bytes) {
+        Ok(()) => CommandResult { exit_code: 0 },
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+            CommandResult { exit_code: 0 }
+        }
+        Err(_) => {
+            let error =
+                CommandError::operation("OUTPUT_WRITE_FAILED", "Skill output could not be written");
+            let _ = stderr.write_all(&render_error(&error, mode));
+            CommandResult { exit_code: 1 }
         }
     }
 }
@@ -489,7 +590,13 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             command: ConfigCommand::List,
         } => host.config_list().map(CommandOutput::Lines),
         Command::Search { query } => {
-            let query = query.join(" ");
+            let query = query.join(" ").trim().to_owned();
+            if query.is_empty() || query.len() > 200 {
+                return Err(CommandError::usage(
+                    "INVALID_SEARCH",
+                    "Skill search needs a query up to 200 bytes",
+                ));
+            }
             let response = host.search(&query)?;
             let items = response
                 .items
@@ -562,10 +669,6 @@ impl DetectionEnvironment {
 
     fn has(&self, name: &str) -> bool {
         self.variables.contains(name)
-    }
-
-    pub fn detects_agent(&self) -> bool {
-        !self.variables.is_empty()
     }
 }
 
@@ -822,13 +925,13 @@ impl LocalHost {
         let store = self.store(request.scope);
         let names = store.list(&known).map_err(CommandError::store)?;
         if names.is_empty() {
-            return Err(CommandError {
-                code: "LOCKFILE_NOT_FOUND",
-                message: format!(
+            return Err(CommandError::operation(
+                "LOCKFILE_NOT_FOUND",
+                format!(
                     "no installed Skills exist in {} scope",
                     request.scope.as_str()
                 ),
-            });
+            ));
         }
         let mut restored = Vec::new();
         for name in names {
@@ -877,12 +980,11 @@ impl LocalHost {
                         view.skill.source_status,
                         skilld_core::SourceStatus::Verified { .. }
                     ) {
-                        return Err(CommandError {
-                            code: "UNVERIFIED_SOURCE",
-                            message:
-                                "restore an unverified Skill with an explicit --direct install"
-                                    .to_owned(),
-                        });
+                        return Err(CommandError::operation(
+                            "UNVERIFIED_SOURCE",
+                            "restore an unverified Skill with an explicit --direct install"
+                                .to_owned(),
+                        ));
                     }
                     let selector = skilld_core::RemoteSelector::parse(&source)
                         .map_err(CommandError::remote)?;
@@ -1028,10 +1130,9 @@ impl Host for LocalHost {
             let view = store
                 .verify_content(&name, &known)
                 .map_err(|error| match error {
-                    StoreError::Conflict(message) => CommandError {
-                        code: "CONTENT_CHANGED",
-                        message,
-                    },
+                    StoreError::Conflict(message) => {
+                        CommandError::operation("CONTENT_CHANGED", message)
+                    }
                     error => CommandError::store(error),
                 })?;
             match (&view.skill.source, &view.skill.source_status) {
@@ -1052,21 +1153,18 @@ impl Host for LocalHost {
                             lines.push(format!("Verified Skill {}.", name.as_str()));
                         }
                         RemoteSourceState::Stale { .. } => {
-                            return Err(CommandError {
-                                code: "SOURCE_STALE",
-                                message: format!(
-                                    "Skill {} has a newer or changed source",
-                                    name.as_str()
-                                ),
-                            });
+                            return Err(CommandError::operation(
+                                "SOURCE_STALE",
+                                format!("Skill {} has a newer or changed source", name.as_str()),
+                            ));
                         }
                     }
                 }
                 (_, skilld_core::SourceStatus::Unverified { .. }) => {
-                    return Err(CommandError {
-                        code: "UNVERIFIED_SOURCE",
-                        message: format!("Skill {} has an unverified source", name.as_str()),
-                    });
+                    return Err(CommandError::operation(
+                        "UNVERIFIED_SOURCE",
+                        format!("Skill {} has an unverified source", name.as_str()),
+                    ));
                 }
                 _ => lines.push(format!("Checked local Skill {}.", name.as_str())),
             }
@@ -1093,10 +1191,10 @@ impl Host for LocalHost {
                 view.skill.source_status,
                 skilld_core::SourceStatus::Verified { .. }
             ) {
-                return Err(CommandError {
-                    code: "UNVERIFIED_SOURCE",
-                    message: format!("Skill {name} needs another explicit --direct install"),
-                });
+                return Err(CommandError::operation(
+                    "UNVERIFIED_SOURCE",
+                    format!("Skill {name} needs another explicit --direct install"),
+                ));
             }
             let selector =
                 skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
@@ -1108,10 +1206,10 @@ impl Host for LocalHost {
             let staged_name =
                 skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
             if staged_name != skill_name {
-                return Err(CommandError {
-                    code: "SOURCE_MISMATCH",
-                    message: format!("the upgraded Skill name changed from {name}"),
-                });
+                return Err(CommandError::operation(
+                    "SOURCE_MISMATCH",
+                    format!("the upgraded Skill name changed from {name}"),
+                ));
             }
             let targets = view
                 .skill

@@ -29,6 +29,7 @@ skilld-command = { path = "crates/skilld-command" }
 skilld-core = { path = "crates/skilld-core" }
 subtle = "2.6.1"
 tempfile = "3.27.0"
+terminal_size = "0.4.4"
 unicode-width = "0.2.2"
 url = "2.5.8"
 wit-bindgen = "0.60.0"
