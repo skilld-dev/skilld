@@ -20,7 +20,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Tabs};
 use skilld_command::{CommandError, Host};
-use skilld_core::{CommitHistory, UpdatePlanV1, UpdateRelation, UpdateRetryAfter};
+use skilld_core::{CommitHistory, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use url::Url;
 
@@ -229,14 +229,20 @@ pub trait InteractiveUpdateHost: Send + Sync + 'static {
 
 pub struct CommandInteractiveUpdateHost<H: Host> {
     host: Arc<H>,
-    commits: Mutex<BTreeMap<ComparisonId, CommitPage>>,
+    plan: Mutex<CachedInteractivePlan>,
+}
+
+#[derive(Default)]
+struct CachedInteractivePlan {
+    commits: BTreeMap<ComparisonId, CommitPage>,
+    items: BTreeMap<String, UpdatePlanItem>,
 }
 
 impl<H: Host> CommandInteractiveUpdateHost<H> {
     pub fn new(host: Arc<H>) -> Self {
         Self {
             host,
-            commits: Mutex::new(BTreeMap::new()),
+            plan: Mutex::new(CachedInteractivePlan::default()),
         }
     }
 }
@@ -245,18 +251,24 @@ impl<H: Host + Send + Sync + 'static> InteractiveUpdateHost for CommandInteracti
     fn load_candidates(&self) -> Result<Vec<UpdateCandidate>, InteractiveUpdateError> {
         let plan = self.host.update_check(None).map_err(command_error)?;
         let (candidates, commits) = prepare_interactive_plan(&plan);
-        *self.commits.lock().map_err(|_| {
+        let items = plan
+            .items()
+            .iter()
+            .filter(|item| matches!(item.relation(), UpdateRelation::Available { .. }))
+            .map(|item| (item.name().as_str().to_owned(), item.clone()))
+            .collect();
+        *self.plan.lock().map_err(|_| {
             InteractiveUpdateError::new(
                 "SERVICE_UNAVAILABLE",
-                "The repository commit cache could not be updated.",
+                "The reviewed update plan could not be saved.",
             )
-        })? = commits;
+        })? = CachedInteractivePlan { commits, items };
         Ok(candidates)
     }
 
     fn load_commits(&self, comparisons: &[ComparisonId]) -> Vec<CommitLoadResult> {
-        let commits = match self.commits.lock() {
-            Ok(commits) => commits,
+        let plan = match self.plan.lock() {
+            Ok(plan) => plan,
             Err(_) => {
                 return comparisons
                     .iter()
@@ -276,7 +288,7 @@ impl<H: Host + Send + Sync + 'static> InteractiveUpdateHost for CommandInteracti
         comparisons
             .iter()
             .cloned()
-            .map(|comparison| match commits.get(&comparison) {
+            .map(|comparison| match plan.commits.get(&comparison) {
                 Some(page) => CommitLoadResult::ready(comparison, page.clone()),
                 None => CommitLoadResult::failed(
                     comparison,
@@ -290,7 +302,38 @@ impl<H: Host + Send + Sync + 'static> InteractiveUpdateHost for CommandInteracti
     }
 
     fn apply(&self, names: &[String]) -> Vec<ApplyResult> {
-        match self.host.update_selected(names) {
+        let items = self
+            .plan
+            .lock()
+            .map_err(|_| {
+                InteractiveUpdateError::new(
+                    "SERVICE_UNAVAILABLE",
+                    "The reviewed update plan could not be read.",
+                )
+            })
+            .and_then(|plan| {
+                names
+                    .iter()
+                    .map(|name| {
+                        plan.items.get(name).cloned().ok_or_else(|| {
+                            InteractiveUpdateError::new(
+                                "STALE_UPDATE_PLAN",
+                                format!("Skill {name} needs another commit review."),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            });
+        let items = match items {
+            Ok(items) => items,
+            Err(error) => {
+                return names
+                    .iter()
+                    .map(|name| ApplyResult::failed(name, error.clone()))
+                    .collect();
+            }
+        };
+        match self.host.update_selected(&items) {
             Ok(_) => names.iter().map(ApplyResult::updated).collect(),
             Err(error) => {
                 let error = command_error(error);

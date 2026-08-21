@@ -179,11 +179,8 @@ pub trait Host {
         ))
     }
 
-    fn update_selected(&self, names: &[String]) -> Result<Vec<String>, CommandError> {
-        let names = parse_update_selection(names)?;
-        if let [name] = names.as_slice() {
-            return self.update(Some(name));
-        }
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+        validate_update_selection(items)?;
         Err(CommandError::unsupported_host(
             "Selected Skill updates are unavailable on this host",
         ))
@@ -1498,12 +1495,12 @@ impl Host for LocalHost {
             .collect())
     }
 
-    fn update_selected(&self, names: &[String]) -> Result<Vec<String>, CommandError> {
-        let names = parse_update_selection(names)?;
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+        validate_update_selection(items)?;
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
-        apply_update_selection(self, names, store, known)
+        apply_update_selection(self, items, store, known)
     }
 
     fn update_check(&self, requested: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
@@ -1691,20 +1688,31 @@ struct PreparedUpdateSelection {
 
 fn apply_update_selection(
     host: &LocalHost,
-    names: Vec<String>,
+    items: &[UpdatePlanItem],
     store: LocalStore,
     known: Vec<ResolvedTarget>,
 ) -> Result<Vec<String>, CommandError> {
     let provider = host.remote_provider()?;
     let mut pending = Vec::new();
-    for name in names {
-        let skill_name =
-            skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
+    for item in items {
+        let name = item.name().as_str().to_owned();
+        let UpdateRelation::Available {
+            locked_commit_sha,
+            latest_commit_sha,
+            ..
+        } = item.relation()
+        else {
+            unreachable!("the update selection was validated")
+        };
+        let skill_name = item.name().clone();
         let view = store
             .verify_content(&skill_name, &known)
             .map_err(CommandError::store)?;
-        let LockedSource::Remote { source, .. } = &view.skill.source else {
-            continue;
+        let LockedSource::Remote {
+            source, commit_sha, ..
+        } = &view.skill.source
+        else {
+            return Err(stale_update_plan(&name));
         };
         if !matches!(
             view.skill.source_status,
@@ -1717,24 +1725,25 @@ fn apply_update_selection(
         }
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
         if matches!(selector.source().r#ref, Some(SourceRef::Commit { .. })) {
-            continue;
+            return Err(stale_update_plan(&name));
+        }
+        let installed_commit_sha =
+            CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?;
+        if &installed_commit_sha != locked_commit_sha {
+            return Err(stale_update_plan(&name));
         }
         let latest_commit = provider
             .latest_commit(&selector, false)
             .map_err(CommandError::remote)?;
-        let LockedSource::Remote { commit_sha, .. } = &view.skill.source else {
-            unreachable!("the update candidate has a remote source")
-        };
-        let locked_commit_sha = CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?;
-        if latest_commit.commit_sha == locked_commit_sha {
-            continue;
+        if &latest_commit.commit_sha != latest_commit_sha {
+            return Err(stale_update_plan(&name));
         }
         let comparison = RemoteUpdateComparison::new(
             skill_name.as_str(),
             &selector.source().owner,
             &selector.source().repository,
-            locked_commit_sha,
-            latest_commit.commit_sha.clone(),
+            locked_commit_sha.clone(),
+            latest_commit_sha.clone(),
             latest_commit.access,
         )
         .map_err(CommandError::remote)?;
@@ -1743,7 +1752,7 @@ fn apply_update_selection(
             skill_name,
             view,
             selector,
-            expected_commit: latest_commit.commit_sha,
+            expected_commit: latest_commit_sha.clone(),
             comparison,
         });
     }
@@ -2081,26 +2090,38 @@ fn selected_names(
     }
 }
 
-fn parse_update_selection(names: &[String]) -> Result<Vec<String>, CommandError> {
-    if names.is_empty() {
+fn validate_update_selection(items: &[UpdatePlanItem]) -> Result<(), CommandError> {
+    if items.is_empty() {
         return Err(CommandError::usage(
             "INVALID_SELECTION",
             "Select at least one Skill",
         ));
     }
     let mut unique = BTreeSet::new();
-    let mut parsed = Vec::with_capacity(names.len());
-    for name in names {
-        let name = skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
-        if !unique.insert(name.clone()) {
+    for item in items {
+        if !unique.insert(item.name()) {
             return Err(CommandError::usage(
                 "INVALID_SELECTION",
                 "Select each Skill once",
             ));
         }
-        parsed.push(name.to_string());
     }
-    Ok(parsed)
+    for item in items {
+        if !matches!(item.relation(), UpdateRelation::Available { .. }) {
+            return Err(CommandError::usage(
+                "INVALID_SELECTION",
+                "Select only Skills with available updates",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn stale_update_plan(name: &str) -> CommandError {
+    CommandError::operation(
+        "STALE_UPDATE_PLAN",
+        format!("Skill {name} changed after review. Review its commits again"),
+    )
 }
 
 fn unavailable_update(

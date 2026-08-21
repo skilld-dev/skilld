@@ -19,7 +19,7 @@ use skilld_core::{
     CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallOperation,
     InstallRequest, InstallScope, InstallSource, LockedSource, PreparedFile, RemoteError,
     RemoteSelector, RepositoryVisibility, ResolvedSource, SearchResponse, SignatureAlgorithm,
-    SourceProvider, SourceStatus, TrustedRootPin, UpdatePlanV1, UpdateRelation,
+    SourceProvider, SourceStatus, TrustedRootPin, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -1528,6 +1528,7 @@ fn provider(content: &str) -> Arc<FakeProvider> {
 
 struct BatchProvider {
     version: Mutex<&'static str>,
+    latest_commit: Mutex<char>,
     prepared_names: Mutex<Vec<String>>,
     fail_name: Mutex<Option<&'static str>>,
     relation: Mutex<RemoteComparisonRelation>,
@@ -1615,7 +1616,8 @@ impl RemoteProvider for BatchProvider {
         _direct: bool,
     ) -> Result<skilld_command::RemoteLatestCommit, RemoteError> {
         Ok(skilld_command::RemoteLatestCommit {
-            commit_sha: CommitSha::parse("f".repeat(40)).unwrap(),
+            commit_sha: CommitSha::parse(self.latest_commit.lock().unwrap().to_string().repeat(40))
+                .unwrap(),
             access: RemoteComparisonAccess::PublicGithub,
         })
     }
@@ -1678,6 +1680,7 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
@@ -1721,6 +1724,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
@@ -1766,6 +1770,7 @@ fn plain_update_rejects_a_source_that_moved_behind() {
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
@@ -1795,6 +1800,20 @@ fn plain_update_rejects_a_source_that_moved_behind() {
     );
 }
 
+fn reviewed_updates(host: &LocalHost, names: &[&str]) -> Vec<UpdatePlanItem> {
+    let plan = host.update_check(None).unwrap();
+    names
+        .iter()
+        .map(|name| {
+            plan.items()
+                .iter()
+                .find(|item| item.name().as_str() == *name)
+                .unwrap()
+                .clone()
+        })
+        .collect()
+}
+
 #[test]
 fn selected_skill_update_commits_only_the_exact_subset() {
     let temporary = tempfile::tempdir().unwrap();
@@ -1802,6 +1821,7 @@ fn selected_skill_update_commits_only_the_exact_subset() {
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
@@ -1821,10 +1841,9 @@ fn selected_skill_update_commits_only_the_exact_subset() {
     }
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
+    let reviewed = reviewed_updates(&host, &["gamma", "alpha"]);
 
-    let lines = host
-        .update_selected(&["gamma".to_owned(), "alpha".to_owned()])
-        .unwrap();
+    let lines = host.update_selected(&reviewed).unwrap();
 
     assert_eq!(lines, ["Updated Skill gamma.", "Updated Skill alpha."]);
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["gamma", "alpha"]);
@@ -1837,24 +1856,34 @@ fn selected_skill_update_commits_only_the_exact_subset() {
 }
 
 #[test]
-fn selected_skill_update_rejects_empty_duplicate_and_invalid_names() {
+fn selected_skill_update_rejects_empty_duplicate_and_unavailable_items() {
     let temporary = tempfile::tempdir().unwrap();
     let host = LocalHost::new(
         temporary.path().join("project"),
         temporary.path().join("data"),
     );
 
+    let current = UpdatePlanItem::new(
+        skilld_core::SkillName::parse("alpha").unwrap(),
+        UpdateRelation::Current {
+            commit_sha: CommitSha::parse("1".repeat(40)).unwrap(),
+        },
+    );
     let empty = host.update_selected(&[]).unwrap_err();
     let duplicate = host
-        .update_selected(&["alpha".to_owned(), "alpha".to_owned()])
+        .update_selected(&[current.clone(), current.clone()])
         .unwrap_err();
-    let invalid = host.update_selected(&["../alpha".to_owned()]).unwrap_err();
+    let invalid_relation = host.update_selected(&[current]).unwrap_err();
 
     assert_eq!(empty.code, "INVALID_SELECTION");
     assert_eq!(empty.message, "Select at least one Skill");
     assert_eq!(duplicate.code, "INVALID_SELECTION");
     assert_eq!(duplicate.message, "Select each Skill once");
-    assert_eq!(invalid.code, "INVALID_SOURCE");
+    assert_eq!(invalid_relation.code, "INVALID_SELECTION");
+    assert_eq!(
+        invalid_relation.message,
+        "Select only Skills with available updates"
+    );
 }
 
 #[test]
@@ -1864,6 +1893,7 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
@@ -1883,11 +1913,10 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
     }
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
+    let reviewed = reviewed_updates(&host, &["alpha", "gamma"]);
     *provider.fail_name.lock().unwrap() = Some("gamma");
 
-    let error = host
-        .update_selected(&["alpha".to_owned(), "gamma".to_owned()])
-        .unwrap_err();
+    let error = host.update_selected(&reviewed).unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "gamma"]);
@@ -1897,6 +1926,44 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
             format!("---\nname: {name}\ndescription: first\n---\n")
         );
     }
+}
+
+#[test]
+fn selected_skill_update_rejects_a_head_that_changed_after_review() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::Remote(
+            "skilld:skilld-dev/skills/alpha".to_owned(),
+        )),
+        scope: InstallScope::Project,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+    })
+    .unwrap();
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+    let reviewed = reviewed_updates(&host, &["alpha"]);
+    *provider.latest_commit.lock().unwrap() = 'e';
+
+    let error = host.update_selected(&reviewed).unwrap_err();
+
+    assert_eq!(error.code, "STALE_UPDATE_PLAN");
+    assert!(provider.prepared_names.lock().unwrap().is_empty());
+    assert_eq!(
+        fs::read_to_string(project.join(".skills/alpha/SKILL.md")).unwrap(),
+        "---\nname: alpha\ndescription: first\n---\n"
+    );
 }
 
 #[test]
