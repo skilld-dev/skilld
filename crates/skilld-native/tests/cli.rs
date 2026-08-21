@@ -57,6 +57,56 @@ fn version_reports_the_rust_package_version() {
 }
 
 #[test]
+fn install_help_gives_agents_actionable_source_and_target_grammar() {
+    let output = Command::new(binary())
+        .args(["install", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout).unwrap();
+    for guidance in [
+        "skilld:OWNER/REPOSITORY/SKILL",
+        "github:OWNER/REPOSITORY/SKILL_PATH",
+        "github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH",
+        "github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG",
+        "github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA",
+        "https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH",
+        "Values: claude-code, cursor, windsurf, cline, codex, github-copilot,",
+        "gemini-cli, goose, amp, opencode, roo, antigravity.",
+        "Repeat --agent to select more than one Agent target.",
+        "Values: copy, symlink. Default: install.mode. Its initial value is copy.",
+        "Default: detected Agent targets. If none exist, use agent.targets.",
+        "Default scope: current project.",
+        "Direct installs set source status to unverified.",
+        "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
+        "skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex",
+    ] {
+        assert!(help.contains(guidance), "missing help guidance: {guidance}");
+    }
+}
+
+#[test]
+fn direct_source_error_gives_an_agent_a_copyable_command() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(&project, &data, &home, &["install", "./skill", "--direct"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "DIRECT_SOURCE_REQUIRED: --direct requires github:OWNER/REPOSITORY/SKILL_PATH or a GitHub tree URL. Run: skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n"
+    );
+}
+
+#[test]
 fn local_install_list_view_and_remove_use_project_state() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

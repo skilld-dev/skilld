@@ -679,14 +679,14 @@ impl SkilldRemote {
         if !selector.is_explicit_github() {
             return Err(RemoteError::new(
                 "DIRECT_SOURCE_REQUIRED",
-                "--direct needs an explicit public GitHub Repository selector",
+                crate::DIRECT_SOURCE_GUIDANCE,
             ));
         }
         let source = selector.source();
         let SourceSelector::Path { path: skill_path } = &source.selector else {
             return Err(RemoteError::new(
                 "DIRECT_SOURCE_REQUIRED",
-                "--direct needs an explicit GitHub Skill path",
+                crate::DIRECT_SOURCE_GUIDANCE,
             ));
         };
         let repository_url = format!(
