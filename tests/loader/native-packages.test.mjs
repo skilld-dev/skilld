@@ -104,7 +104,7 @@ it('keeps v3 packages aligned and versions the protocol independently', async ()
 })
 
 it('publishes beta versions under the beta npm tag', () => {
-  assert.equal(npmTagForVersion('3.0.0-beta.0'), 'beta')
+  assert.equal(npmTagForVersion('3.0.0-beta.1'), 'beta')
 })
 
 it('publishes stable versions under the latest npm tag', () => {

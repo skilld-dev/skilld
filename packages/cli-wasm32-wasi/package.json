@@ -1,7 +1,7 @@
 {
   "name": "skilld-cli-wasm32-wasi",
   "type": "module",
-  "version": "3.0.0-beta.0",
+  "version": "3.0.0-beta.1",
   "private": true,
   "description": "WASIp2 fallback host for the skilld CLI",
   "license": "MIT",
