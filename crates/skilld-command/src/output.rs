@@ -151,7 +151,13 @@ fn render_human(outcome: &SearchOutcome, width: u16, color: bool) -> String {
     ));
 
     if outcome.items.is_empty() {
-        output.push_str("\nNo Skills found.\n");
+        output.push('\n');
+        let empty = format!("No Skills found for {}.", terminal_text(&outcome.query));
+        for line in wrap(&empty, width) {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        output.push_str("Try a shorter search.\n");
         return output;
     }
 
@@ -184,7 +190,8 @@ fn render_human(outcome: &SearchOutcome, width: u16, color: bool) -> String {
                 output.push('\n');
             }
         }
-        for line in wrap(&terminal_text(&item.selector), width.saturating_sub(2)) {
+        let install = format!("Install: skilld install {}", terminal_text(&item.selector));
+        for line in wrap(&install, width.saturating_sub(2)) {
             output.push_str("  ");
             output.push_str(&styled(&line, "\u{1b}[2m", color));
             output.push('\n');

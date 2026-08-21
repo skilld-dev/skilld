@@ -201,12 +201,38 @@ fn human_search_is_polished_and_respects_terminal_width() {
     assert!(stdout.contains("1 of 14 Skills"));
     assert!(stdout.contains("227,068 stars"));
     assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
+    assert!(stdout.contains("Install: skilld install"));
     assert!(
         stdout
             .lines()
             .all(|line| UnicodeWidthStr::width(line) <= 40)
     );
     assert!(!stdout.contains('\u{1b}'));
+}
+
+#[test]
+fn human_empty_search_names_the_query_and_suggests_a_next_step() {
+    let mut response = response();
+    response.items.clear();
+    response.total = 0;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run_with_output(
+        ["skilld", "search", "grill"],
+        &SearchHost {
+            response: Ok(response),
+        },
+        OutputContext::auto(true, false, false, true, false, 40),
+        &mut stdout,
+        &mut stderr,
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(stdout.contains("No Skills found for grill."));
+    assert!(stdout.contains("Try a shorter search."));
 }
 
 #[test]
