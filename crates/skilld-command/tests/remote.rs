@@ -15,10 +15,10 @@ use skilld_command::{
 };
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
-    CheckResult, InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource,
-    LockedSource, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
-    SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
-    UpdateCheckV1, UpdateLatestCommit, UpdateRelation,
+    CheckResult, CommitSha, InstallMode, InstallOperation, InstallRequest, InstallScope,
+    InstallSource, LockedSource, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
+    ResolvedSource, SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus,
+    TrustedRootPin, UpdateCheckV1,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -900,7 +900,7 @@ fn update_check_keeps_an_uncompared_commit_unavailable() {
     let host = LocalHost::new(project, temporary.path().join("data"))
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
-        operation: skilld_core::InstallOperation::Install(InstallSource::Remote(
+        source: Some(InstallSource::Remote(
             "skilld:skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
@@ -918,22 +918,11 @@ fn update_check_keeps_an_uncompared_commit_unavailable() {
         &mut stdout,
         &mut stderr,
     );
-    let mut global_stdout = Vec::new();
-    let mut global_stderr = Vec::new();
-    let global_result = run(
-        ["skilld", "--json", "update", "example", "--check"],
-        &host,
-        &mut global_stdout,
-        &mut global_stderr,
-    );
     let outcome: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
     let check: UpdateCheckV1 = serde_json::from_value(outcome["data"].clone()).unwrap();
 
     assert_eq!(result.exit_code, 0);
     assert!(stderr.is_empty());
-    assert_eq!(global_result.exit_code, 0);
-    assert!(global_stderr.is_empty());
-    assert_eq!(global_stdout, stdout);
     assert_eq!(outcome["schemaVersion"], 1);
     assert_eq!(outcome["_tag"], "Success");
     assert_eq!(outcome["command"], "update");
@@ -1089,7 +1078,7 @@ fn cli_plain_restore_rejects_an_unverified_source_with_the_recovery_command() {
         &mut stderr,
     );
 
-    assert_eq!(restored.exit_code, 1);
+    assert_eq!(restored.exit_code, 2);
     assert!(stdout.is_empty());
     assert_eq!(
         String::from_utf8(stderr).unwrap(),

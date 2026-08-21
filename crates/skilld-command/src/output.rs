@@ -101,8 +101,12 @@ pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8>
     } else {
         ("help", JsonDisplayData::Help { path, text })
     };
-    render_json_success(command, data, "display output could not be encoded")
-        .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: display output could not be encoded\n".to_vec())
+    render_json_success(
+        command,
+        data,
+        "display output could not be encoded",
+    )
+    .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: display output could not be encoded\n".to_vec())
 }
 
 pub(crate) fn render_update_check(
