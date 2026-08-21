@@ -1,5 +1,6 @@
 mod config;
 mod local_store;
+mod output;
 mod remote;
 
 use std::collections::BTreeSet;
@@ -16,14 +17,22 @@ pub use local_store::{
     AllowTransaction, LocalStore, ResolvedTarget, SkillView, StoreError, TargetInstall,
     TransactionGate,
 };
+pub use output::OutputContext;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill, RemoteProvider,
     RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
-    AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
+    AGENT_TARGETS, AgentTargetId, CommitSha, DomainError, GlobalTargetPath, InstallMode,
+    InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource, NotTrackedReason,
+    SourceRef, UpdateCheckV1, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan,
+    UpdatePlanItem, UpdateRelation, VERSION, select_target_ids,
+};
+
+use output::{
+    OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
+    resolve_mode,
 };
 
 #[derive(Debug, Parser)]
@@ -34,6 +43,12 @@ use skilld_core::{
     disable_help_subcommand = true
 )]
 pub struct Cli {
+    /// Output stable JSON for Agents and automation.
+    #[arg(long, global = true, conflicts_with = "plain")]
+    json: bool,
+    /// Output stable text without terminal formatting.
+    #[arg(long, global = true, conflicts_with = "json")]
+    plain: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -71,8 +86,13 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Upgrade installed Skills.
-    Upgrade { skill: Option<String> },
+    /// Update installed Skills.
+    Update {
+        skill: Option<String>,
+        /// Check update relations without changing files.
+        #[arg(long)]
+        check: bool,
+    },
     /// Verify a Skill source.
     Verify { skill: Option<String> },
     /// Manage account authentication.
@@ -132,7 +152,7 @@ pub trait Host {
         ))
     }
 
-    fn search(&self, _query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, _query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill search is unavailable on this host",
         ))
@@ -144,9 +164,15 @@ pub trait Host {
         ))
     }
 
-    fn upgrade(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn update(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
-            "Skill upgrade is unavailable on this host",
+            "Skill update is unavailable on this host",
+        ))
+    }
+
+    fn update_check(&self, _name: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill update checks are unavailable on this host",
         ))
     }
 
@@ -187,73 +213,88 @@ pub trait Host {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandErrorKind {
+    Usage,
+    Operation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandError {
+    pub kind: CommandErrorKind,
     pub code: &'static str,
     pub message: String,
 }
 
 impl CommandError {
-    pub fn unsupported_host(message: impl Into<String>) -> Self {
+    pub fn usage(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: "UNSUPPORTED_HOST",
+            kind: CommandErrorKind::Usage,
+            code,
             message: message.into(),
         }
+    }
+
+    pub fn operation(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            kind: CommandErrorKind::Operation,
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_host(message: impl Into<String>) -> Self {
+        Self::operation("UNSUPPORTED_HOST", message)
     }
 
     pub fn service(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn not_implemented(message: impl Into<String>) -> Self {
-        Self {
-            code: "NOT_IMPLEMENTED",
-            message: message.into(),
-        }
+        Self::operation("NOT_IMPLEMENTED", message)
     }
 
     pub fn input(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_SOURCE",
-            message: message.into(),
-        }
+        Self::usage("INVALID_SOURCE", message)
     }
 
     pub fn config(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_CONFIG",
-            message: message.into(),
-        }
+        Self::usage("INVALID_CONFIG", message)
     }
 
     pub fn filesystem(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn domain(error: DomainError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::usage(error.code(), error.to_string())
     }
 
     pub fn store(error: StoreError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::operation(error.code(), error.to_string())
     }
 
     pub fn remote(error: skilld_core::RemoteError) -> Self {
+        let kind = if matches!(
+            error.code,
+            "INVALID_SEARCH" | "INVALID_SOURCE" | "DIRECT_SOURCE_REQUIRED"
+        ) {
+            CommandErrorKind::Usage
+        } else {
+            CommandErrorKind::Operation
+        };
         Self {
+            kind,
             code: error.code,
             message: error.message,
+        }
+    }
+
+    fn exit_code(&self) -> u8 {
+        match self.kind {
+            CommandErrorKind::Usage => 2,
+            CommandErrorKind::Operation => 1,
         }
     }
 }
@@ -271,6 +312,12 @@ pub struct CommandResult {
     pub exit_code: u8,
 }
 
+enum CommandOutput {
+    Lines(Vec<String>),
+    Search(SearchOutcome),
+    UpdateCheck(UpdateCheckV1),
+}
+
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
 where
     I: IntoIterator<Item = T>,
@@ -279,7 +326,31 @@ where
     O: Write,
     E: Write,
 {
-    let cli = match Cli::try_parse_from(args) {
+    run_with_output(args, host, OutputContext::Plain, stdout, stderr)
+}
+
+pub fn run_with_output<I, T, H, O, E>(
+    args: I,
+    host: &H,
+    context: OutputContext,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+    H: Host,
+    O: Write,
+    E: Write,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    let (requested_json, requested_plain) = requested_output(&args);
+    let requested_mode = if requested_json && requested_plain {
+        OutputMode::Plain
+    } else {
+        resolve_mode(requested_json, requested_plain, context)
+    };
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
             let display = matches!(
@@ -287,8 +358,33 @@ where
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             );
             let target: &mut dyn Write = if display { stdout } else { stderr };
-            if write!(target, "{error}").is_err() {
-                return CommandResult { exit_code: 2 };
+            let rendered = if requested_mode == OutputMode::JsonV1 {
+                if display {
+                    output::render_display(
+                        error.kind(),
+                        &display_path(&args),
+                        error.to_string().trim(),
+                    )
+                } else {
+                    let message = error
+                        .to_string()
+                        .lines()
+                        .next()
+                        .unwrap_or("invalid command arguments")
+                        .trim_start_matches("error: ")
+                        .to_owned();
+                    render_error(
+                        &CommandError::usage("INVALID_ARGUMENT", message),
+                        requested_mode,
+                    )
+                }
+            } else {
+                error.to_string().into_bytes()
+            };
+            if target.write_all(&rendered).is_err() {
+                return CommandResult {
+                    exit_code: if display { 1 } else { 2 },
+                };
             }
             return CommandResult {
                 exit_code: if display { 0 } else { 2 },
@@ -296,20 +392,123 @@ where
         }
     };
 
+    let mode = resolve_mode(cli.json, cli.plain, context);
+    if matches!(&cli.command, Command::Update { check: true, .. }) && mode != OutputMode::JsonV1 {
+        let error = CommandError::usage("UNSUPPORTED_OUTPUT", "Skill update checks need --json");
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
+    let supports_json = matches!(&cli.command, Command::Search { .. })
+        || matches!(&cli.command, Command::Update { check: true, .. });
+    if mode == OutputMode::JsonV1 && !supports_json {
+        let error = CommandError::usage(
+            "UNSUPPORTED_OUTPUT",
+            "JSON output is available for Skill search and update checks",
+        );
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
+
     match dispatch(cli.command, host) {
-        Ok(lines) => {
+        Ok(CommandOutput::Lines(lines)) => {
+            let mut bytes = Vec::new();
             for line in lines {
-                if writeln!(stdout, "{line}").is_err() {
-                    return CommandResult { exit_code: 2 };
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+            write_success(&bytes, mode, stdout, stderr)
+        }
+        Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
                 }
             }
+        },
+        Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
+            }
+        },
+        Err(error) => {
+            if stderr.write_all(&render_error(&error, mode)).is_err() {
+                return CommandResult {
+                    exit_code: error.exit_code(),
+                };
+            }
+            CommandResult {
+                exit_code: error.exit_code(),
+            }
+        }
+    }
+}
+
+fn requested_output(args: &[OsString]) -> (bool, bool) {
+    let mut json = false;
+    let mut plain = false;
+    for argument in args.iter().skip(1) {
+        if argument == "--" {
+            break;
+        }
+        if argument == "--json" {
+            json = true;
+        } else if argument == "--plain" {
+            plain = true;
+        }
+    }
+    (json, plain)
+}
+
+fn display_path(args: &[OsString]) -> String {
+    let commands = [
+        "search", "install", "list", "view", "remove", "update", "verify", "auth", "config",
+    ];
+    let mut path = vec!["skilld"];
+    if let Some(command) = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .find(|argument| commands.contains(argument))
+    {
+        path.push(command);
+    }
+    path.join(" ")
+}
+
+fn write_success<O: Write, E: Write>(
+    bytes: &[u8],
+    mode: OutputMode,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult {
+    match stdout.write_all(bytes) {
+        Ok(()) => CommandResult { exit_code: 0 },
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
             CommandResult { exit_code: 0 }
         }
-        Err(error) => {
-            if writeln!(stderr, "{error}").is_err() {
-                return CommandResult { exit_code: 2 };
-            }
-            CommandResult { exit_code: 2 }
+        Err(_) => {
+            let error =
+                CommandError::operation("OUTPUT_WRITE_FAILED", "Skill output could not be written");
+            let _ = stderr.write_all(&render_error(&error, mode));
+            CommandResult { exit_code: 1 }
         }
     }
 }
@@ -337,7 +536,7 @@ pub fn run_stdio_probe<R: Read, O: Write, E: Write>(
     }
 }
 
-fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandError> {
+fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, CommandError> {
     match command {
         Command::Install {
             source,
@@ -391,70 +590,88 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
             if direct {
                 lines.push("Review the unverified Skill before use.".to_owned());
             }
-            Ok(lines)
+            Ok(CommandOutput::Lines(lines))
         }
-        Command::List { global } => host.list(scope(global)),
-        Command::View { skill, global } => render_view(host.view(&skill, scope(global))?),
+        Command::List { global } => host.list(scope(global)).map(CommandOutput::Lines),
+        Command::View { skill, global } => {
+            render_view(host.view(&skill, scope(global))?).map(CommandOutput::Lines)
+        }
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
-            Ok(vec![format!("Removed Skill {skill}.")])
+            Ok(CommandOutput::Lines(vec![format!(
+                "Removed Skill {skill}."
+            )]))
         }
         Command::Auth {
             command: AuthCommand::Status,
-        } => Ok(vec![if host.auth_status()? {
+        } => Ok(CommandOutput::Lines(vec![if host.auth_status()? {
             "Authenticated.".to_owned()
         } else {
             "Not authenticated.".to_owned()
-        }]),
+        }])),
         Command::Auth {
             command: AuthCommand::Login,
         } => {
             host.auth_login()?;
-            Ok(vec!["Authentication started.".to_owned()])
+            Ok(CommandOutput::Lines(vec![
+                "Authentication started.".to_owned(),
+            ]))
         }
         Command::Auth {
             command: AuthCommand::Logout,
         } => {
             host.auth_logout()?;
-            Ok(vec!["Logged out.".to_owned()])
+            Ok(CommandOutput::Lines(vec!["Logged out.".to_owned()]))
         }
         Command::Config {
             command: ConfigCommand::Get { key },
-        } => Ok(vec![host.config_get(&key)?]),
+        } => Ok(CommandOutput::Lines(vec![host.config_get(&key)?])),
         Command::Config {
             command: ConfigCommand::Set { key, value },
         } => {
             host.config_set(&key, &value)?;
-            Ok(vec![format!("Set {key}.")])
+            Ok(CommandOutput::Lines(vec![format!("Set {key}.")]))
         }
         Command::Config {
             command: ConfigCommand::List,
-        } => host.config_list(),
-        Command::Search { query } => host
-            .search(&query.join(" "))?
-            .into_iter()
-            .map(|result| {
-                let selector = result.selector().map_err(CommandError::remote)?;
-                let description = result
-                    .description
-                    .unwrap_or_default()
-                    .chars()
-                    .map(|character| {
-                        if character.is_control() {
-                            ' '
-                        } else {
-                            character
-                        }
+        } => host.config_list().map(CommandOutput::Lines),
+        Command::Search { query } => {
+            let query = query.join(" ").trim().to_owned();
+            if query.is_empty() || query.len() > 200 {
+                return Err(CommandError::usage(
+                    "INVALID_SEARCH",
+                    "Skill search needs a query up to 200 bytes",
+                ));
+            }
+            let response = host.search(&query)?;
+            let items = response
+                .items
+                .into_iter()
+                .map(|result| {
+                    let selector = result.selector().map_err(CommandError::remote)?;
+                    Ok(SearchItem {
+                        name: result.name,
+                        selector: selector.to_string(),
+                        description: result.description,
+                        stargazer_count: result.stargazer_count,
                     })
-                    .collect::<String>();
-                Ok(format!(
-                    "{}\t{}\t{}\t{} stars",
-                    result.name, selector, description, result.stargazer_count
-                ))
-            })
-            .collect(),
-        Command::Upgrade { skill } => host.upgrade(skill.as_deref()),
-        Command::Verify { skill } => host.verify(skill.as_deref()),
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            Ok(CommandOutput::Search(SearchOutcome {
+                query,
+                items,
+                total: response.total,
+            }))
+        }
+        Command::Update { skill, check } => {
+            if check {
+                host.update_check(skill.as_deref())
+                    .map(CommandOutput::UpdateCheck)
+            } else {
+                host.update(skill.as_deref()).map(CommandOutput::Lines)
+            }
+        }
+        Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
     }
 }
 
@@ -729,6 +946,144 @@ impl LocalHost {
         })
     }
 
+    fn update_relation(
+        &self,
+        skill: &skilld_core::LockedSkill,
+    ) -> Result<UpdateRelation, CommandError> {
+        let (source, locked_commit_sha) = match &skill.source {
+            LockedSource::Local { .. } => {
+                return Ok(UpdateRelation::NotTracked {
+                    reason: NotTrackedReason::Local,
+                });
+            }
+            LockedSource::BundledSkilld => {
+                return Ok(UpdateRelation::NotTracked {
+                    reason: NotTrackedReason::Bundled,
+                });
+            }
+            LockedSource::Remote {
+                source, commit_sha, ..
+            } => (
+                source,
+                CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?,
+            ),
+        };
+
+        let selector = match skilld_core::RemoteSelector::parse(source) {
+            Ok(selector) => selector,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        if let Some(SourceRef::Commit { value }) = &selector.source().r#ref {
+            let pinned_commit_sha = match CommitSha::parse(value.clone()) {
+                Ok(commit_sha) => commit_sha,
+                Err(error) => {
+                    return Ok(unavailable_update(
+                        locked_commit_sha,
+                        UpdateLatestCommit::Unknown,
+                        "INVALID_SOURCE",
+                        error.to_string(),
+                    ));
+                }
+            };
+            if pinned_commit_sha != locked_commit_sha {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Known {
+                        commit_sha: pinned_commit_sha,
+                    },
+                    "INVALID_LOCKFILE",
+                    "the locked commit differs from its source selector",
+                ));
+            }
+            return Ok(UpdateRelation::Pinned {
+                commit_sha: locked_commit_sha,
+            });
+        }
+
+        let artifact_id = match &skill.source_status {
+            skilld_core::SourceStatus::Verified { artifact_id, .. } => artifact_id,
+            skilld_core::SourceStatus::Unverified { .. } => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    "UNVERIFIED_SOURCE",
+                    "run an explicit --direct install to update this Skill",
+                ));
+            }
+            skilld_core::SourceStatus::Local { .. } => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    "INVALID_LOCKFILE",
+                    "the remote Skill has a local source status",
+                ));
+            }
+        };
+        let provider = match self.remote_provider() {
+            Ok(provider) => provider,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        let state = match provider.source_state(&selector, artifact_id, locked_commit_sha.as_str())
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Unknown,
+                    error.code,
+                    error.message,
+                ));
+            }
+        };
+        match state {
+            RemoteSourceState::Current => Ok(UpdateRelation::Current {
+                commit_sha: locked_commit_sha,
+            }),
+            RemoteSourceState::Stale {
+                current_commit_sha, ..
+            } => {
+                let latest_commit_sha = match CommitSha::parse(current_commit_sha) {
+                    Ok(commit_sha) => commit_sha,
+                    Err(error) => {
+                        return Ok(unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            "INVALID_RESPONSE",
+                            error.to_string(),
+                        ));
+                    }
+                };
+                if latest_commit_sha == locked_commit_sha {
+                    return Ok(UpdateRelation::Current {
+                        commit_sha: locked_commit_sha,
+                    });
+                }
+                Ok(unavailable_update(
+                    locked_commit_sha,
+                    UpdateLatestCommit::Known {
+                        commit_sha: latest_commit_sha,
+                    },
+                    "COMPARISON_UNAVAILABLE",
+                    "skilld.dev does not provide Git comparison data",
+                ))
+            }
+        }
+    }
+
     fn install_remote(
         &self,
         source: &str,
@@ -766,13 +1121,13 @@ impl LocalHost {
         let store = self.store(request.scope);
         let names = store.list(&known).map_err(CommandError::store)?;
         if names.is_empty() {
-            return Err(CommandError {
-                code: "LOCKFILE_NOT_FOUND",
-                message: format!(
+            return Err(CommandError::operation(
+                "LOCKFILE_NOT_FOUND",
+                format!(
                     "no installed Skills exist in {} scope",
                     request.scope.as_str()
                 ),
-            });
+            ));
         }
         let mut restored = Vec::new();
         for name in names {
@@ -843,12 +1198,11 @@ impl LocalHost {
                         skilld_core::SourceStatus::Verified { .. } => false,
                         skilld_core::SourceStatus::Unverified { .. } if direct => true,
                         _ => {
-                            return Err(CommandError {
-                                code: "UNVERIFIED_SOURCE",
-                                message:
-                                    "run skilld install --direct to restore an unverified Skill"
-                                        .to_owned(),
-                            });
+                            return Err(CommandError::operation(
+                                "UNVERIFIED_SOURCE",
+                                "run skilld install --direct to restore an unverified Skill"
+                                    .to_owned(),
+                            ));
                         }
                     };
                     let selector = skilld_core::RemoteSelector::parse(&source)
@@ -980,7 +1334,7 @@ impl Host for LocalHost {
             .logout()
     }
 
-    fn search(&self, query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         self.remote_provider()?
             .search(query, 20)
             .map_err(CommandError::remote)
@@ -997,10 +1351,9 @@ impl Host for LocalHost {
             let view = store
                 .verify_content(&name, &known)
                 .map_err(|error| match error {
-                    StoreError::Conflict(message) => CommandError {
-                        code: "CONTENT_CHANGED",
-                        message,
-                    },
+                    StoreError::Conflict(message) => {
+                        CommandError::operation("CONTENT_CHANGED", message)
+                    }
                     error => CommandError::store(error),
                 })?;
             match (&view.skill.source, &view.skill.source_status) {
@@ -1021,21 +1374,18 @@ impl Host for LocalHost {
                             lines.push(format!("Verified Skill {}.", name.as_str()));
                         }
                         RemoteSourceState::Stale { .. } => {
-                            return Err(CommandError {
-                                code: "SOURCE_STALE",
-                                message: format!(
-                                    "Skill {} has a newer or changed source",
-                                    name.as_str()
-                                ),
-                            });
+                            return Err(CommandError::operation(
+                                "SOURCE_STALE",
+                                format!("Skill {} has a newer or changed source", name.as_str()),
+                            ));
                         }
                     }
                 }
                 (_, skilld_core::SourceStatus::Unverified { .. }) => {
-                    return Err(CommandError {
-                        code: "UNVERIFIED_SOURCE",
-                        message: format!("Skill {} has an unverified source", name.as_str()),
-                    });
+                    return Err(CommandError::operation(
+                        "UNVERIFIED_SOURCE",
+                        format!("Skill {} has an unverified source", name.as_str()),
+                    ));
                 }
                 _ => lines.push(format!("Checked local Skill {}.", name.as_str())),
             }
@@ -1043,12 +1393,12 @@ impl Host for LocalHost {
         Ok(lines)
     }
 
-    fn upgrade(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn update(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
-        let mut upgraded = Vec::new();
+        let mut updated = Vec::new();
         for name in names {
             let skill_name =
                 skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
@@ -1062,10 +1412,10 @@ impl Host for LocalHost {
                 view.skill.source_status,
                 skilld_core::SourceStatus::Verified { .. }
             ) {
-                return Err(CommandError {
-                    code: "UNVERIFIED_SOURCE",
-                    message: format!("Skill {name} needs another explicit --direct install"),
-                });
+                return Err(CommandError::operation(
+                    "UNVERIFIED_SOURCE",
+                    format!("Skill {name} needs another explicit --direct install"),
+                ));
             }
             let selector =
                 skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
@@ -1077,10 +1427,10 @@ impl Host for LocalHost {
             let staged_name =
                 skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
             if staged_name != skill_name {
-                return Err(CommandError {
-                    code: "SOURCE_MISMATCH",
-                    message: format!("the upgraded Skill name changed from {name}"),
-                });
+                return Err(CommandError::operation(
+                    "SOURCE_MISMATCH",
+                    format!("the updated Skill name changed from {name}"),
+                ));
             }
             let targets = view
                 .skill
@@ -1111,9 +1461,27 @@ impl Host for LocalHost {
                     &known,
                 )
                 .map_err(CommandError::store)?;
-            upgraded.push(format!("Upgraded Skill {name}."));
+            updated.push(format!("Updated Skill {name}."));
         }
-        Ok(upgraded)
+        Ok(updated)
+    }
+
+    fn update_check(&self, requested: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        let names = selected_names(&store, &known, requested)?;
+        let mut items = Vec::with_capacity(names.len());
+        for name in names {
+            let skill_name = skilld_core::SkillName::parse(name).map_err(CommandError::domain)?;
+            let view = store
+                .view(&skill_name, &known)
+                .map_err(CommandError::store)?;
+            let relation = self.update_relation(&view.skill)?;
+            items.push(UpdatePlanItem::new(skill_name, relation));
+        }
+        let plan = UpdatePlan::new(items).map_err(update_model_error)?;
+        Ok(UpdateCheckV1::new(plan))
     }
 }
 
@@ -1181,6 +1549,23 @@ fn selected_names(
     } else {
         store.list(known).map_err(CommandError::store)
     }
+}
+
+fn unavailable_update(
+    locked_commit_sha: CommitSha,
+    latest_commit: UpdateLatestCommit,
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> UpdateRelation {
+    UpdateRelation::Unavailable {
+        locked_commit_sha,
+        latest_commit,
+        failure: UpdateFailure::new(code, message),
+    }
+}
+
+fn update_model_error(error: UpdateModelError) -> CommandError {
+    CommandError::operation("INVALID_LOCKFILE", error.to_string())
 }
 
 fn detects_environment(agent: AgentTargetId, environment: &DetectionEnvironment) -> bool {
@@ -1343,9 +1728,28 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "upgrade", "verify", "auth",
-                "config"
+                "search", "install", "list", "view", "remove", "update", "verify", "auth", "config"
             ]
+        );
+    }
+
+    #[test]
+    fn upgrade_is_not_a_command_alias() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(
+            ["skilld", "upgrade"],
+            &RecordingHost,
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(result.exit_code, 2);
+        assert!(stdout.is_empty());
+        assert!(
+            String::from_utf8(stderr)
+                .unwrap()
+                .contains("unrecognized subcommand 'upgrade'")
         );
     }
 

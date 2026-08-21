@@ -1,6 +1,7 @@
 mod lock;
 mod remote;
 mod target;
+mod update;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,10 @@ pub use remote::{
 use serde::{Deserialize, Serialize};
 pub use target::{
     AGENT_TARGETS, AgentTarget, AgentTargetId, GlobalTargetPath, TargetSelection, select_target_ids,
+};
+pub use update::{
+    CommitSha, NotTrackedReason, UpdateCheckV1, UpdateFailure, UpdateLatestCommit,
+    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdateRelation, classify_update_comparison,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -48,7 +53,8 @@ impl InstallMode {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct SkillName(String);
 
 impl SkillName {
@@ -88,6 +94,20 @@ impl SkillName {
 impl fmt::Display for SkillName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for SkillName {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+impl From<SkillName> for String {
+    fn from(value: SkillName) -> Self {
+        value.0
     }
 }
 

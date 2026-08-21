@@ -1,7 +1,9 @@
 use std::env;
 use std::path::PathBuf;
 
-use skilld_command::{CommandError, Host, LocalHost, run, run_stdio_probe};
+use skilld_command::{
+    CommandError, Host, LocalHost, OutputContext, run_stdio_probe, run_with_output,
+};
 use skilld_core::{InstallScope, InstallSource};
 
 wit_bindgen::generate!({
@@ -37,7 +39,13 @@ impl Guest for SkilldComponent {
         let host = WasiHost { local };
         let mut stdout = std::io::stdout().lock();
         let mut stderr = std::io::stderr().lock();
-        let result = run(env::args_os(), &host, &mut stdout, &mut stderr);
+        let result = run_with_output(
+            env::args_os(),
+            &host,
+            OutputContext::Plain,
+            &mut stdout,
+            &mut stderr,
+        );
         result.exit_code.into()
     }
 }
