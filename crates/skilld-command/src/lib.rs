@@ -133,9 +133,9 @@ enum Command {
     Verify { skill: Option<String> },
     /// Report outdated and unmanaged Skills.
     Outdated {
-        /// Scan every Agent target on this system.
+        /// Check both scopes and every Agent target directory.
         #[arg(long)]
-        system: bool,
+        all: bool,
     },
     /// Manage account authentication.
     Auth {
@@ -229,7 +229,7 @@ pub trait Host {
         ))
     }
 
-    fn outdated(&self, _system: bool) -> Result<Vec<String>, CommandError> {
+    fn outdated(&self, _all: bool) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
             "Outdated Skill reports are unavailable on this host",
         ))
@@ -794,7 +794,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             }
         }
         Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
-        Command::Outdated { system } => host.outdated(system).map(CommandOutput::Lines),
+        Command::Outdated { all } => host.outdated(all).map(CommandOutput::Lines),
     }
 }
 
@@ -1734,8 +1734,8 @@ impl Host for LocalHost {
         Ok(UpdatePlanV1::new(plan))
     }
 
-    fn outdated(&self, system: bool) -> Result<Vec<String>, CommandError> {
-        let scopes = if system {
+    fn outdated(&self, all: bool) -> Result<Vec<String>, CommandError> {
+        let scopes = if all {
             vec![InstallScope::Project, InstallScope::Global]
         } else {
             vec![InstallScope::Project]
@@ -1759,7 +1759,7 @@ impl Host for LocalHost {
                         scope.as_str(),
                         CommandError::store(error).message
                     ));
-                    if system {
+                    if all {
                         // The ancestor scan must not report Skills this scope cannot verify.
                         suppressed_roots.extend(known.iter().map(|target| target.root.clone()));
                     }
@@ -1792,12 +1792,12 @@ impl Host for LocalHost {
                 progress.found(&format!("{name} ({} scope)", scope.as_str()));
                 views.push((view, scope));
             }
-            if system {
+            if all {
                 store_roots.push(store.root().to_path_buf());
                 scan.push((scope, known));
             }
         }
-        if system {
+        if all {
             // Global Agent directories keep the global scope, so ancestor roots
             // scan after them and skip roots another scope already claimed.
             let mut claimed = scan
@@ -1816,7 +1816,7 @@ impl Host for LocalHost {
                 }
             }
         }
-        let unmanaged = if system {
+        let unmanaged = if all {
             outdated::scan_unmanaged(&scan, &store_roots, &managed)
         } else {
             Vec::new()
@@ -1828,7 +1828,7 @@ impl Host for LocalHost {
             progress.checking(&view.name);
             lines.extend(self.report_outdated_view(view, *scope));
         }
-        if system {
+        if all {
             #[cfg(not(target_os = "wasi"))]
             let results = search_candidates_parallel(self, &unmanaged);
             #[cfg(target_os = "wasi")]

@@ -313,7 +313,7 @@ fn outdated_system_reports_a_stale_global_skill_with_the_global_update() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -340,7 +340,7 @@ fn outdated_system_links_unmanaged_skills_to_a_repository() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -369,7 +369,7 @@ fn outdated_system_reports_unmanaged_skills_without_a_match() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -398,7 +398,7 @@ fn outdated_system_surfaces_a_search_failure_and_keeps_scanning() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -426,7 +426,7 @@ fn outdated_system_reports_a_managed_skill_once() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -533,7 +533,7 @@ fn outdated_system_survives_a_corrupt_global_store() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -565,7 +565,7 @@ fn outdated_system_groups_agents_sharing_one_directory() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -637,7 +637,7 @@ fn outdated_reports_the_bundled_skill_by_its_source() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -671,7 +671,7 @@ fn outdated_system_runs_candidate_searches_in_parallel_with_a_bound() {
 
     let started = Instant::now();
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -726,7 +726,7 @@ fn outdated_system_finds_skills_in_parent_directories() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -782,7 +782,7 @@ fn outdated_reports_found_skills_before_remote_checks() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
