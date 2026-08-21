@@ -11,6 +11,24 @@
         "lockedCommitSha": "1111111111111111111111111111111111111111",
         "latestCommitSha": "2222222222222222222222222222222222222222",
         "aheadBy": 3
+      },
+      "history": {
+        "_tag": "compared",
+        "items": [
+          {
+            "sha": "2222222222222222222222222222222222222222",
+            "subject": "Add update review",
+            "author": {
+              "name": "Ada Lovelace",
+              "login": "ada"
+            },
+            "timestamp": "2026-08-21T00:00:00Z",
+            "url": "https://github.com/acme/skills/commit/2222222222222222222222222222222222222222"
+          }
+        ],
+        "total": 3,
+        "truncated": true,
+        "compareUrl": "https://github.com/acme/skills/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222"
       }
     },
     {
