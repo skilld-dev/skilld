@@ -111,7 +111,7 @@ It cannot restore a v2 lockfile.
 | v2 command | v3 replacement |
 | --- | --- |
 | `skilld add <source>` | Run `skilld search`, then `skilld install <selector>` |
-| `skilld update [name]` | `skilld upgrade [name]` |
+| `skilld update [name]` | `skilld update [name]` |
 | `skilld info` | `skilld list`, then `skilld view <name>` |
 | `skilld login` | `skilld auth login` |
 | `skilld whoami` | `skilld auth status` |

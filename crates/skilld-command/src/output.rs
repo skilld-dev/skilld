@@ -1,5 +1,6 @@
 use clap::error::ErrorKind;
 use serde::Serialize;
+use skilld_core::UpdateCheckV1;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{CommandError, CommandErrorKind};
@@ -76,22 +77,15 @@ pub(crate) fn render_search(
     match mode {
         OutputMode::Human { width, color } => Ok(render_human(outcome, width, color).into_bytes()),
         OutputMode::Plain => Ok(render_plain(outcome).into_bytes()),
-        OutputMode::JsonV1 => serde_json::to_vec(&JsonSuccess {
-            schema_version: JSON_SCHEMA_VERSION,
-            tag: "Success",
-            command: "search",
-            data: JsonSearchData {
+        OutputMode::JsonV1 => render_json_success(
+            "search",
+            JsonSearchData {
                 query: &outcome.query,
                 items: &outcome.items,
                 total: outcome.total,
             },
-            notices: Vec::new(),
-        })
-        .map(|mut bytes| {
-            bytes.push(b'\n');
-            bytes
-        })
-        .map_err(|_| CommandError::service("Skill search output could not be encoded")),
+            "Skill search output could not be encoded",
+        ),
     }
 }
 
@@ -107,6 +101,31 @@ pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8>
     } else {
         ("help", JsonDisplayData::Help { path, text })
     };
+    render_json_success(command, data, "display output could not be encoded")
+        .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: display output could not be encoded\n".to_vec())
+}
+
+pub(crate) fn render_update_check(
+    outcome: &UpdateCheckV1,
+    mode: OutputMode,
+) -> Result<Vec<u8>, CommandError> {
+    if mode != OutputMode::JsonV1 {
+        return Err(CommandError::service(
+            "Skill update check output needs JSON mode",
+        ));
+    }
+    render_json_success(
+        "update",
+        outcome,
+        "Skill update check output could not be encoded",
+    )
+}
+
+fn render_json_success<T: Serialize>(
+    command: &'static str,
+    data: T,
+    encoding_error: &'static str,
+) -> Result<Vec<u8>, CommandError> {
     serde_json::to_vec(&JsonSuccess {
         schema_version: JSON_SCHEMA_VERSION,
         tag: "Success",
@@ -118,7 +137,7 @@ pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8>
         bytes.push(b'\n');
         bytes
     })
-    .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: display output could not be encoded\n".to_vec())
+    .map_err(|_| CommandError::service(encoding_error))
 }
 
 pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
