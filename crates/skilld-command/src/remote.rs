@@ -2109,12 +2109,7 @@ fn problem_error(response: &HttpResponse) -> RemoteError {
         instance: Option<String>,
     }
     serde_json::from_slice::<Problem>(&response.body).map_or_else(
-        |_| {
-            RemoteError::new(
-                "SERVICE_UNAVAILABLE",
-                format!("the remote service returned HTTP {}", response.status),
-            )
-        },
+        |_| service_unavailable_error(response),
         |problem| {
             let _ = (&problem.r#type, &problem.instance);
             if problem.status != response.status {
@@ -2123,12 +2118,43 @@ fn problem_error(response: &HttpResponse) -> RemoteError {
                     "the remote problem status does not match HTTP",
                 );
             }
-            RemoteError::new(
-                problem_code(&problem.code),
-                problem.detail.unwrap_or(problem.title),
-            )
+            let detail = match (response.status, retry_after_seconds(response)) {
+                (429, Some(seconds)) => {
+                    let detail = problem.detail.unwrap_or(problem.title);
+                    let detail = detail.trim_end_matches('.');
+                    format!("{detail}. Retry in {seconds}s.")
+                }
+                _ => problem.detail.unwrap_or(problem.title),
+            };
+            RemoteError::new(problem_code(&problem.code), detail)
         },
     )
+}
+
+fn service_unavailable_error(response: &HttpResponse) -> RemoteError {
+    match (response.status, retry_after_seconds(response)) {
+        (429, Some(seconds)) => RemoteError::new(
+            "SERVICE_UNAVAILABLE",
+            format!("the remote service rate limited the request. Retry in {seconds}s."),
+        ),
+        (status, _) if (500..600).contains(&status) => RemoteError::new(
+            "SERVICE_UNAVAILABLE",
+            format!(
+                "the remote service returned HTTP {status}. Retry in a minute. If it keeps failing, the service may be down."
+            ),
+        ),
+        (status, _) => RemoteError::new(
+            "SERVICE_UNAVAILABLE",
+            format!("the remote service returned HTTP {status}"),
+        ),
+    }
+}
+
+fn retry_after_seconds(response: &HttpResponse) -> Option<u64> {
+    response
+        .header("retry-after")
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value <= 3600)
 }
 
 fn problem_code(value: &str) -> &'static str {
@@ -2340,4 +2366,55 @@ struct GithubBlob {
     content: String,
     encoding: String,
     size: u64,
+}
+
+#[cfg(test)]
+mod problem_tests {
+    use super::{HttpResponse, problem_error};
+
+    fn response(status: u16, headers: &[(&str, &str)], body: &str) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: headers
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn server_errors_state_the_next_step() {
+        let error = problem_error(&response(500, &[], "not json"));
+        assert_eq!(error.code, "SERVICE_UNAVAILABLE");
+        assert_eq!(
+            error.message,
+            "the remote service returned HTTP 500. Retry in a minute. If it keeps failing, the service may be down."
+        );
+    }
+
+    #[test]
+    fn rate_limits_without_a_body_state_the_wait() {
+        let error = problem_error(&response(429, &[("retry-after", "7")], "not json"));
+        assert_eq!(error.code, "SERVICE_UNAVAILABLE");
+        assert_eq!(
+            error.message,
+            "the remote service rate limited the request. Retry in 7s."
+        );
+    }
+
+    #[test]
+    fn rate_limits_with_a_body_append_the_wait() {
+        let body = r#"{"code":"RATE_LIMITED","title":"Too many requests","status":429,"type":"about:blank"}"#;
+        let error = problem_error(&response(429, &[("retry-after", "12")], body));
+        assert_eq!(error.code, "RATE_LIMITED");
+        assert_eq!(error.message, "Too many requests. Retry in 12s.");
+    }
+
+    #[test]
+    fn client_errors_keep_the_plain_message() {
+        let error = problem_error(&response(404, &[], "not json"));
+        assert_eq!(error.code, "SERVICE_UNAVAILABLE");
+        assert_eq!(error.message, "the remote service returned HTTP 404");
+    }
 }

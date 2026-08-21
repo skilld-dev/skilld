@@ -115,12 +115,7 @@ impl HttpAdapter for NativeHttpAdapter {
                 builder.send(request.body.as_slice())
             }
         }
-        .map_err(|_| {
-            RemoteError::new(
-                "HTTP_TRANSPORT",
-                "the remote request could not be completed",
-            )
-        })?;
+        .map_err(|error| transport_error(&error, &request.url))?;
         let status = response.status().as_u16();
         let headers = response
             .headers()
@@ -153,8 +148,15 @@ impl HttpAdapter for NativeHttpAdapter {
                     "the remote operation was cancelled",
                 ));
             }
-            let read = reader.read(&mut buffer).map_err(|_| {
-                RemoteError::new("HTTP_TRANSPORT", "the remote response could not be read")
+            let read = reader.read(&mut buffer).map_err(|error| {
+                let reason = match error.kind() {
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => "timed out",
+                    _ => "could not be read",
+                };
+                RemoteError::new(
+                    "HTTP_TRANSPORT",
+                    format!("the remote response {reason}. Retry the command."),
+                )
             })?;
             if read == 0 {
                 break;
@@ -172,5 +174,81 @@ impl HttpAdapter for NativeHttpAdapter {
             headers,
             body: bytes,
         })
+    }
+}
+
+fn transport_error(error: &ureq::Error, request_url: &str) -> RemoteError {
+    let host = Url::parse(request_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "the remote service".to_owned());
+    let reason = match error {
+        ureq::Error::HostNotFound => format!("the {host} address could not be resolved"),
+        ureq::Error::ConnectionFailed => format!("the connection to {host} failed"),
+        ureq::Error::Timeout(_) => format!("the request to {host} timed out"),
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) | ureq::Error::Pem(_) => {
+            format!("the secure connection to {host} failed")
+        }
+        ureq::Error::Io(io) => match io.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                format!("the request to {host} timed out")
+            }
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset => {
+                format!("the connection to {host} failed")
+            }
+            std::io::ErrorKind::NotFound => format!("the {host} address could not be resolved"),
+            _ => "the remote request could not be completed".to_owned(),
+        },
+        _ => "the remote request could not be completed".to_owned(),
+    };
+    let timed_out = matches!(error, ureq::Error::Timeout(_))
+        || matches!(error, ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::TimedOut);
+    let secure = matches!(
+        error,
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) | ureq::Error::Pem(_)
+    );
+    let recovery = if secure {
+        "Check the system clock and certificates, then retry."
+    } else if timed_out {
+        "Retry the command. A slow network can cause this."
+    } else {
+        "Check the network connection, then retry the command."
+    };
+    RemoteError::new("HTTP_TRANSPORT", format!("{reason}. {recovery}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transport_error;
+
+    fn message(error: ureq::Error) -> String {
+        transport_error(&error, "https://skilld.dev/api/v1/skills").message
+    }
+
+    #[test]
+    fn dns_failures_name_the_host_and_a_recovery_step() {
+        assert_eq!(
+            message(ureq::Error::HostNotFound),
+            "the skilld.dev address could not be resolved. Check the network connection, then retry the command."
+        );
+    }
+
+    #[test]
+    fn connection_failures_name_the_host() {
+        assert_eq!(
+            message(ureq::Error::ConnectionFailed),
+            "the connection to skilld.dev failed. Check the network connection, then retry the command."
+        );
+    }
+
+    #[test]
+    fn timeouts_say_so() {
+        assert_eq!(
+            message(ureq::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out"
+            ))),
+            "the request to skilld.dev timed out. Retry the command. A slow network can cause this."
+        );
     }
 }
