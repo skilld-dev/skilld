@@ -15,6 +15,7 @@ use skilld_core::{
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
+#[cfg(not(target_os = "wasi"))]
 const LOCK_NAME: &str = ".skilld-store-lock";
 const LOCKFILE_NAME: &str = "skilld-lock.yaml";
 static TRANSACTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -55,11 +56,22 @@ pub struct TargetInstall {
     pub mode: InstallMode,
 }
 
+#[derive(Clone, Debug)]
+pub struct PreparedStoreUpdate {
+    pub source: PathBuf,
+    pub locked_source: LockedSource,
+    pub source_status: Option<SourceStatus>,
+    pub targets: Vec<TargetInstall>,
+    pub expected_transaction_id: String,
+    pub expected_skill: LockedSkill,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SkillView {
     pub name: String,
     pub canonical_path: PathBuf,
     pub skill: LockedSkill,
+    pub transaction_id: String,
 }
 
 #[derive(Debug)]
@@ -71,6 +83,7 @@ pub enum StoreError {
     InvalidSource(String),
     InvalidTargetPath(PathBuf),
     NotFound(String),
+    StalePlan(String),
     Unsupported(String),
 }
 
@@ -84,6 +97,7 @@ impl StoreError {
             Self::InvalidSource(_) => "INVALID_SOURCE",
             Self::InvalidTargetPath(_) => "INVALID_TARGET",
             Self::NotFound(_) => "SKILL_NOT_FOUND",
+            Self::StalePlan(_) => "PLAN_STALE",
             Self::Unsupported(_) => "UNSUPPORTED_HOST",
         }
     }
@@ -98,6 +112,7 @@ impl fmt::Display for StoreError {
             | Self::InvalidLockfile(message)
             | Self::InvalidSource(message)
             | Self::NotFound(message)
+            | Self::StalePlan(message)
             | Self::Unsupported(message) => formatter.write_str(message),
             Self::InvalidTargetPath(path) => {
                 write!(
@@ -171,6 +186,7 @@ impl LocalStore {
             name: name.to_string(),
             canonical_path: self.root.join(name.as_str()),
             skill,
+            transaction_id: document.transaction_id,
         })
     }
 
@@ -198,6 +214,7 @@ impl LocalStore {
             name: name.to_string(),
             canonical_path: self.root.join(name.as_str()),
             skill,
+            transaction_id: document.transaction_id,
         })
     }
 
@@ -288,17 +305,19 @@ impl LocalStore {
         let journal = Journal {
             version: 1,
             transaction_id: transaction.clone(),
-            operation: JournalOperation::Install,
-            skill: name.to_string(),
-            canonical_had_existing,
-            targets: changes
-                .iter()
-                .map(|change| JournalTarget {
-                    agent: change.agent,
-                    had_existing: change.had_existing,
-                    promote: change.install.is_some(),
-                })
-                .collect(),
+            skills: vec![JournalSkill {
+                operation: JournalOperation::Install,
+                skill: name.to_string(),
+                canonical_had_existing,
+                targets: changes
+                    .iter()
+                    .map(|change| JournalTarget {
+                        agent: change.agent,
+                        had_existing: change.had_existing,
+                        promote: change.install.is_some(),
+                    })
+                    .collect(),
+            }],
         };
         self.write_journal(&journal)?;
 
@@ -385,6 +404,207 @@ impl LocalStore {
         Ok(name)
     }
 
+    pub fn apply_update_batch(
+        &self,
+        updates: Vec<PreparedStoreUpdate>,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<Vec<SkillName>, StoreError> {
+        self.apply_update_batch_with_gate(updates, known_targets, &AllowTransaction)
+    }
+
+    pub fn apply_update_batch_with_gate<G: TransactionGate>(
+        &self,
+        updates: Vec<PreparedStoreUpdate>,
+        known_targets: &[ResolvedTarget],
+        gate: &G,
+    ) -> Result<Vec<SkillName>, StoreError> {
+        ensure_write_capability()?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut names = BTreeSet::new();
+        let mut validated = Vec::with_capacity(updates.len());
+        for update in updates {
+            let source = absolute_normalized(&update.source).map_err(fs_error)?;
+            validate_skill_source(&source)?;
+            let digest = hash_skill_tree(&source)?;
+            let source = resolve_path(&source).map_err(fs_error)?;
+            let name = SkillName::from_source(&source)
+                .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+            if !names.insert(name.clone()) {
+                return Err(StoreError::InvalidSource(format!(
+                    "Skill {name} appears more than once in the update"
+                )));
+            }
+            self.reject_overlap(&source)?;
+            let source_status = update.source_status.unwrap_or_else(|| SourceStatus::Local {
+                content_sha256: digest.clone(),
+            });
+            if source_digest(&source_status) != digest {
+                return Err(StoreError::InvalidSource(
+                    "the updated Skill does not match its source status".to_owned(),
+                ));
+            }
+            validated.push(ValidatedStoreUpdate {
+                name,
+                source,
+                digest,
+                locked_source: update.locked_source,
+                source_status,
+                targets: update.targets,
+                expected_transaction_id: update.expected_transaction_id,
+                expected_skill: update.expected_skill,
+            });
+        }
+        let expected_transaction_id = validated[0].expected_transaction_id.clone();
+        if validated
+            .iter()
+            .any(|update| update.expected_transaction_id != expected_transaction_id)
+        {
+            return Err(stale_update_plan());
+        }
+
+        self.prepare_root()?;
+        let _lock = acquire_store_lock(&self.root)?;
+        self.recover_locked(known_targets)?;
+        let old_lock = self.read_lock()?;
+        if old_lock.transaction_id != expected_transaction_id {
+            return Err(stale_update_plan());
+        }
+        let mut prepared = Vec::with_capacity(validated.len());
+        for update in validated {
+            let Some(old_skill) = old_lock.skills.get(update.name.as_str()) else {
+                return Err(stale_update_plan());
+            };
+            if old_skill != &update.expected_skill {
+                return Err(stale_update_plan());
+            }
+            self.verify_managed_state(&update.name, Some(old_skill), known_targets)?;
+            let selected_targets = unique_target_installs(&update.targets);
+            self.validate_target_changes(
+                &update.name,
+                Some(old_skill),
+                &selected_targets,
+                known_targets,
+            )?;
+            let canonical = self.root.join(update.name.as_str());
+            prepared.push(BatchStoreUpdate {
+                canonical_had_existing: path_exists(&canonical)?,
+                changes: target_changes(
+                    &update.name,
+                    Some(old_skill),
+                    &selected_targets,
+                    known_targets,
+                )?,
+                canonical,
+                update,
+            });
+        }
+
+        let transaction = transaction_id();
+        let journal = Journal {
+            version: 1,
+            transaction_id: transaction.clone(),
+            skills: prepared
+                .iter()
+                .map(|prepared| JournalSkill {
+                    operation: JournalOperation::Install,
+                    skill: prepared.update.name.to_string(),
+                    canonical_had_existing: prepared.canonical_had_existing,
+                    targets: prepared
+                        .changes
+                        .iter()
+                        .map(|change| JournalTarget {
+                            agent: change.agent,
+                            had_existing: change.had_existing,
+                            promote: change.install.is_some(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        self.write_journal(&journal)?;
+
+        let commit_result = (|| -> Result<(), StoreError> {
+            for prepared in &prepared {
+                let canonical_stage = stage_path(&prepared.canonical, &transaction)?;
+                copy_tree(&prepared.update.source, &canonical_stage)?;
+                for change in &prepared.changes {
+                    if let Some(install) = &change.install {
+                        stage_target(
+                            install,
+                            &prepared.canonical,
+                            &canonical_stage,
+                            &transaction,
+                            &prepared.update.digest,
+                        )?;
+                    }
+                }
+                if hash_skill_tree(&canonical_stage)? != prepared.update.digest {
+                    return Err(StoreError::InvalidSource(
+                        "the local Skill changed while copying".to_owned(),
+                    ));
+                }
+            }
+
+            for prepared in &prepared {
+                let canonical_backup = backup_path(&prepared.canonical, &transaction)?;
+                if prepared.canonical_had_existing {
+                    fs::rename(&prepared.canonical, canonical_backup).map_err(fs_error)?;
+                }
+                fs::rename(
+                    stage_path(&prepared.canonical, &transaction)?,
+                    &prepared.canonical,
+                )
+                .map_err(fs_error)?;
+                for change in &prepared.changes {
+                    let destination = change.target.destination(&prepared.update.name);
+                    if change.had_existing {
+                        fs::rename(&destination, backup_path(&destination, &transaction)?)
+                            .map_err(fs_error)?;
+                    }
+                    if change.install.is_some() {
+                        fs::rename(stage_path(&destination, &transaction)?, &destination)
+                            .map_err(fs_error)?;
+                    }
+                }
+            }
+
+            gate.before_lock_commit(&self.lockfile_path())?;
+            let mut new_lock = old_lock;
+            new_lock.transaction_id.clone_from(&transaction);
+            for prepared in &prepared {
+                new_lock.skills.insert(
+                    prepared.update.name.to_string(),
+                    LockedSkill {
+                        source: prepared.update.locked_source.clone(),
+                        source_status: prepared.update.source_status.clone(),
+                        targets: prepared
+                            .update
+                            .targets
+                            .iter()
+                            .map(|target| LockedTarget {
+                                agent: target.target.agent,
+                                mode: target.mode,
+                            })
+                            .collect(),
+                    },
+                );
+            }
+            self.write_lock_atomic(&new_lock, &transaction)
+        })();
+        if let Err(error) = commit_result {
+            return self.rollback_error(error, known_targets);
+        }
+        self.cleanup_committed(&journal, known_targets)
+            .map_err(|error| StoreError::CommittedCleanupPending(error.to_string()))?;
+        Ok(prepared
+            .into_iter()
+            .map(|prepared| prepared.update.name)
+            .collect())
+    }
+
     pub fn remove(
         &self,
         name: &SkillName,
@@ -420,10 +640,12 @@ impl LocalStore {
         let journal = Journal {
             version: 1,
             transaction_id: transaction.clone(),
-            operation: JournalOperation::Remove,
-            skill: name.to_string(),
-            canonical_had_existing,
-            targets: journal_targets,
+            skills: vec![JournalSkill {
+                operation: JournalOperation::Remove,
+                skill: name.to_string(),
+                canonical_had_existing,
+                targets: journal_targets,
+            }],
         };
         self.write_journal(&journal)?;
         if canonical_had_existing {
@@ -662,13 +884,24 @@ impl LocalStore {
         let journal: Journal =
             serde_json::from_slice(&fs::read(path.join("state.json")).map_err(fs_error)?)
                 .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
-        if journal.version != 1 || !valid_transaction_id(&journal.transaction_id) {
+        if journal.version != 1
+            || !valid_transaction_id(&journal.transaction_id)
+            || journal.skills.is_empty()
+        {
             return Err(StoreError::InvalidLockfile(
                 "invalid Skill transaction journal".to_owned(),
             ));
         }
-        SkillName::parse(journal.skill.clone())
-            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+        let mut names = BTreeSet::new();
+        for skill in &journal.skills {
+            let name = SkillName::parse(skill.skill.clone())
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+            if !names.insert(name) {
+                return Err(StoreError::InvalidLockfile(
+                    "the Skill transaction journal contains duplicate Skills".to_owned(),
+                ));
+            }
+        }
         Ok(Some(journal))
     }
 
@@ -716,24 +949,26 @@ impl LocalStore {
         journal: &Journal,
         known_targets: &[ResolvedTarget],
     ) -> Result<(), StoreError> {
-        let name = SkillName::parse(journal.skill.clone())
-            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
-        let canonical = self.root.join(name.as_str());
-        restore_path(
-            &canonical,
-            &stage_path(&canonical, &journal.transaction_id)?,
-            &backup_path(&canonical, &journal.transaction_id)?,
-            journal.canonical_had_existing,
-        )?;
-        for target in &journal.targets {
-            let resolved = find_target(known_targets, target.agent)?;
-            let destination = resolved.destination(&name);
+        for skill in &journal.skills {
+            let name = SkillName::parse(skill.skill.clone())
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+            let canonical = self.root.join(name.as_str());
             restore_path(
-                &destination,
-                &stage_path(&destination, &journal.transaction_id)?,
-                &backup_path(&destination, &journal.transaction_id)?,
-                target.had_existing,
+                &canonical,
+                &stage_path(&canonical, &journal.transaction_id)?,
+                &backup_path(&canonical, &journal.transaction_id)?,
+                skill.canonical_had_existing,
             )?;
+            for target in &skill.targets {
+                let resolved = find_target(known_targets, target.agent)?;
+                let destination = resolved.destination(&name);
+                restore_path(
+                    &destination,
+                    &stage_path(&destination, &journal.transaction_id)?,
+                    &backup_path(&destination, &journal.transaction_id)?,
+                    target.had_existing,
+                )?;
+            }
         }
         restore_lockfile(&self.root, &journal.transaction_id)?;
         remove_path(&self.root.join(JOURNAL_NAME)).map_err(fs_error)
@@ -744,16 +979,20 @@ impl LocalStore {
         journal: &Journal,
         known_targets: &[ResolvedTarget],
     ) -> Result<(), StoreError> {
-        let name = SkillName::parse(journal.skill.clone())
-            .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
-        let canonical = self.root.join(name.as_str());
-        remove_path(&stage_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
-        remove_path(&backup_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
-        for target in &journal.targets {
-            let resolved = find_target(known_targets, target.agent)?;
-            let destination = resolved.destination(&name);
-            remove_path(&stage_path(&destination, &journal.transaction_id)?).map_err(fs_error)?;
-            remove_path(&backup_path(&destination, &journal.transaction_id)?).map_err(fs_error)?;
+        for skill in &journal.skills {
+            let name = SkillName::parse(skill.skill.clone())
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+            let canonical = self.root.join(name.as_str());
+            remove_path(&stage_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
+            remove_path(&backup_path(&canonical, &journal.transaction_id)?).map_err(fs_error)?;
+            for target in &skill.targets {
+                let resolved = find_target(known_targets, target.agent)?;
+                let destination = resolved.destination(&name);
+                remove_path(&stage_path(&destination, &journal.transaction_id)?)
+                    .map_err(fs_error)?;
+                remove_path(&backup_path(&destination, &journal.transaction_id)?)
+                    .map_err(fs_error)?;
+            }
         }
         remove_path(
             &self
@@ -779,11 +1018,37 @@ struct TargetChange {
     install: Option<TargetInstall>,
 }
 
+#[derive(Clone, Debug)]
+struct ValidatedStoreUpdate {
+    name: SkillName,
+    source: PathBuf,
+    digest: String,
+    locked_source: LockedSource,
+    source_status: SourceStatus,
+    targets: Vec<TargetInstall>,
+    expected_transaction_id: String,
+    expected_skill: LockedSkill,
+}
+
+#[derive(Clone, Debug)]
+struct BatchStoreUpdate {
+    update: ValidatedStoreUpdate,
+    canonical: PathBuf,
+    canonical_had_existing: bool,
+    changes: Vec<TargetChange>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Journal {
     version: u8,
     transaction_id: String,
+    skills: Vec<JournalSkill>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct JournalSkill {
     operation: JournalOperation,
     skill: String,
     canonical_had_existing: bool,
@@ -1344,6 +1609,10 @@ fn fs_error(error: io::Error) -> StoreError {
     } else {
         StoreError::Filesystem(error.to_string())
     }
+}
+
+fn stale_update_plan() -> StoreError {
+    StoreError::StalePlan("The Skill store changed while the update was preparing".to_owned())
 }
 
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {

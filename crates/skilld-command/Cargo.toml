@@ -26,6 +26,8 @@ skilld-core.workspace = true
 
 tempfile.workspace = true
 
+unicode-width.workspace = true
+
 url = "2.5.7"
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]

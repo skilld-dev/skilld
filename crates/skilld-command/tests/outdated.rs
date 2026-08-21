@@ -4,12 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 use skilld_command::{
-    Host, LocalHost, PreparedRemoteSkill, RemoteProvider, RemoteSourceState, run,
+    Host, LocalHost, PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome,
+    RemoteComparisonRelation, RemoteLatestCommit, RemoteProvider, RemoteSourceState,
+    RemoteUpdateComparison, RemoteUpdateResult, run,
 };
 use skilld_core::{
-    AgentTargetId, InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource,
-    LockedSource, PreparedFile, RemoteError, RemoteSelector, SearchResult, SourceProvider,
-    SourceRequest, SourceSelector, SourceStatus,
+    AgentTargetId, CommitAuthor, CommitHistory, CommitSha, CommitSummary, InstallMode,
+    InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource, PreparedFile,
+    RemoteError, RemoteSelector, SearchResponse, SearchResult, SourceProvider, SourceRequest,
+    SourceSelector, SourceStatus,
 };
 
 struct Provider {
@@ -63,14 +66,18 @@ fn installed_digest(file: &PreparedFile) -> String {
 }
 
 impl RemoteProvider for Provider {
-    fn search(&self, _query: &str, _limit: u8) -> Result<Vec<SearchResult>, RemoteError> {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, RemoteError> {
         if *self.fail_search.lock().unwrap() {
             return Err(RemoteError::new(
                 "INVALID_RESPONSE",
                 "Skill search returned invalid JSON",
             ));
         }
-        Ok(self.search_results.lock().unwrap().clone())
+        let items = self.search_results.lock().unwrap().clone();
+        Ok(SearchResponse {
+            total: items.len() as u64,
+            items,
+        })
     }
 
     fn prepare(
@@ -128,6 +135,71 @@ impl RemoteProvider for Provider {
         } else {
             RemoteSourceState::Current
         })
+    }
+
+    fn prepare_exact(
+        &self,
+        selector: &RemoteSelector,
+        _commit: &CommitSha,
+        direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        self.prepare(selector, direct)
+    }
+
+    fn latest_commit(
+        &self,
+        _selector: &RemoteSelector,
+        _direct: bool,
+    ) -> Result<RemoteLatestCommit, RemoteError> {
+        Ok(RemoteLatestCommit {
+            commit_sha: CommitSha::parse("f".repeat(40)).unwrap(),
+            access: RemoteComparisonAccess::PublicGithub,
+        })
+    }
+
+    fn compare_updates(
+        &self,
+        comparisons: &[RemoteUpdateComparison],
+    ) -> Result<Vec<RemoteUpdateResult>, RemoteError> {
+        Ok(comparisons
+            .iter()
+            .map(|comparison| {
+                let commit = CommitSummary {
+                    sha: comparison.head_sha.clone(),
+                    subject: "Update the Skill".to_owned(),
+                    author: CommitAuthor {
+                        name: "Test Author".to_owned(),
+                        login: Some("test-author".to_owned()),
+                    },
+                    timestamp: "2026-08-21T00:00:00.000Z".to_owned(),
+                    url: format!(
+                        "https://github.com/{}/{}/commit/{}",
+                        comparison.owner,
+                        comparison.repository,
+                        comparison.head_sha.as_str()
+                    ),
+                };
+                let _ = CommitHistory::compared(vec![commit.clone()], 1, false, &commit.url);
+                RemoteUpdateResult {
+                    id: comparison.id.clone(),
+                    outcome: RemoteComparisonOutcome::Ready {
+                        relation: RemoteComparisonRelation::Ahead,
+                        ahead_by: 1,
+                        behind_by: 0,
+                        commits: vec![commit],
+                        total: 1,
+                        truncated: false,
+                        compare_url: format!(
+                            "https://github.com/{}/{}/compare/{}...{}",
+                            comparison.owner,
+                            comparison.repository,
+                            comparison.base_sha.as_str(),
+                            comparison.head_sha.as_str()
+                        ),
+                    },
+                }
+            })
+            .collect())
     }
 }
 
@@ -191,12 +263,12 @@ fn outdated_reports_current_and_stale_project_skills() {
     assert_eq!(outdated.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Outdated Skill example. Run skilld upgrade example.\n"
+        "Outdated Skill example. Run skilld update example.\n"
     );
 }
 
 #[test]
-fn outdated_system_reports_a_stale_global_skill_with_the_global_upgrade() {
+fn outdated_system_reports_a_stale_global_skill_with_the_global_update() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -220,7 +292,7 @@ fn outdated_system_reports_a_stale_global_skill_with_the_global_upgrade() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Outdated Skill example. Run skilld upgrade example --global.\n"
+        "Outdated Skill example. Run skilld update example --global.\n"
     );
 }
 
@@ -358,7 +430,7 @@ fn outdated_without_installed_skills_reports_none() {
 }
 
 #[test]
-fn upgrade_global_upgrades_a_global_skill() {
+fn update_global_updates_a_global_skill() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -373,7 +445,7 @@ fn upgrade_global_upgrades_a_global_skill() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "upgrade", "example", "--global"],
+        ["skilld", "update", "example", "--global"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -382,7 +454,7 @@ fn upgrade_global_upgrades_a_global_skill() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Upgraded Skill example.\n"
+        "Updated Skill example.\n"
     );
     assert_eq!(
         fs::read_to_string(data.join("skills/example/SKILL.md")).unwrap(),
@@ -508,7 +580,7 @@ fn outdated_gives_the_direct_recovery_for_unverified_skills() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Unverified Skill example. Run skilld install github:skilld-dev/skills/skills/example --direct --agent codex to upgrade it.\n"
+        "Unverified Skill example. Run skilld install github:skilld-dev/skills/skills/example --direct --agent codex to update it.\n"
     );
 }
 

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "_tag": "Success",
+  "command": "update",
+  "data": {
+    "items": [
+    {
+      "name": "available-skill",
+      "relation": {
+        "_tag": "available",
+        "lockedCommitSha": "1111111111111111111111111111111111111111",
+        "latestCommitSha": "2222222222222222222222222222222222222222",
+        "aheadBy": 3
+      },
+      "history": {
+        "_tag": "compared",
+        "items": [
+          {
+            "sha": "2222222222222222222222222222222222222222",
+            "subject": "Add update review",
+            "author": {
+              "name": "Ada Lovelace",
+              "login": "ada"
+            },
+            "timestamp": "2026-08-21T00:00:00Z",
+            "url": "https://github.com/acme/skills/commit/2222222222222222222222222222222222222222"
+          }
+        ],
+        "total": 3,
+        "truncated": true,
+        "compareUrl": "https://github.com/acme/skills/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222"
+      }
+    },
+    {
+      "name": "behind-skill",
+      "relation": {
+        "_tag": "behind",
+        "lockedCommitSha": "2222222222222222222222222222222222222222",
+        "latestCommitSha": "1111111111111111111111111111111111111111",
+        "behindBy": 2
+      }
+    },
+    {
+      "name": "current-skill",
+      "relation": {
+        "_tag": "current",
+        "commitSha": "1111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "diverged-skill",
+      "relation": {
+        "_tag": "diverged",
+        "lockedCommitSha": "1111111111111111111111111111111111111111",
+        "latestCommitSha": "2222222222222222222222222222222222222222",
+        "aheadBy": 4,
+        "behindBy": 2
+      }
+    },
+    {
+      "name": "local-skill",
+      "relation": {
+        "_tag": "notTracked",
+        "reason": "local"
+      }
+    },
+    {
+      "name": "pinned-skill",
+      "relation": {
+        "_tag": "pinned",
+        "commitSha": "1111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "unavailable-skill",
+      "relation": {
+        "_tag": "unavailable",
+        "lockedCommitSha": "1111111111111111111111111111111111111111",
+        "latestCommit": {
+          "_tag": "known",
+          "commitSha": "2222222222222222222222222222222222222222"
+        },
+        "failure": {
+          "code": "COMPARISON_UNAVAILABLE",
+          "message": "Git comparison is unavailable."
+        }
+      }
+    }
+    ]
+  },
+  "notices": []
+}

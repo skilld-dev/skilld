@@ -1,6 +1,7 @@
 mod config;
 mod local_store;
 mod outdated;
+mod output;
 mod remote;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,17 +15,28 @@ use std::sync::Arc;
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
-    AllowTransaction, LocalStore, ResolvedTarget, SkillView, StoreError, TargetInstall,
-    TransactionGate,
+    AllowTransaction, LocalStore, PreparedStoreUpdate, ResolvedTarget, SkillView, StoreError,
+    TargetInstall, TransactionGate,
 };
+pub use output::OutputContext;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
-    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill, RemoteProvider,
-    RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
+    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill,
+    RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit,
+    RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
+    SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
-    AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
+    AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
+    InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
+    NotTrackedReason, SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan,
+    UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
+    classify_update_comparison, select_target_ids,
+};
+
+use output::{
+    OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
+    resolve_mode,
 };
 
 #[derive(Debug, Parser)]
@@ -35,6 +47,12 @@ use skilld_core::{
     disable_help_subcommand = true
 )]
 pub struct Cli {
+    /// Output stable JSON for Agents and automation.
+    #[arg(long, global = true, conflicts_with = "plain")]
+    json: bool,
+    /// Output stable text without terminal formatting.
+    #[arg(long, global = true, conflicts_with = "json")]
+    plain: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -72,10 +90,19 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Upgrade installed Skills.
-    Upgrade {
+    /// Update installed Skills.
+    Update {
         skill: Option<String>,
-        /// Upgrade Skills in the global scope.
+        /// Check update relations without changing files.
+        #[arg(long)]
+        check: bool,
+        /// Select Skill updates in a terminal.
+        #[arg(
+            long,
+            conflicts_with_all = ["skill", "check", "json", "plain"]
+        )]
+        interactive: bool,
+        /// Update Skills in the global scope.
         #[arg(long)]
         global: bool,
     },
@@ -144,7 +171,7 @@ pub trait Host {
         ))
     }
 
-    fn search(&self, _query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, _query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill search is unavailable on this host",
         ))
@@ -156,13 +183,26 @@ pub trait Host {
         ))
     }
 
-    fn upgrade(
+    fn update(
         &self,
         _name: Option<&str>,
         _scope: InstallScope,
     ) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
-            "Skill upgrade is unavailable on this host",
+            "Skill update is unavailable on this host",
+        ))
+    }
+
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+        validate_update_selection(items)?;
+        Err(CommandError::unsupported_host(
+            "Selected Skill updates are unavailable on this host",
+        ))
+    }
+
+    fn update_check(&self, _name: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill update checks are unavailable on this host",
         ))
     }
 
@@ -209,73 +249,88 @@ pub trait Host {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandErrorKind {
+    Usage,
+    Operation,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandError {
+    pub kind: CommandErrorKind,
     pub code: &'static str,
     pub message: String,
 }
 
 impl CommandError {
-    pub fn unsupported_host(message: impl Into<String>) -> Self {
+    pub fn usage(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: "UNSUPPORTED_HOST",
+            kind: CommandErrorKind::Usage,
+            code,
             message: message.into(),
         }
+    }
+
+    pub fn operation(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            kind: CommandErrorKind::Operation,
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported_host(message: impl Into<String>) -> Self {
+        Self::operation("UNSUPPORTED_HOST", message)
     }
 
     pub fn service(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn not_implemented(message: impl Into<String>) -> Self {
-        Self {
-            code: "NOT_IMPLEMENTED",
-            message: message.into(),
-        }
+        Self::operation("NOT_IMPLEMENTED", message)
     }
 
     pub fn input(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_SOURCE",
-            message: message.into(),
-        }
+        Self::usage("INVALID_SOURCE", message)
     }
 
     pub fn config(message: impl Into<String>) -> Self {
-        Self {
-            code: "INVALID_CONFIG",
-            message: message.into(),
-        }
+        Self::usage("INVALID_CONFIG", message)
     }
 
     pub fn filesystem(message: impl Into<String>) -> Self {
-        Self {
-            code: "SERVICE_UNAVAILABLE",
-            message: message.into(),
-        }
+        Self::operation("SERVICE_UNAVAILABLE", message)
     }
 
     pub fn domain(error: DomainError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::usage(error.code(), error.to_string())
     }
 
     pub fn store(error: StoreError) -> Self {
-        Self {
-            code: error.code(),
-            message: error.to_string(),
-        }
+        Self::operation(error.code(), error.to_string())
     }
 
     pub fn remote(error: skilld_core::RemoteError) -> Self {
+        let kind = if matches!(
+            error.code,
+            "INVALID_SEARCH" | "INVALID_SOURCE" | "DIRECT_SOURCE_REQUIRED"
+        ) {
+            CommandErrorKind::Usage
+        } else {
+            CommandErrorKind::Operation
+        };
         Self {
+            kind,
             code: error.code,
             message: error.message,
+        }
+    }
+
+    fn exit_code(&self) -> u8 {
+        match self.kind {
+            CommandErrorKind::Usage => 2,
+            CommandErrorKind::Operation => 1,
         }
     }
 }
@@ -293,6 +348,28 @@ pub struct CommandResult {
     pub exit_code: u8,
 }
 
+pub fn interactive_update_requested<I, T>(args: I) -> Result<bool, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    Cli::try_parse_from(args).map(|cli| {
+        matches!(
+            cli.command,
+            Command::Update {
+                interactive: true,
+                ..
+            }
+        )
+    })
+}
+
+enum CommandOutput {
+    Lines(Vec<String>),
+    Search(SearchOutcome),
+    UpdateCheck(UpdatePlanV1),
+}
+
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
 where
     I: IntoIterator<Item = T>,
@@ -301,7 +378,31 @@ where
     O: Write,
     E: Write,
 {
-    let cli = match Cli::try_parse_from(args) {
+    run_with_output(args, host, OutputContext::Plain, stdout, stderr)
+}
+
+pub fn run_with_output<I, T, H, O, E>(
+    args: I,
+    host: &H,
+    context: OutputContext,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+    H: Host,
+    O: Write,
+    E: Write,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    let (requested_json, requested_plain) = requested_output(&args);
+    let requested_mode = if requested_json && requested_plain {
+        OutputMode::Plain
+    } else {
+        resolve_mode(requested_json, requested_plain, context)
+    };
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
             let display = matches!(
@@ -309,8 +410,33 @@ where
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             );
             let target: &mut dyn Write = if display { stdout } else { stderr };
-            if write!(target, "{error}").is_err() {
-                return CommandResult { exit_code: 2 };
+            let rendered = if requested_mode == OutputMode::JsonV1 {
+                if display {
+                    output::render_display(
+                        error.kind(),
+                        &display_path(&args),
+                        error.to_string().trim(),
+                    )
+                } else {
+                    let message = error
+                        .to_string()
+                        .lines()
+                        .next()
+                        .unwrap_or("invalid command arguments")
+                        .trim_start_matches("error: ")
+                        .to_owned();
+                    render_error(
+                        &CommandError::usage("INVALID_ARGUMENT", message),
+                        requested_mode,
+                    )
+                }
+            } else {
+                error.to_string().into_bytes()
+            };
+            if target.write_all(&rendered).is_err() {
+                return CommandResult {
+                    exit_code: if display { 1 } else { 2 },
+                };
             }
             return CommandResult {
                 exit_code: if display { 0 } else { 2 },
@@ -318,20 +444,142 @@ where
         }
     };
 
+    let mode = resolve_mode(cli.json, cli.plain, context);
+    if matches!(&cli.command, Command::Update { check: true, .. }) && mode != OutputMode::JsonV1 {
+        let error = CommandError::usage("UNSUPPORTED_OUTPUT", "Skill update checks need --json");
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
+    let supports_json = matches!(&cli.command, Command::Search { .. })
+        || matches!(&cli.command, Command::Update { check: true, .. });
+    if mode == OutputMode::JsonV1 && !supports_json {
+        let error = CommandError::usage(
+            "UNSUPPORTED_OUTPUT",
+            "JSON output is available for Skill search and update checks",
+        );
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
+
     match dispatch(cli.command, host) {
-        Ok(lines) => {
+        Ok(CommandOutput::Lines(lines)) => {
+            let mut bytes = Vec::new();
             for line in lines {
-                if writeln!(stdout, "{line}").is_err() {
-                    return CommandResult { exit_code: 2 };
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+            write_success(&bytes, mode, stdout, stderr)
+        }
+        Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
                 }
             }
+        },
+        Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
+            Ok(bytes) => {
+                let exit_code = if outcome.is_incomplete() {
+                    2
+                } else if outcome.has_changes() {
+                    1
+                } else {
+                    0
+                };
+                write_success_with_exit(&bytes, mode, stdout, stderr, exit_code)
+            }
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
+            }
+        },
+        Err(error) => {
+            if stderr.write_all(&render_error(&error, mode)).is_err() {
+                return CommandResult {
+                    exit_code: error.exit_code(),
+                };
+            }
+            CommandResult {
+                exit_code: error.exit_code(),
+            }
+        }
+    }
+}
+
+fn requested_output(args: &[OsString]) -> (bool, bool) {
+    let mut json = false;
+    let mut plain = false;
+    for argument in args.iter().skip(1) {
+        if argument == "--" {
+            break;
+        }
+        if argument == "--json" {
+            json = true;
+        } else if argument == "--plain" {
+            plain = true;
+        }
+    }
+    (json, plain)
+}
+
+fn display_path(args: &[OsString]) -> String {
+    let commands = [
+        "search", "install", "list", "view", "remove", "update", "verify", "auth", "config",
+    ];
+    let mut path = vec!["skilld"];
+    if let Some(command) = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .find(|argument| commands.contains(argument))
+    {
+        path.push(command);
+    }
+    path.join(" ")
+}
+
+fn write_success<O: Write, E: Write>(
+    bytes: &[u8],
+    mode: OutputMode,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult {
+    write_success_with_exit(bytes, mode, stdout, stderr, 0)
+}
+
+fn write_success_with_exit<O: Write, E: Write>(
+    bytes: &[u8],
+    mode: OutputMode,
+    stdout: &mut O,
+    stderr: &mut E,
+    exit_code: u8,
+) -> CommandResult {
+    match stdout.write_all(bytes) {
+        Ok(()) => CommandResult { exit_code },
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
             CommandResult { exit_code: 0 }
         }
-        Err(error) => {
-            if writeln!(stderr, "{error}").is_err() {
-                return CommandResult { exit_code: 2 };
-            }
-            CommandResult { exit_code: 2 }
+        Err(_) => {
+            let error =
+                CommandError::operation("OUTPUT_WRITE_FAILED", "Skill output could not be written");
+            let _ = stderr.write_all(&render_error(&error, mode));
+            CommandResult { exit_code: 1 }
         }
     }
 }
@@ -359,7 +607,7 @@ pub fn run_stdio_probe<R: Read, O: Write, E: Write>(
     }
 }
 
-fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandError> {
+fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, CommandError> {
     match command {
         Command::Install {
             source,
@@ -413,71 +661,99 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
             if direct {
                 lines.push("Review the unverified Skill before use.".to_owned());
             }
-            Ok(lines)
+            Ok(CommandOutput::Lines(lines))
         }
-        Command::List { global } => host.list(scope(global)),
-        Command::View { skill, global } => render_view(host.view(&skill, scope(global))?),
+        Command::List { global } => host.list(scope(global)).map(CommandOutput::Lines),
+        Command::View { skill, global } => {
+            render_view(host.view(&skill, scope(global))?).map(CommandOutput::Lines)
+        }
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
-            Ok(vec![format!("Removed Skill {skill}.")])
+            Ok(CommandOutput::Lines(vec![format!(
+                "Removed Skill {skill}."
+            )]))
         }
         Command::Auth {
             command: AuthCommand::Status,
-        } => Ok(vec![if host.auth_status()? {
+        } => Ok(CommandOutput::Lines(vec![if host.auth_status()? {
             "Authenticated.".to_owned()
         } else {
             "Not authenticated.".to_owned()
-        }]),
+        }])),
         Command::Auth {
             command: AuthCommand::Login,
         } => {
             host.auth_login()?;
-            Ok(vec!["Authentication started.".to_owned()])
+            Ok(CommandOutput::Lines(vec![
+                "Authentication started.".to_owned(),
+            ]))
         }
         Command::Auth {
             command: AuthCommand::Logout,
         } => {
             host.auth_logout()?;
-            Ok(vec!["Logged out.".to_owned()])
+            Ok(CommandOutput::Lines(vec!["Logged out.".to_owned()]))
         }
         Command::Config {
             command: ConfigCommand::Get { key },
-        } => Ok(vec![host.config_get(&key)?]),
+        } => Ok(CommandOutput::Lines(vec![host.config_get(&key)?])),
         Command::Config {
             command: ConfigCommand::Set { key, value },
         } => {
             host.config_set(&key, &value)?;
-            Ok(vec![format!("Set {key}.")])
+            Ok(CommandOutput::Lines(vec![format!("Set {key}.")]))
         }
         Command::Config {
             command: ConfigCommand::List,
-        } => host.config_list(),
-        Command::Search { query } => host
-            .search(&query.join(" "))?
-            .into_iter()
-            .map(|result| {
-                let selector = result.selector().map_err(CommandError::remote)?;
-                let description = result
-                    .description
-                    .unwrap_or_default()
-                    .chars()
-                    .map(|character| {
-                        if character.is_control() {
-                            ' '
-                        } else {
-                            character
-                        }
+        } => host.config_list().map(CommandOutput::Lines),
+        Command::Search { query } => {
+            let query = query.join(" ").trim().to_owned();
+            if query.is_empty() || query.len() > 200 {
+                return Err(CommandError::usage(
+                    "INVALID_SEARCH",
+                    "Skill search needs a query up to 200 bytes",
+                ));
+            }
+            let response = host.search(&query)?;
+            let items = response
+                .items
+                .into_iter()
+                .map(|result| {
+                    let selector = result.selector().map_err(CommandError::remote)?;
+                    Ok(SearchItem {
+                        name: result.name,
+                        selector: selector.to_string(),
+                        description: result.description,
+                        stargazer_count: result.stargazer_count,
                     })
-                    .collect::<String>();
-                Ok(format!(
-                    "{}\t{}\t{}\t{} stars",
-                    result.name, selector, description, result.stargazer_count
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            Ok(CommandOutput::Search(SearchOutcome {
+                query,
+                items,
+                total: response.total,
+            }))
+        }
+        Command::Update {
+            skill,
+            check,
+            interactive,
+            global,
+        } => {
+            if interactive {
+                Err(CommandError::unsupported_host(
+                    "Interactive Skill update needs a native terminal host",
                 ))
-            })
-            .collect(),
-        Command::Upgrade { skill, global } => host.upgrade(skill.as_deref(), scope(global)),
-        Command::Verify { skill } => host.verify(skill.as_deref()),
-        Command::Outdated { system } => host.outdated(system),
+            } else if check {
+                host.update_check(skill.as_deref())
+                    .map(CommandOutput::UpdateCheck)
+            } else {
+                host.update(skill.as_deref(), scope(global))
+                    .map(CommandOutput::Lines)
+            }
+        }
+        Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
+        Command::Outdated { system } => host.outdated(system).map(CommandOutput::Lines),
     }
 }
 
@@ -789,13 +1065,13 @@ impl LocalHost {
         let store = self.store(request.scope);
         let names = store.list(&known).map_err(CommandError::store)?;
         if names.is_empty() {
-            return Err(CommandError {
-                code: "LOCKFILE_NOT_FOUND",
-                message: format!(
+            return Err(CommandError::operation(
+                "LOCKFILE_NOT_FOUND",
+                format!(
                     "no installed Skills exist in {} scope",
                     request.scope.as_str()
                 ),
-            });
+            ));
         }
         let mut restored = Vec::new();
         for name in names {
@@ -866,12 +1142,11 @@ impl LocalHost {
                         skilld_core::SourceStatus::Verified { .. } => false,
                         skilld_core::SourceStatus::Unverified { .. } if direct => true,
                         _ => {
-                            return Err(CommandError {
-                                code: "UNVERIFIED_SOURCE",
-                                message:
-                                    "run skilld install --direct to restore an unverified Skill"
-                                        .to_owned(),
-                            });
+                            return Err(CommandError::operation(
+                                "UNVERIFIED_SOURCE",
+                                "run skilld install --direct to restore an unverified Skill"
+                                    .to_owned(),
+                            ));
                         }
                     };
                     let selector = skilld_core::RemoteSelector::parse(&source)
@@ -1003,7 +1278,7 @@ impl Host for LocalHost {
             .logout()
     }
 
-    fn search(&self, query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         self.remote_provider()?
             .search(query, 20)
             .map_err(CommandError::remote)
@@ -1020,10 +1295,9 @@ impl Host for LocalHost {
             let view = store
                 .verify_content(&name, &known)
                 .map_err(|error| match error {
-                    StoreError::Conflict(message) => CommandError {
-                        code: "CONTENT_CHANGED",
-                        message,
-                    },
+                    StoreError::Conflict(message) => {
+                        CommandError::operation("CONTENT_CHANGED", message)
+                    }
                     error => CommandError::store(error),
                 })?;
             match (&view.skill.source, &view.skill.source_status) {
@@ -1044,21 +1318,18 @@ impl Host for LocalHost {
                             lines.push(format!("Verified Skill {}.", name.as_str()));
                         }
                         RemoteSourceState::Stale { .. } => {
-                            return Err(CommandError {
-                                code: "SOURCE_STALE",
-                                message: format!(
-                                    "Skill {} has a newer or changed source",
-                                    name.as_str()
-                                ),
-                            });
+                            return Err(CommandError::operation(
+                                "SOURCE_STALE",
+                                format!("Skill {} has a newer or changed source", name.as_str()),
+                            ));
                         }
                     }
                 }
                 (_, skilld_core::SourceStatus::Unverified { .. }) => {
-                    return Err(CommandError {
-                        code: "UNVERIFIED_SOURCE",
-                        message: format!("Skill {} has an unverified source", name.as_str()),
-                    });
+                    return Err(CommandError::operation(
+                        "UNVERIFIED_SOURCE",
+                        format!("Skill {} has an unverified source", name.as_str()),
+                    ));
                 }
                 _ => lines.push(format!("Checked local Skill {}.", name.as_str())),
             }
@@ -1066,7 +1337,7 @@ impl Host for LocalHost {
         Ok(lines)
     }
 
-    fn upgrade(
+    fn update(
         &self,
         requested: Option<&str>,
         scope: InstallScope,
@@ -1074,12 +1345,13 @@ impl Host for LocalHost {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
-        let mut upgraded = Vec::new();
+        let provider = self.remote_provider()?;
+        let mut pending = Vec::new();
         for name in names {
             let skill_name =
                 skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
             let view = store
-                .view(&skill_name, &known)
+                .verify_content(&skill_name, &known)
                 .map_err(CommandError::store)?;
             let LockedSource::Remote { source, .. } = &view.skill.source else {
                 continue;
@@ -1088,27 +1360,119 @@ impl Host for LocalHost {
                 view.skill.source_status,
                 skilld_core::SourceStatus::Verified { .. }
             ) {
-                return Err(CommandError {
-                    code: "UNVERIFIED_SOURCE",
-                    message: format!("Skill {name} needs another explicit --direct install"),
-                });
+                return Err(CommandError::operation(
+                    "UNVERIFIED_SOURCE",
+                    format!("Skill {name} needs another explicit --direct install"),
+                ));
             }
             let selector =
                 skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
-            let prepared = self
-                .remote_provider()?
-                .prepare(&selector, false)
+            if matches!(selector.source().r#ref, Some(SourceRef::Commit { .. })) {
+                continue;
+            }
+            let latest_commit = provider
+                .latest_commit(&selector, false)
+                .map_err(CommandError::remote)?;
+            let LockedSource::Remote { commit_sha, .. } = &view.skill.source else {
+                unreachable!("the update candidate has a remote source")
+            };
+            let locked_commit_sha =
+                CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?;
+            if latest_commit.commit_sha == locked_commit_sha {
+                continue;
+            }
+            let comparison = RemoteUpdateComparison::new(
+                skill_name.as_str(),
+                &selector.source().owner,
+                &selector.source().repository,
+                locked_commit_sha,
+                latest_commit.commit_sha.clone(),
+                latest_commit.access,
+            )
+            .map_err(CommandError::remote)?;
+            pending.push(PendingUpdateApply {
+                name,
+                skill_name,
+                view,
+                selector,
+                expected_commit: latest_commit.commit_sha,
+                comparison,
+            });
+        }
+        if pending.is_empty() {
+            return Ok(vec![]);
+        }
+        let comparisons = pending
+            .iter()
+            .map(|pending| pending.comparison.clone())
+            .collect::<Vec<_>>();
+        let results = provider
+            .compare_updates(&comparisons)
+            .map_err(CommandError::remote)?;
+        if results.len() != pending.len() {
+            return Err(CommandError::service(
+                "Update comparison results were incomplete",
+            ));
+        }
+        let mut selected = Vec::new();
+        for (pending, result) in pending.into_iter().zip(results) {
+            if pending.comparison.id != result.id {
+                return Err(CommandError::service(
+                    "Update comparison results changed order",
+                ));
+            }
+            match result.outcome {
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Ahead,
+                    total,
+                    ..
+                } if total > 0 => {}
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Behind,
+                    ..
+                } => {
+                    return Err(CommandError::operation(
+                        "UPDATE_CONFIRMATION_REQUIRED",
+                        format!(
+                            "Skill {} needs interactive confirmation because its source moved behind",
+                            pending.name
+                        ),
+                    ));
+                }
+                RemoteComparisonOutcome::Ready {
+                    relation: RemoteComparisonRelation::Diverged,
+                    ..
+                } => {
+                    return Err(CommandError::operation(
+                        "UPDATE_CONFIRMATION_REQUIRED",
+                        format!(
+                            "Skill {} needs interactive confirmation because its source diverged",
+                            pending.name
+                        ),
+                    ));
+                }
+                RemoteComparisonOutcome::Ready { .. } => {
+                    return Err(CommandError::operation(
+                        "INVALID_RESPONSE",
+                        "GitHub returned an impossible update relation",
+                    ));
+                }
+                outcome => return Err(update_apply_failure(&pending.name, outcome)),
+            }
+            let prepared = provider
+                .prepare_exact(&pending.selector, &pending.expected_commit, false)
                 .map_err(CommandError::remote)?;
             let staged = materialize_remote(&prepared.files)?;
             let staged_name =
                 skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
-            if staged_name != skill_name {
-                return Err(CommandError {
-                    code: "SOURCE_MISMATCH",
-                    message: format!("the upgraded Skill name changed from {name}"),
-                });
+            if staged_name != pending.skill_name {
+                return Err(CommandError::operation(
+                    "SOURCE_MISMATCH",
+                    format!("the updated Skill name changed from {}", pending.name),
+                ));
             }
-            let targets = view
+            let targets = pending
+                .view
                 .skill
                 .targets
                 .iter()
@@ -1128,19 +1492,200 @@ impl Host for LocalHost {
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            store
-                .install_from_with_status(
-                    staged.path(),
-                    prepared.locked_source,
-                    prepared.source_status,
-                    &targets,
-                    &known,
-                )
-                .map_err(CommandError::store)?;
-            upgraded.push(format!("Upgraded Skill {name}."));
+            selected.push(PreparedUpdateSelection {
+                name: pending.name,
+                staged,
+                prepared,
+                targets,
+                expected_transaction_id: pending.view.transaction_id,
+                expected_skill: pending.view.skill,
+            });
         }
-        Ok(upgraded)
+        let updates = selected
+            .iter()
+            .map(|selection| PreparedStoreUpdate {
+                source: selection.staged.path().to_owned(),
+                locked_source: selection.prepared.locked_source.clone(),
+                source_status: Some(selection.prepared.source_status.clone()),
+                targets: selection.targets.clone(),
+                expected_transaction_id: selection.expected_transaction_id.clone(),
+                expected_skill: selection.expected_skill.clone(),
+            })
+            .collect();
+        store
+            .apply_update_batch(updates, &known)
+            .map_err(CommandError::store)?;
+        Ok(selected
+            .into_iter()
+            .map(|selection| format!("Updated Skill {}.", selection.name))
+            .collect())
     }
+
+    fn update_selected(&self, items: &[UpdatePlanItem]) -> Result<Vec<String>, CommandError> {
+        validate_update_selection(items)?;
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        apply_update_selection(self, items, store, known)
+    }
+
+    fn update_check(&self, requested: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
+        let scope = InstallScope::Project;
+        let known = self.known_targets(scope)?;
+        let store = self.store(scope);
+        let names = selected_names(&store, &known, requested)?;
+        let mut items = Vec::with_capacity(names.len());
+        let mut pending = Vec::new();
+        for name in names {
+            let skill_name = skilld_core::SkillName::parse(name).map_err(CommandError::domain)?;
+            let view = store
+                .verify_content(&skill_name, &known)
+                .map_err(CommandError::store)?;
+            let (source, locked_commit_sha) = match &view.skill.source {
+                LockedSource::Local { .. } => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        UpdateRelation::NotTracked {
+                            reason: NotTrackedReason::Local,
+                        },
+                    ));
+                    continue;
+                }
+                LockedSource::BundledSkilld => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        UpdateRelation::NotTracked {
+                            reason: NotTrackedReason::Bundled,
+                        },
+                    ));
+                    continue;
+                }
+                LockedSource::Remote {
+                    source, commit_sha, ..
+                } => (
+                    source,
+                    CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?,
+                ),
+            };
+            let selector = match skilld_core::RemoteSelector::parse(source) {
+                Ok(selector) => selector,
+                Err(error) => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            error.code,
+                            error.message,
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            if let Some(SourceRef::Commit { value }) = &selector.source().r#ref {
+                let pinned = CommitSha::parse(value.clone()).map_err(update_model_error)?;
+                let relation = if pinned == locked_commit_sha {
+                    UpdateRelation::Pinned {
+                        commit_sha: locked_commit_sha,
+                    }
+                } else {
+                    unavailable_update(
+                        locked_commit_sha,
+                        UpdateLatestCommit::Known { commit_sha: pinned },
+                        "INVALID_LOCKFILE",
+                        "The locked commit differs from its source selector",
+                    )
+                };
+                items.push(UpdatePlanItem::new(skill_name, relation));
+                continue;
+            }
+            let direct = match &view.skill.source_status {
+                skilld_core::SourceStatus::Verified { .. } => false,
+                skilld_core::SourceStatus::Unverified { .. } => true,
+                skilld_core::SourceStatus::Local { .. } => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            "INVALID_LOCKFILE",
+                            "A remote Skill has a local source status",
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            let latest = match self.remote_provider().and_then(|provider| {
+                provider
+                    .latest_commit(&selector, direct)
+                    .map_err(CommandError::remote)
+            }) {
+                Ok(latest) => latest,
+                Err(error) => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            error.code,
+                            error.message,
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            if latest.commit_sha == locked_commit_sha {
+                items.push(UpdatePlanItem::new(
+                    skill_name,
+                    UpdateRelation::Current {
+                        commit_sha: locked_commit_sha,
+                    },
+                ));
+                continue;
+            }
+            let comparison = RemoteUpdateComparison::new(
+                skill_name.as_str(),
+                &selector.source().owner,
+                &selector.source().repository,
+                locked_commit_sha.clone(),
+                latest.commit_sha.clone(),
+                latest.access,
+            )
+            .map_err(CommandError::remote)?;
+            pending.push(PendingUpdateComparison {
+                name: skill_name,
+                locked_commit_sha,
+                latest_commit_sha: latest.commit_sha,
+                comparison,
+            });
+        }
+        if !pending.is_empty() {
+            let comparisons = pending
+                .iter()
+                .map(|pending| pending.comparison.clone())
+                .collect::<Vec<_>>();
+            let results = self
+                .remote_provider()?
+                .compare_updates(&comparisons)
+                .map_err(CommandError::remote)?;
+            if results.len() != pending.len() {
+                return Err(CommandError::service(
+                    "Update comparison results were incomplete",
+                ));
+            }
+            for (pending, result) in pending.into_iter().zip(results) {
+                if pending.comparison.id != result.id {
+                    return Err(CommandError::service(
+                        "Update comparison results changed order",
+                    ));
+                }
+                items.push(update_plan_item(pending, result.outcome));
+            }
+        }
+        let plan = UpdatePlan::new(items).map_err(update_model_error)?;
+        Ok(UpdatePlanV1::new(plan))
+    }
+
     fn outdated(&self, system: bool) -> Result<Vec<String>, CommandError> {
         let scopes = if system {
             vec![InstallScope::Project, InstallScope::Global]
@@ -1216,6 +1761,369 @@ impl Host for LocalHost {
     }
 }
 
+struct PendingUpdateComparison {
+    name: skilld_core::SkillName,
+    locked_commit_sha: CommitSha,
+    latest_commit_sha: CommitSha,
+    comparison: RemoteUpdateComparison,
+}
+
+struct PendingUpdateApply {
+    name: String,
+    skill_name: skilld_core::SkillName,
+    view: SkillView,
+    selector: skilld_core::RemoteSelector,
+    expected_commit: CommitSha,
+    comparison: RemoteUpdateComparison,
+}
+
+struct PreparedUpdateSelection {
+    name: String,
+    staged: StagedRemote,
+    prepared: PreparedRemoteSkill,
+    targets: Vec<TargetInstall>,
+    expected_transaction_id: String,
+    expected_skill: skilld_core::LockedSkill,
+}
+
+fn apply_update_selection(
+    host: &LocalHost,
+    items: &[UpdatePlanItem],
+    store: LocalStore,
+    known: Vec<ResolvedTarget>,
+) -> Result<Vec<String>, CommandError> {
+    let provider = host.remote_provider()?;
+    let mut pending = Vec::new();
+    for item in items {
+        let name = item.name().as_str().to_owned();
+        let UpdateRelation::Available {
+            locked_commit_sha,
+            latest_commit_sha,
+            ..
+        } = item.relation()
+        else {
+            unreachable!("the update selection was validated")
+        };
+        let skill_name = item.name().clone();
+        let view = store
+            .verify_content(&skill_name, &known)
+            .map_err(CommandError::store)?;
+        let LockedSource::Remote {
+            source, commit_sha, ..
+        } = &view.skill.source
+        else {
+            return Err(stale_update_plan(&name));
+        };
+        if !matches!(
+            view.skill.source_status,
+            skilld_core::SourceStatus::Verified { .. }
+        ) {
+            return Err(CommandError::operation(
+                "UNVERIFIED_SOURCE",
+                format!("Skill {name} needs another explicit --direct install"),
+            ));
+        }
+        let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+        if matches!(selector.source().r#ref, Some(SourceRef::Commit { .. })) {
+            return Err(stale_update_plan(&name));
+        }
+        let installed_commit_sha =
+            CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?;
+        if &installed_commit_sha != locked_commit_sha {
+            return Err(stale_update_plan(&name));
+        }
+        let latest_commit = provider
+            .latest_commit(&selector, false)
+            .map_err(CommandError::remote)?;
+        if &latest_commit.commit_sha != latest_commit_sha {
+            return Err(stale_update_plan(&name));
+        }
+        let comparison = RemoteUpdateComparison::new(
+            skill_name.as_str(),
+            &selector.source().owner,
+            &selector.source().repository,
+            locked_commit_sha.clone(),
+            latest_commit_sha.clone(),
+            latest_commit.access,
+        )
+        .map_err(CommandError::remote)?;
+        pending.push(PendingUpdateApply {
+            name,
+            skill_name,
+            view,
+            selector,
+            expected_commit: latest_commit_sha.clone(),
+            comparison,
+        });
+    }
+    if pending.is_empty() {
+        return Ok(vec![]);
+    }
+    let comparisons = pending
+        .iter()
+        .map(|pending| pending.comparison.clone())
+        .collect::<Vec<_>>();
+    let results = provider
+        .compare_updates(&comparisons)
+        .map_err(CommandError::remote)?;
+    if results.len() != pending.len() {
+        return Err(CommandError::service(
+            "Update comparison results were incomplete",
+        ));
+    }
+    let mut selected = Vec::new();
+    for (pending, result) in pending.into_iter().zip(results) {
+        if pending.comparison.id != result.id {
+            return Err(CommandError::service(
+                "Update comparison results changed order",
+            ));
+        }
+        match result.outcome {
+            RemoteComparisonOutcome::Ready {
+                relation: RemoteComparisonRelation::Ahead,
+                total,
+                ..
+            } if total > 0 => {}
+            RemoteComparisonOutcome::Ready {
+                relation: RemoteComparisonRelation::Behind,
+                ..
+            } => {
+                return Err(CommandError::operation(
+                    "UPDATE_CONFIRMATION_REQUIRED",
+                    format!(
+                        "Skill {} needs interactive confirmation because its source moved behind",
+                        pending.name
+                    ),
+                ));
+            }
+            RemoteComparisonOutcome::Ready {
+                relation: RemoteComparisonRelation::Diverged,
+                ..
+            } => {
+                return Err(CommandError::operation(
+                    "UPDATE_CONFIRMATION_REQUIRED",
+                    format!(
+                        "Skill {} needs interactive confirmation because its source diverged",
+                        pending.name
+                    ),
+                ));
+            }
+            RemoteComparisonOutcome::Ready { .. } => {
+                return Err(CommandError::operation(
+                    "INVALID_RESPONSE",
+                    "GitHub returned an impossible update relation",
+                ));
+            }
+            outcome => return Err(update_apply_failure(&pending.name, outcome)),
+        }
+        let prepared = provider
+            .prepare_exact(&pending.selector, &pending.expected_commit, false)
+            .map_err(CommandError::remote)?;
+        let staged = materialize_remote(&prepared.files)?;
+        let staged_name =
+            skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
+        if staged_name != pending.skill_name {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                format!("the updated Skill name changed from {}", pending.name),
+            ));
+        }
+        let targets = pending
+            .view
+            .skill
+            .targets
+            .iter()
+            .map(|locked| {
+                known
+                    .iter()
+                    .find(|target| target.agent == locked.agent)
+                    .cloned()
+                    .map(|target| TargetInstall {
+                        target,
+                        mode: locked.mode,
+                    })
+                    .ok_or_else(|| {
+                        CommandError::domain(DomainError::InvalidTarget(locked.agent.to_string()))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        selected.push(PreparedUpdateSelection {
+            name: pending.name,
+            staged,
+            prepared,
+            targets,
+            expected_transaction_id: pending.view.transaction_id,
+            expected_skill: pending.view.skill,
+        });
+    }
+    let updates = selected
+        .iter()
+        .map(|selection| PreparedStoreUpdate {
+            source: selection.staged.path().to_owned(),
+            locked_source: selection.prepared.locked_source.clone(),
+            source_status: Some(selection.prepared.source_status.clone()),
+            targets: selection.targets.clone(),
+            expected_transaction_id: selection.expected_transaction_id.clone(),
+            expected_skill: selection.expected_skill.clone(),
+        })
+        .collect();
+    store
+        .apply_update_batch(updates, &known)
+        .map_err(CommandError::store)?;
+    Ok(selected
+        .into_iter()
+        .map(|selection| format!("Updated Skill {}.", selection.name))
+        .collect())
+}
+
+fn update_plan_item(
+    pending: PendingUpdateComparison,
+    outcome: RemoteComparisonOutcome,
+) -> UpdatePlanItem {
+    let unavailable = |code: &'static str, message: String| {
+        UpdatePlanItem::new(
+            pending.name.clone(),
+            unavailable_update(
+                pending.locked_commit_sha.clone(),
+                UpdateLatestCommit::Known {
+                    commit_sha: pending.latest_commit_sha.clone(),
+                },
+                code,
+                message,
+            ),
+        )
+    };
+    match outcome {
+        RemoteComparisonOutcome::Ready {
+            relation,
+            ahead_by,
+            behind_by,
+            commits,
+            total,
+            truncated,
+            compare_url,
+        } => {
+            let Ok(classified) = classify_update_comparison(
+                pending.locked_commit_sha.clone(),
+                pending.latest_commit_sha.clone(),
+                ahead_by,
+                behind_by,
+            ) else {
+                return unavailable(
+                    "INVALID_RESPONSE",
+                    "GitHub returned impossible update counts".to_owned(),
+                );
+            };
+            let relation_matches = matches!(
+                (&relation, &classified),
+                (
+                    RemoteComparisonRelation::Identical,
+                    UpdateRelation::Current { .. }
+                ) | (
+                    RemoteComparisonRelation::Ahead,
+                    UpdateRelation::Available { .. }
+                ) | (
+                    RemoteComparisonRelation::Behind,
+                    UpdateRelation::Behind { .. }
+                ) | (
+                    RemoteComparisonRelation::Diverged,
+                    UpdateRelation::Diverged { .. }
+                )
+            );
+            if !relation_matches {
+                return unavailable(
+                    "INVALID_RESPONSE",
+                    "GitHub returned an impossible update relation".to_owned(),
+                );
+            }
+            match CommitHistory::compared(commits, total, truncated, compare_url) {
+                Ok(history) => UpdatePlanItem::with_history(pending.name, classified, history),
+                Err(error) => unavailable("INVALID_RESPONSE", error.to_string()),
+            }
+        }
+        RemoteComparisonOutcome::NotFound => unavailable(
+            "SOURCE_NOT_FOUND",
+            "The Repository or commit is unavailable".to_owned(),
+        ),
+        RemoteComparisonOutcome::InvalidComparison => unavailable(
+            "COMMIT_NOT_FOUND",
+            "GitHub could not compare the installed commit".to_owned(),
+        ),
+        RemoteComparisonOutcome::RateLimited {
+            retry_after_seconds,
+            reset_at,
+        } => {
+            let retry_after = match (retry_after_seconds, reset_at) {
+                (Some(seconds), Some(reset_at)) => {
+                    UpdateRetryAfter::SecondsAndReset { seconds, reset_at }
+                }
+                (Some(seconds), None) => UpdateRetryAfter::Seconds { seconds },
+                (None, Some(reset_at)) => UpdateRetryAfter::Reset { reset_at },
+                (None, None) => UpdateRetryAfter::Unknown,
+            };
+            let failure =
+                UpdateFailure::rate_limited("GitHub rate limited the update check.", retry_after);
+            UpdatePlanItem::new(
+                pending.name,
+                UpdateRelation::Unavailable {
+                    locked_commit_sha: pending.locked_commit_sha,
+                    latest_commit: UpdateLatestCommit::Known {
+                        commit_sha: pending.latest_commit_sha,
+                    },
+                    failure,
+                },
+            )
+        }
+        RemoteComparisonOutcome::ProviderFailure { status } => unavailable(
+            "SERVICE_UNAVAILABLE",
+            status.map_or_else(
+                || "GitHub comparison failed".to_owned(),
+                |status| format!("GitHub comparison returned HTTP {status}"),
+            ),
+        ),
+        RemoteComparisonOutcome::RequestFailure { code, message } => unavailable(code, message),
+    }
+}
+
+fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> CommandError {
+    match outcome {
+        RemoteComparisonOutcome::NotFound => CommandError::operation(
+            "SOURCE_NOT_FOUND",
+            format!("The Repository or commit for Skill {name} is unavailable"),
+        ),
+        RemoteComparisonOutcome::InvalidComparison => CommandError::operation(
+            "COMMIT_NOT_FOUND",
+            format!("GitHub could not compare the installed commit for Skill {name}"),
+        ),
+        RemoteComparisonOutcome::RateLimited {
+            retry_after_seconds,
+            ..
+        } => CommandError::operation(
+            "RATE_LIMITED",
+            retry_after_seconds.map_or_else(
+                || "GitHub rate limited the Skill update".to_owned(),
+                |seconds| {
+                    format!("GitHub rate limited the Skill update. Retry after {seconds} seconds")
+                },
+            ),
+        ),
+        RemoteComparisonOutcome::ProviderFailure { status } => CommandError::operation(
+            "SERVICE_UNAVAILABLE",
+            status.map_or_else(
+                || "GitHub comparison failed".to_owned(),
+                |status| format!("GitHub comparison returned HTTP {status}"),
+            ),
+        ),
+        RemoteComparisonOutcome::RequestFailure { code, message } => {
+            CommandError::operation(code, message)
+        }
+        RemoteComparisonOutcome::Ready { .. } => CommandError::operation(
+            "INVALID_RESPONSE",
+            "GitHub returned an impossible update relation",
+        ),
+    }
+}
+
 impl LocalHost {
     fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<String> {
         let name = &view.name;
@@ -1244,7 +2152,7 @@ impl LocalHost {
                     }
                     Ok(RemoteSourceState::Stale { .. }) => {
                         vec![format!(
-                            "Outdated Skill {name}. Run skilld upgrade {name}{global}."
+                            "Outdated Skill {name}. Run skilld update {name}{global}."
                         )]
                     }
                     Err(error) => {
@@ -1264,7 +2172,7 @@ impl LocalHost {
                     .collect::<Vec<_>>();
                 let agent_flags = outdated::agent_flags(&agents);
                 vec![format!(
-                    "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to upgrade it."
+                    "Unverified Skill {name}. Run skilld install {source} --direct{global}{agent_flags} to update it."
                 )]
             }
             (LockedSource::BundledSkilld, _) => vec![format!("skilld-maintained Skill {name}.")],
@@ -1280,7 +2188,7 @@ impl LocalHost {
             .remote_provider()?
             .search(name, 5)
             .map_err(CommandError::remote)?;
-        let Some(result) = results.into_iter().find(|result| result.name == name) else {
+        let Some(result) = results.items.into_iter().find(|result| result.name == name) else {
             return Ok(None);
         };
         let selector = result.selector().map_err(CommandError::remote)?;
@@ -1354,6 +2262,57 @@ fn selected_names(
     } else {
         store.list(known).map_err(CommandError::store)
     }
+}
+
+fn validate_update_selection(items: &[UpdatePlanItem]) -> Result<(), CommandError> {
+    if items.is_empty() {
+        return Err(CommandError::usage(
+            "INVALID_SELECTION",
+            "Select at least one Skill",
+        ));
+    }
+    let mut unique = BTreeSet::new();
+    for item in items {
+        if !unique.insert(item.name()) {
+            return Err(CommandError::usage(
+                "INVALID_SELECTION",
+                "Select each Skill once",
+            ));
+        }
+    }
+    for item in items {
+        if !matches!(item.relation(), UpdateRelation::Available { .. }) {
+            return Err(CommandError::usage(
+                "INVALID_SELECTION",
+                "Select only Skills with available updates",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn stale_update_plan(name: &str) -> CommandError {
+    CommandError::operation(
+        "STALE_UPDATE_PLAN",
+        format!("Skill {name} changed after review. Review its commits again"),
+    )
+}
+
+fn unavailable_update(
+    locked_commit_sha: CommitSha,
+    latest_commit: UpdateLatestCommit,
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> UpdateRelation {
+    UpdateRelation::Unavailable {
+        locked_commit_sha,
+        latest_commit,
+        failure: UpdateFailure::new(code, message),
+    }
+}
+
+fn update_model_error(error: UpdateModelError) -> CommandError {
+    CommandError::operation("INVALID_LOCKFILE", error.to_string())
 }
 
 fn detects_environment(agent: AgentTargetId, environment: &DetectionEnvironment) -> bool {
@@ -1516,9 +2475,29 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "upgrade", "verify", "outdated",
+                "search", "install", "list", "view", "remove", "update", "verify", "outdated",
                 "auth", "config"
             ]
+        );
+    }
+
+    #[test]
+    fn upgrade_is_not_a_command_alias() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(
+            ["skilld", "upgrade"],
+            &RecordingHost,
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(result.exit_code, 2);
+        assert!(stdout.is_empty());
+        assert!(
+            String::from_utf8(stderr)
+                .unwrap()
+                .contains("unrecognized subcommand 'upgrade'")
         );
     }
 

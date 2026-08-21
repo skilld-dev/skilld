@@ -19,6 +19,7 @@ Every public export, command, error, route, and document uses these terms.
 | Artifact attestation | `skilld.dev/api/v1` | published protocol | skilld CLI | attestation |
 | Check result | `skilld.dev/api/v1` | published protocol | skilld CLI, developer | check result |
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
+| Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
 | Agent target | skilld CLI | published configuration | Agent | Agent target |
 
 | Identifier | Term |
@@ -28,7 +29,8 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld list` | installed Skills |
 | `skilld view` | Skill details |
 | `skilld remove` | Skill removal |
-| `skilld upgrade` | Skill upgrade |
+| `skilld update` | Skill update |
+| `skilld update --check --json` | update relation check |
 | `skilld verify` | source verification |
 | `skilld outdated` | outdated Skill report |
 | `skilld install skilld --global` | global skilld Skill install |
@@ -95,7 +97,7 @@ None recorded.
 
 ### skilld CLI
 
-**Is:** the Rust command line interface that searches, installs, upgrades, and removes Skills.
+**Is:** the Rust command line interface that searches, installs, updates, and removes Skills.
 
 **Use for:** the command product and its manager logic.
 
@@ -182,6 +184,16 @@ None recorded.
 **Never:** safety state, trust score, verification tier.
 
 **Casing:** `Source status` in headings, `sourceStatus` in identifiers.
+
+### Update relation
+
+**Is:** the Git relationship between an installed Skill commit and its current source commit.
+
+**Use for:** `current`, `available`, `behind`, `diverged`, `pinned`, `notTracked`, or `unavailable` JSON values.
+
+**Never:** upgrade status, version status, release status.
+
+**Casing:** `Update relation` in headings, `relation` in JSON.
 
 ### Agent target
 

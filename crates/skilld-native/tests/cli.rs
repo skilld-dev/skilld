@@ -1,6 +1,36 @@
 use std::fs;
+#[cfg(unix)]
+use std::fs::File;
+#[cfg(unix)]
+use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::Stdio;
 use std::process::{Command, Output};
+
+#[cfg(unix)]
+use nix::pty::{Winsize, openpty};
+
+const DETECTION_SIGNALS: [&str; 18] = [
+    "CLAUDE_CODE",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CONFIG_DIR",
+    "CURSOR_SESSION",
+    "CURSOR_TRACE_ID",
+    "WINDSURF_SESSION",
+    "CLINE_TASK_ID",
+    "CLINE_ACTIVE",
+    "COPILOT_RUN_APP",
+    "GEMINI_CLI",
+    "GOOSE_SESSION",
+    "AGENT_SESSION_ID",
+    "AMP_SESSION",
+    "OPENCODE_SESSION",
+    "OPENCODE_SESSION_ID",
+    "ROO_SESSION",
+    "ANTIGRAVITY_CLI_ALIAS",
+];
 
 fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_skilld"))
@@ -11,26 +41,6 @@ fn fixture() -> PathBuf {
 }
 
 fn run(project: &Path, data: &Path, home: &Path, args: &[&str]) -> Output {
-    const SIGNALS: [&str; 18] = [
-        "CLAUDE_CODE",
-        "CLAUDECODE",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "CLAUDE_CONFIG_DIR",
-        "CURSOR_SESSION",
-        "CURSOR_TRACE_ID",
-        "WINDSURF_SESSION",
-        "CLINE_TASK_ID",
-        "CLINE_ACTIVE",
-        "COPILOT_RUN_APP",
-        "GEMINI_CLI",
-        "GOOSE_SESSION",
-        "AGENT_SESSION_ID",
-        "AMP_SESSION",
-        "OPENCODE_SESSION",
-        "OPENCODE_SESSION_ID",
-        "ROO_SESSION",
-        "ANTIGRAVITY_CLI_ALIAS",
-    ];
     let mut command = Command::new(binary());
     command
         .current_dir(project)
@@ -38,10 +48,113 @@ fn run(project: &Path, data: &Path, home: &Path, args: &[&str]) -> Output {
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .args(args);
-    for signal in SIGNALS {
+    for signal in DETECTION_SIGNALS {
         command.env_remove(signal);
     }
     command.output().unwrap()
+}
+
+#[cfg(unix)]
+fn run_output_probe_in_pty(signal: (&str, &str), width: u16) -> String {
+    let pair = openpty(
+        Some(&Winsize {
+            ws_row: 24,
+            ws_col: width,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        }),
+        None,
+    )
+    .unwrap();
+    let mut master = File::from(pair.master);
+    let slave = File::from(pair.slave);
+    let slave_stdout = slave.try_clone().unwrap();
+    let slave_stderr = slave.try_clone().unwrap();
+    let mut command = Command::new(binary());
+    for name in DETECTION_SIGNALS {
+        command.env_remove(name);
+    }
+    let mut child = command
+        .env_remove("CI")
+        .env_remove("COLUMNS")
+        .env("NO_COLOR", "1")
+        .env("TERM", "xterm-256color")
+        .env("SKILLD_PROBE_SEARCH_OUTPUT", "1")
+        .env(signal.0, signal.1)
+        .stdin(Stdio::from(slave))
+        .stdout(Stdio::from(slave_stdout))
+        .stderr(Stdio::from(slave_stderr))
+        .spawn()
+        .unwrap();
+    drop(command);
+
+    let status = child.wait().unwrap();
+    let mut output = String::new();
+    let _ = master.read_to_string(&mut output);
+    assert!(status.success());
+    output.replace("\r\n", "\n")
+}
+
+#[cfg(unix)]
+fn run_empty_interactive_update_in_pty(project: &Path, data: &Path, home: &Path) -> String {
+    let pair = openpty(
+        Some(&Winsize {
+            ws_row: 18,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        }),
+        None,
+    )
+    .unwrap();
+    let mut master = File::from(pair.master);
+    let slave = File::from(pair.slave);
+    let slave_stdout = slave.try_clone().unwrap();
+    let slave_stderr = slave.try_clone().unwrap();
+    let mut command = Command::new(binary());
+    for name in DETECTION_SIGNALS {
+        command.env_remove(name);
+    }
+    let mut child = command
+        .current_dir(project)
+        .env_remove("CI")
+        .env("SKILLD_DATA_DIR", data)
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("NO_COLOR", "1")
+        .env("TERM", "xterm-256color")
+        .args(["update", "--interactive"])
+        .stdin(Stdio::from(slave))
+        .stdout(Stdio::from(slave_stdout))
+        .stderr(Stdio::from(slave_stderr))
+        .spawn()
+        .unwrap();
+    drop(command);
+
+    let status = child.wait().unwrap();
+    let mut output = String::new();
+    let _ = master.read_to_string(&mut output);
+    assert!(status.success(), "{output:?}");
+    output.replace("\r\n", "\n")
+}
+
+#[cfg(unix)]
+#[test]
+fn active_agent_signal_uses_plain_output_in_a_terminal() {
+    let output = run_output_probe_in_pty(("AGENT_SESSION_ID", "test-session"), 40);
+
+    assert!(output.contains("output-probe\tskilld:skilld-dev/skilld/output-probe\t1\t"));
+    assert!(!output.contains("Skill search"));
+}
+
+#[cfg(unix)]
+#[test]
+fn config_directory_alone_keeps_human_output_in_a_terminal() {
+    let output = run_output_probe_in_pty(("CLAUDE_CONFIG_DIR", "/tmp/claude-config"), 40);
+
+    assert!(output.contains("Skill search output"));
+    assert!(output.contains("Install: skilld install"));
+    assert!(output.lines().all(|line| line.chars().count() <= 40));
 }
 
 #[test]
@@ -54,6 +167,73 @@ fn version_reports_the_rust_package_version() {
         format!("skilld {}\n", env!("CARGO_PKG_VERSION"))
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn interactive_update_requires_terminal_input_and_output() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run(&project, &data, &home, &["update", "--interactive"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        concat!(
+            "INTERACTIVE_TTY_REQUIRED: Interactive Skill update needs terminal input ",
+            "and output.\n"
+        )
+    );
+}
+
+#[test]
+fn interactive_update_rejects_plain_json_check_and_skill_arguments() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    for args in [
+        &["update", "--interactive", "--plain"][..],
+        &["update", "--interactive", "--json"][..],
+        &["update", "--interactive", "--check"][..],
+        &["update", "example", "--interactive"][..],
+    ] {
+        let output = run(&project, &data, &home, args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("cannot be used with"),
+            "{args:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn empty_interactive_update_restores_the_terminal_before_its_summary() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let output = run_empty_interactive_update_in_pty(&project, &data, &home);
+    let restored = output.rfind("\u{1b}[?1049l").unwrap();
+    let summary = output.rfind("All installed Skills are current.").unwrap();
+
+    assert!(output.contains("\u{1b}[?25h"));
+    assert!(restored < summary, "{output:?}");
 }
 
 #[test]
@@ -286,7 +466,7 @@ fn native_auth_status_surfaces_an_unavailable_os_credential_store() {
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         "SERVICE_UNAVAILABLE: The OS keychain operation failed.\n"
