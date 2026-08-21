@@ -30,6 +30,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld remove` | Skill removal |
 | `skilld upgrade` | Skill upgrade |
 | `skilld verify` | source verification |
+| `skilld outdated` | outdated Skill report |
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
 | `skilld auth status` | account authentication status |
@@ -191,6 +192,16 @@ None recorded.
 **Never:** adapter, platform, destination type.
 
 **Casing:** `Agent target` in prose, `AgentTarget` in types.
+
+### Outdated Skill report
+
+**Is:** the per Skill status produced by `skilld outdated`.
+
+**Use for:** current, outdated, unverified, local, and unmanaged Skill states.
+
+**Never:** version check, drift report, health check.
+
+**Casing:** `Outdated Skill report` in prose, `outdated` in commands.
 
 ## Banned
 

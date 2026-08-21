@@ -1,8 +1,9 @@
 mod config;
 mod local_store;
+mod outdated;
 mod remote;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -72,9 +73,20 @@ enum Command {
         global: bool,
     },
     /// Upgrade installed Skills.
-    Upgrade { skill: Option<String> },
+    Upgrade {
+        skill: Option<String>,
+        /// Upgrade Skills in the global scope.
+        #[arg(long)]
+        global: bool,
+    },
     /// Verify a Skill source.
     Verify { skill: Option<String> },
+    /// Report outdated and unmanaged Skills.
+    Outdated {
+        /// Scan every Agent target on this system.
+        #[arg(long)]
+        system: bool,
+    },
     /// Manage account authentication.
     Auth {
         #[command(subcommand)]
@@ -144,9 +156,19 @@ pub trait Host {
         ))
     }
 
-    fn upgrade(&self, _name: Option<&str>) -> Result<Vec<String>, CommandError> {
+    fn upgrade(
+        &self,
+        _name: Option<&str>,
+        _scope: InstallScope,
+    ) -> Result<Vec<String>, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill upgrade is unavailable on this host",
+        ))
+    }
+
+    fn outdated(&self, _system: bool) -> Result<Vec<String>, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Outdated Skill reports are unavailable on this host",
         ))
     }
 
@@ -453,8 +475,9 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
                 ))
             })
             .collect(),
-        Command::Upgrade { skill } => host.upgrade(skill.as_deref()),
+        Command::Upgrade { skill, global } => host.upgrade(skill.as_deref(), scope(global)),
         Command::Verify { skill } => host.verify(skill.as_deref()),
+        Command::Outdated { system } => host.outdated(system),
     }
 }
 
@@ -1043,8 +1066,11 @@ impl Host for LocalHost {
         Ok(lines)
     }
 
-    fn upgrade(&self, requested: Option<&str>) -> Result<Vec<String>, CommandError> {
-        let scope = InstallScope::Project;
+    fn upgrade(
+        &self,
+        requested: Option<&str>,
+        scope: InstallScope,
+    ) -> Result<Vec<String>, CommandError> {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
@@ -1114,6 +1140,115 @@ impl Host for LocalHost {
             upgraded.push(format!("Upgraded Skill {name}."));
         }
         Ok(upgraded)
+    }
+
+    fn outdated(&self, system: bool) -> Result<Vec<String>, CommandError> {
+        let scopes = if system {
+            vec![InstallScope::Project, InstallScope::Global]
+        } else {
+            vec![InstallScope::Project]
+        };
+        let mut lines = Vec::new();
+        let mut managed = BTreeMap::<String, Vec<PathBuf>>::new();
+        let mut store_roots = Vec::new();
+        let mut scan = Vec::new();
+        for scope in scopes {
+            let known = self.known_targets(scope)?;
+            let store = self.store(scope);
+            let names = store.list(&known).map_err(CommandError::store)?;
+            for name in names {
+                let skill_name =
+                    skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
+                let view = store
+                    .view(&skill_name, &known)
+                    .map_err(CommandError::store)?;
+                let mut paths = vec![view.canonical_path.clone()];
+                for locked in &view.skill.targets {
+                    if let Some(target) = known.iter().find(|target| target.agent == locked.agent) {
+                        paths.push(target.root.join(name.as_str()));
+                    }
+                }
+                managed
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(paths.iter().cloned());
+                lines.extend(self.report_outdated_view(&view, scope)?);
+            }
+            if system {
+                store_roots.push(store.root().to_path_buf());
+                scan.push((scope, known));
+            }
+        }
+        if system {
+            for skill in outdated::scan_unmanaged(&scan, &store_roots, &managed) {
+                let candidate = match self.search_candidate(&skill.name) {
+                    Ok(candidate) => candidate,
+                    Err(error) => {
+                        lines.push(outdated::render_search_failure(&skill, &error.message));
+                        continue;
+                    }
+                };
+                lines.extend(outdated::render_unmanaged(&skill, candidate.as_deref()));
+            }
+        }
+        if lines.is_empty() {
+            lines.push("No installed Skills found.".to_owned());
+        }
+        Ok(lines)
+    }
+}
+
+impl LocalHost {
+    fn report_outdated_view(
+        &self,
+        view: &SkillView,
+        scope: InstallScope,
+    ) -> Result<Vec<String>, CommandError> {
+        let name = &view.name;
+        let global = if scope == InstallScope::Global {
+            " --global"
+        } else {
+            ""
+        };
+        match (&view.skill.source, &view.skill.source_status) {
+            (
+                LockedSource::Remote {
+                    source, commit_sha, ..
+                },
+                skilld_core::SourceStatus::Verified { artifact_id, .. },
+            ) => {
+                let selector =
+                    skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+                match self
+                    .remote_provider()?
+                    .source_state(&selector, artifact_id, commit_sha)
+                    .map_err(CommandError::remote)?
+                {
+                    RemoteSourceState::Current => Ok(vec![format!("Current Skill {name}.")]),
+                    RemoteSourceState::Stale { .. } => Ok(vec![format!(
+                        "Outdated Skill {name}. Run skilld upgrade {name}{global}."
+                    )]),
+                }
+            }
+            (LockedSource::Remote { source, .. }, skilld_core::SourceStatus::Unverified { .. }) => {
+                Ok(vec![format!(
+                    "Unverified Skill {name}. Run skilld install {source} --direct{global} to upgrade it."
+                )])
+            }
+            _ => Ok(vec![format!("Local Skill {name}.")]),
+        }
+    }
+
+    fn search_candidate(&self, name: &str) -> Result<Option<String>, CommandError> {
+        let results = self
+            .remote_provider()?
+            .search(name, 5)
+            .map_err(CommandError::remote)?;
+        Ok(results
+            .iter()
+            .find(|result| result.name == name)
+            .and_then(|result| result.selector().ok())
+            .map(|selector| selector.canonical()))
     }
 }
 
@@ -1343,8 +1478,8 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "upgrade", "verify", "auth",
-                "config"
+                "search", "install", "list", "view", "remove", "upgrade", "verify", "outdated",
+                "auth", "config"
             ]
         );
     }

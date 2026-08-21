@@ -881,7 +881,9 @@ fn remote_install_verify_and_failed_upgrade_use_the_normal_transaction() {
     *provider.content.lock().unwrap() = b"---\nname: example\ndescription: second\n---\n".to_vec();
     *provider.fail_prepare.lock().unwrap() = true;
 
-    let error = host.upgrade(Some("example")).unwrap_err();
+    let error = host
+        .upgrade(Some("example"), InstallScope::Project)
+        .unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(
