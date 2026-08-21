@@ -83,6 +83,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           compression-level: 0
+          name: ${{ matrix.directory }}
           path: ${{ matrix.directory }}.tar
 
   publish:
