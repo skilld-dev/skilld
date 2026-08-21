@@ -1,5 +1,6 @@
 mod config;
 mod local_store;
+mod output;
 mod remote;
 
 use std::collections::BTreeSet;
@@ -16,6 +17,7 @@ pub use local_store::{
     AllowTransaction, LocalStore, ResolvedTarget, SkillView, StoreError, TargetInstall,
     TransactionGate,
 };
+pub use output::OutputContext;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill, RemoteProvider,
@@ -26,6 +28,8 @@ use skilld_core::{
     InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
 };
 
+use output::{OutputMode, SearchItem, SearchOutcome, render_error, render_search, resolve_mode};
+
 #[derive(Debug, Parser)]
 #[command(
     name = "skilld",
@@ -34,6 +38,12 @@ use skilld_core::{
     disable_help_subcommand = true
 )]
 pub struct Cli {
+    /// Output stable JSON for Agents and automation.
+    #[arg(long, global = true, conflicts_with = "plain")]
+    json: bool,
+    /// Output stable text without terminal formatting.
+    #[arg(long, global = true, conflicts_with = "json")]
+    plain: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -130,7 +140,7 @@ pub trait Host {
         ))
     }
 
-    fn search(&self, _query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, _query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill search is unavailable on this host",
         ))
@@ -269,7 +279,29 @@ pub struct CommandResult {
     pub exit_code: u8,
 }
 
+enum CommandOutput {
+    Lines(Vec<String>),
+    Search(SearchOutcome),
+}
+
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+    H: Host,
+    O: Write,
+    E: Write,
+{
+    run_with_output(args, host, OutputContext::Plain, stdout, stderr)
+}
+
+pub fn run_with_output<I, T, H, O, E>(
+    args: I,
+    host: &H,
+    context: OutputContext,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> CommandResult
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
@@ -294,8 +326,20 @@ where
         }
     };
 
+    let mode = resolve_mode(cli.json, cli.plain, context);
+    if mode == OutputMode::JsonV1 && !matches!(&cli.command, Command::Search { .. }) {
+        let error = CommandError {
+            code: "UNSUPPORTED_OUTPUT",
+            message: "JSON output is available for Skill search only".to_owned(),
+        };
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
+
     match dispatch(cli.command, host) {
-        Ok(lines) => {
+        Ok(CommandOutput::Lines(lines)) => {
             for line in lines {
                 if writeln!(stdout, "{line}").is_err() {
                     return CommandResult { exit_code: 2 };
@@ -303,8 +347,23 @@ where
             }
             CommandResult { exit_code: 0 }
         }
+        Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
+            Ok(bytes) => match stdout.write_all(&bytes) {
+                Ok(()) => CommandResult { exit_code: 0 },
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                    CommandResult { exit_code: 0 }
+                }
+                Err(_) => CommandResult { exit_code: 2 },
+            },
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult { exit_code: 2 };
+                }
+                CommandResult { exit_code: 2 }
+            }
+        },
         Err(error) => {
-            if writeln!(stderr, "{error}").is_err() {
+            if stderr.write_all(&render_error(&error, mode)).is_err() {
                 return CommandResult { exit_code: 2 };
             }
             CommandResult { exit_code: 2 }
@@ -335,7 +394,7 @@ pub fn run_stdio_probe<R: Read, O: Write, E: Write>(
     }
 }
 
-fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandError> {
+fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, CommandError> {
     match command {
         Command::Install {
             source,
@@ -384,70 +443,75 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
             if direct {
                 lines.push("Review the unverified Skill before use.".to_owned());
             }
-            Ok(lines)
+            Ok(CommandOutput::Lines(lines))
         }
-        Command::List { global } => host.list(scope(global)),
-        Command::View { skill, global } => render_view(host.view(&skill, scope(global))?),
+        Command::List { global } => host.list(scope(global)).map(CommandOutput::Lines),
+        Command::View { skill, global } => {
+            render_view(host.view(&skill, scope(global))?).map(CommandOutput::Lines)
+        }
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
-            Ok(vec![format!("Removed Skill {skill}.")])
+            Ok(CommandOutput::Lines(vec![format!(
+                "Removed Skill {skill}."
+            )]))
         }
         Command::Auth {
             command: AuthCommand::Status,
-        } => Ok(vec![if host.auth_status()? {
+        } => Ok(CommandOutput::Lines(vec![if host.auth_status()? {
             "Authenticated.".to_owned()
         } else {
             "Not authenticated.".to_owned()
-        }]),
+        }])),
         Command::Auth {
             command: AuthCommand::Login,
         } => {
             host.auth_login()?;
-            Ok(vec!["Authentication started.".to_owned()])
+            Ok(CommandOutput::Lines(vec![
+                "Authentication started.".to_owned(),
+            ]))
         }
         Command::Auth {
             command: AuthCommand::Logout,
         } => {
             host.auth_logout()?;
-            Ok(vec!["Logged out.".to_owned()])
+            Ok(CommandOutput::Lines(vec!["Logged out.".to_owned()]))
         }
         Command::Config {
             command: ConfigCommand::Get { key },
-        } => Ok(vec![host.config_get(&key)?]),
+        } => Ok(CommandOutput::Lines(vec![host.config_get(&key)?])),
         Command::Config {
             command: ConfigCommand::Set { key, value },
         } => {
             host.config_set(&key, &value)?;
-            Ok(vec![format!("Set {key}.")])
+            Ok(CommandOutput::Lines(vec![format!("Set {key}.")]))
         }
         Command::Config {
             command: ConfigCommand::List,
-        } => host.config_list(),
-        Command::Search { query } => host
-            .search(&query.join(" "))?
-            .into_iter()
-            .map(|result| {
-                let selector = result.selector().map_err(CommandError::remote)?;
-                let description = result
-                    .description
-                    .unwrap_or_default()
-                    .chars()
-                    .map(|character| {
-                        if character.is_control() {
-                            ' '
-                        } else {
-                            character
-                        }
+        } => host.config_list().map(CommandOutput::Lines),
+        Command::Search { query } => {
+            let query = query.join(" ");
+            let response = host.search(&query)?;
+            let items = response
+                .items
+                .into_iter()
+                .map(|result| {
+                    let selector = result.selector().map_err(CommandError::remote)?;
+                    Ok(SearchItem {
+                        name: result.name,
+                        selector: selector.to_string(),
+                        description: result.description,
+                        stargazer_count: result.stargazer_count,
                     })
-                    .collect::<String>();
-                Ok(format!(
-                    "{}\t{}\t{}\t{} stars",
-                    result.name, selector, description, result.stargazer_count
-                ))
-            })
-            .collect(),
-        Command::Upgrade { skill } => host.upgrade(skill.as_deref()),
-        Command::Verify { skill } => host.verify(skill.as_deref()),
+                })
+                .collect::<Result<Vec<_>, CommandError>>()?;
+            Ok(CommandOutput::Search(SearchOutcome {
+                query,
+                items,
+                total: response.total,
+            }))
+        }
+        Command::Upgrade { skill } => host.upgrade(skill.as_deref()).map(CommandOutput::Lines),
+        Command::Verify { skill } => host.verify(skill.as_deref()).map(CommandOutput::Lines),
     }
 }
 
@@ -498,6 +562,10 @@ impl DetectionEnvironment {
 
     fn has(&self, name: &str) -> bool {
         self.variables.contains(name)
+    }
+
+    pub fn detects_agent(&self) -> bool {
+        !self.variables.is_empty()
     }
 }
 
@@ -943,7 +1011,7 @@ impl Host for LocalHost {
             .logout()
     }
 
-    fn search(&self, query: &str) -> Result<Vec<skilld_core::SearchResult>, CommandError> {
+    fn search(&self, query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
         self.remote_provider()?
             .search(query, 20)
             .map_err(CommandError::remote)

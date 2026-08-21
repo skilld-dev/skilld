@@ -12,11 +12,18 @@ Use skilld CLI to search for and install Skills.
 Run a focused search:
 
 ```sh
-skilld search <query>
+skilld search <query> --json
 ```
 
-Read the result names and descriptions before choosing.
+Read `data.items` before choosing a Skill.
+Use each item's `selector` for install.
 Refine the query when several Skills cover different tasks.
+
+Always use `--json` when an Agent runs Skill search.
+Check the exit code before reading stdout.
+If search fails, read the tagged JSON error from stderr.
+Use `--plain` only when another command needs stable text.
+Never parse formatted terminal output.
 
 ## Install a Skill
 

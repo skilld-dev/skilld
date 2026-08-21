@@ -2,6 +2,7 @@ mod embedded_skill;
 mod native_auth;
 
 use std::env;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -9,8 +10,8 @@ use std::sync::Arc;
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::{
-    DetectionEnvironment, LocalHost, NativeRemoteConfig, SkilldRemote, TargetRoots, run,
-    run_stdio_probe,
+    DetectionEnvironment, LocalHost, NativeRemoteConfig, OutputContext, SkilldRemote, TargetRoots,
+    run_stdio_probe, run_with_output,
 };
 use skilld_core::TrustedRootPin;
 use skilld_native::NativeHttpAdapter;
@@ -32,10 +33,11 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
+    let detection = detection_environment();
     let account = Arc::new(NativeAccount::new());
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
-        .with_detection_environment(detection_environment())
+        .with_detection_environment(detection.clone())
         .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
         .with_account_provider(account.clone())
         .with_remote_provider(Arc::new(SkilldRemote::new(
@@ -46,7 +48,15 @@ fn main() -> ExitCode {
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
-    let result = run(env::args_os(), &host, &mut stdout, &mut stderr);
+    let output = OutputContext::auto(
+        stdout.is_terminal(),
+        detection.detects_agent(),
+        environment_enabled("CI"),
+        environment_present("NO_COLOR"),
+        env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
+        terminal_width(),
+    );
+    let result = run_with_output(env::args_os(), &host, output, &mut stdout, &mut stderr);
     ExitCode::from(result.exit_code)
 }
 
@@ -117,4 +127,21 @@ fn global_root() -> PathBuf {
         return PathBuf::from(path).join(".skilld");
     }
     PathBuf::from(".skilld")
+}
+
+fn environment_enabled(name: &str) -> bool {
+    env::var(name).is_ok_and(|value| {
+        !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+    })
+}
+
+fn environment_present(name: &str) -> bool {
+    env::var_os(name).is_some_and(|value| !value.is_empty())
+}
+
+fn terminal_width() -> u16 {
+    env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(80)
 }
