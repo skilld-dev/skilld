@@ -76,6 +76,7 @@ fn main() -> ExitCode {
         host.with_outdated_progress(Arc::new(status::OutdatedProgressLine::for_terminal(
             std::io::stderr().is_terminal(),
             active_agent_detected(),
+            !environment_present("NO_COLOR"),
         )))
     } else {
         host
@@ -88,7 +89,11 @@ fn main() -> ExitCode {
             Ok(summary) => {
                 let exit_code = summary.exit_code();
                 let mut stdout = std::io::stdout().lock();
-                if let Err(error) = write_static_summary(&summary, &mut stdout) {
+                if let Err(error) = write_static_summary(
+                    &summary,
+                    stdout.is_terminal() && !environment_present("NO_COLOR"),
+                    &mut stdout,
+                ) {
                     eprintln!("{error}");
                     ExitCode::from(2)
                 } else if stdout.flush().is_err() {

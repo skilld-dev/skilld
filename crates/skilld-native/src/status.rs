@@ -200,15 +200,17 @@ where
 /// it so only results remain.
 pub struct OutdatedProgressLine {
     enabled: bool,
+    color: bool,
     frame: std::sync::atomic::AtomicUsize,
 }
 
 impl OutdatedProgressLine {
     /// Progress streams only for humans on a terminal. Agents, CI, and pipes
     /// get quiet stderr.
-    pub fn for_terminal(is_terminal: bool, active_agent: bool) -> Self {
+    pub fn for_terminal(is_terminal: bool, active_agent: bool, color: bool) -> Self {
         Self {
             enabled: is_terminal && !active_agent,
+            color,
             frame: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -229,7 +231,11 @@ impl skilld_command::OutdatedProgress for OutdatedProgressLine {
         }
         self.erase();
         let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "• {line}");
+        let _ = writeln!(
+            stderr,
+            "{}",
+            paint(&format!("• {line}"), Role::Dim, self.color)
+        );
         let _ = stderr.flush();
     }
 
@@ -238,8 +244,10 @@ impl skilld_command::OutdatedProgress for OutdatedProgressLine {
             return;
         }
         let frame = spinner::frame(self.frame.fetch_add(1, Ordering::Relaxed));
+        let glyph = paint(frame, Role::Brand, self.color);
+        let name = paint(name, Role::Emphasis, self.color);
         let mut stderr = std::io::stderr().lock();
-        let _ = write!(stderr, "\r\x1b[2K{frame} Checking {name}…");
+        let _ = write!(stderr, "\r\x1b[2K{glyph} Checking {name}…");
         let _ = stderr.flush();
     }
 
@@ -379,16 +387,16 @@ mod tests {
     fn outdated_progress_stays_quiet_for_agents() {
         use skilld_command::OutdatedProgress;
 
-        let agent = super::OutdatedProgressLine::for_terminal(true, true);
+        let agent = super::OutdatedProgressLine::for_terminal(true, true, true);
         agent.found("example (project scope)");
         agent.checking("example");
         agent.finish();
         assert!(!agent.enabled);
 
-        let human = super::OutdatedProgressLine::for_terminal(true, false);
+        let human = super::OutdatedProgressLine::for_terminal(true, false, true);
         assert!(human.enabled);
 
-        let piped = super::OutdatedProgressLine::for_terminal(false, false);
+        let piped = super::OutdatedProgressLine::for_terminal(false, false, true);
         assert!(!piped.enabled);
     }
 

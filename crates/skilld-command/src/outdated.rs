@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use skilld_core::{AgentTargetId, InstallScope, SkillName};
-use skilld_ui::Line;
+use skilld_ui::text::{display_path, grouped_number};
+use skilld_ui::{Detail, Line, Marker};
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
@@ -136,11 +137,16 @@ pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<Line> {
     if skills.is_empty() {
         return vec![];
     }
-    vec![Line::warn(format!(
-        "No Repository match for {} ({}).",
-        skill_count(skills.len()),
-        name_list(skills)
-    ))]
+    let count = skill_count(skills.len());
+    vec![Line::group(
+        Marker::Warn,
+        format!("No Repository match for {count} ({}).", name_list(skills)),
+        format!("No Repository match for {count}"),
+        skills
+            .iter()
+            .map(|skill| (skill.name.clone(), agent_list(skill)))
+            .collect(),
+    )]
 }
 
 pub(crate) fn render_search_failures(
@@ -149,11 +155,19 @@ pub(crate) fn render_search_failures(
     failures
         .iter()
         .map(|(message, skills)| {
-            Line::warn(format!(
-                "Skill search unavailable for {} ({}): {message}.",
-                skill_count(skills.len()),
-                name_list(skills)
-            ))
+            Line::group(
+                Marker::Warn,
+                format!(
+                    "Skill search unavailable for {} ({}): {message}.",
+                    skill_count(skills.len()),
+                    name_list(skills)
+                ),
+                format!("Skill search unavailable: {message}"),
+                skills
+                    .iter()
+                    .map(|skill| (skill.name.clone(), agent_list(skill)))
+                    .collect(),
+            )
         })
         .collect()
 }
@@ -173,6 +187,7 @@ fn skill_count(count: usize) -> String {
 pub(crate) fn render_unmanaged(
     skill: &UnmanagedSkill,
     candidate: Option<&SkillCandidate>,
+    display_base: &Path,
 ) -> Vec<Line> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
@@ -184,17 +199,29 @@ pub(crate) fn render_unmanaged(
         ""
     };
     let agent_flags = agent_flags(&skill.agents);
-    vec![
-        Line::warn(format!(
-            "Unmanaged Skill {} ({agents}). Candidate source {}, {} stars.",
-            skill.name, candidate.selector, candidate.stargazer_count
-        )),
-        Line::hint(format!(
-            "Delete {}, then run skilld install {}{global}{agent_flags}.",
-            skill.path.display(),
-            candidate.selector
-        )),
-    ]
+    let install = format!("skilld install {}{global}{agent_flags}", candidate.selector);
+    let plain = format!(
+        "Unmanaged Skill {} ({agents}). Candidate source {}, {} stars.\nDelete {}, then run {install}.",
+        skill.name,
+        candidate.selector,
+        candidate.stargazer_count,
+        skill.path.display()
+    );
+    vec![Line::record(
+        Marker::Warn,
+        plain,
+        skill.name.clone(),
+        Some(format!("{agents} · unmanaged")),
+        vec![
+            Detail::plain("candidate", candidate.selector.clone()),
+            Detail::plain(
+                "stars",
+                format!("★ {}", grouped_number(candidate.stargazer_count)),
+            ),
+            Detail::command("install", install),
+            Detail::path("delete", display_path(&skill.path, display_base)),
+        ],
+    )]
 }
 
 pub(crate) fn agent_flags(agents: &[AgentTargetId]) -> String {

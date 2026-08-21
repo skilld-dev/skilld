@@ -113,10 +113,19 @@ pub fn short_sha(value: &str) -> &str {
     value.get(..7).unwrap_or(value)
 }
 
+/// Show `path` relative to `base` when it lives underneath it, otherwise
+/// absolute. Human display only; machine records keep absolute paths.
+pub fn display_path(path: &std::path::Path, base: &std::path::Path) -> String {
+    path.strip_prefix(base)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        grouped_number, pad_to, sanitize, short_sha, truncate, truncate_ellipsis, width, wrap,
+        display_path, grouped_number, pad_to, sanitize, short_sha, truncate, truncate_ellipsis,
+        width, wrap,
     };
 
     #[test]
@@ -161,5 +170,21 @@ mod tests {
         assert_eq!(short_sha("0123456789abcdef"), "0123456");
         assert_eq!(short_sha("abc"), "abc");
         assert_eq!(width("漢"), 2);
+    }
+
+    #[test]
+    fn display_paths_strip_the_base_when_inside_it() {
+        use std::path::Path;
+        assert_eq!(
+            display_path(
+                Path::new("/home/harlan/pkg/skilld/.claude/skills/x"),
+                Path::new("/home/harlan/pkg/skilld")
+            ),
+            ".claude/skills/x"
+        );
+        assert_eq!(
+            display_path(Path::new("/etc/passwd"), Path::new("/home/harlan")),
+            "/etc/passwd"
+        );
     }
 }
