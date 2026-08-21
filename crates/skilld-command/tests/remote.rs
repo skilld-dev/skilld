@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ const ATTESTATION_DOMAIN: &[u8] = b"skilld-attestation-v1\0";
 struct FakeHttp {
     responses: Mutex<VecDeque<Result<HttpResponse, RemoteError>>>,
     requests: Mutex<Vec<HttpRequest>>,
+    timeouts: Mutex<Vec<Option<Duration>>>,
 }
 
 impl FakeHttp {
@@ -33,6 +35,7 @@ impl FakeHttp {
         Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             requests: Mutex::new(vec![]),
+            timeouts: Mutex::new(vec![]),
         }
     }
 }
@@ -42,8 +45,10 @@ impl HttpAdapter for FakeHttp {
         &self,
         request: &HttpRequest,
         _cancellation: &dyn Cancellation,
+        timeout: Option<Duration>,
     ) -> Result<HttpResponse, RemoteError> {
         self.requests.lock().unwrap().push(request.clone());
+        self.timeouts.lock().unwrap().push(timeout);
         self.responses
             .lock()
             .unwrap()
@@ -89,6 +94,30 @@ impl Sleeper for RecordingSleeper {
             return Err(RemoteError::new("CANCELLED", "cancelled"));
         }
         *self.elapsed.lock().unwrap() += duration;
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct TestCancellation(AtomicBool);
+
+impl Cancellation for TestCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+struct CancellingSleeper {
+    cancellation: Arc<TestCancellation>,
+}
+
+impl Sleeper for CancellingSleeper {
+    fn sleep(
+        &self,
+        _duration: Duration,
+        _cancellation: &dyn Cancellation,
+    ) -> Result<(), RemoteError> {
+        self.cancellation.0.store(true, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -404,7 +433,76 @@ fn a_pending_resolution_times_out_after_at_most_sixty_seconds() {
         "Artifact creation stayed pending too long. Retry the same command."
     );
     assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(60));
-    assert_eq!(http.requests.lock().unwrap().len(), 3);
+    assert_eq!(http.requests.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn resolution_retry_waits_count_toward_the_sixty_second_limit() {
+    let resolution_id = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
+    let pending = || {
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "state": "pending",
+                "resolutionId": resolution_id,
+                "stage": "checking",
+                "pollAfterMs": 30_000
+            }))
+            .unwrap(),
+        )
+    };
+    let mut retry = response(503, b"unavailable".to_vec());
+    retry
+        .headers
+        .insert("retry-after".to_owned(), "60".to_owned());
+    let http = Arc::new(FakeHttp::with([pending(), retry, pending(), pending()]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(sleeper.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "RESOLUTION_TIMEOUT");
+    assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(60));
+    assert_eq!(http.requests.lock().unwrap().len(), 2);
+    let timeouts = http.timeouts.lock().unwrap();
+    assert!(timeouts[0].is_some_and(|timeout| timeout <= Duration::from_secs(60)));
+    assert!(timeouts[1].is_some_and(|timeout| timeout <= Duration::from_secs(30)));
+}
+
+#[test]
+fn cancellation_wins_when_the_resolution_deadline_is_reached() {
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "pending",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "stage": "checking",
+            "pollAfterMs": 60_000
+        }))
+        .unwrap(),
+    )]));
+    let cancellation = Arc::new(TestCancellation::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_cancellation(cancellation.clone())
+    .with_sleeper(Arc::new(CancellingSleeper { cancellation }));
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "CANCELLED");
+    assert_eq!(http.requests.lock().unwrap().len(), 1);
 }
 
 #[test]

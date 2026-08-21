@@ -76,6 +76,7 @@ impl HttpAdapter for NativeHttpAdapter {
         &self,
         request: &HttpRequest,
         cancellation: &dyn Cancellation,
+        timeout: Option<Duration>,
     ) -> Result<HttpResponse, RemoteError> {
         if cancellation.is_cancelled() {
             return Err(RemoteError::new(
@@ -89,12 +90,24 @@ impl HttpAdapter for NativeHttpAdapter {
                 for header in &request.headers {
                     builder = builder.header(&header.name, header.value.expose());
                 }
+                if let Some(timeout) = timeout {
+                    builder = builder
+                        .config()
+                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
+                        .build();
+                }
                 builder.call()
             }
             HttpMethod::Post => {
                 let mut builder = self.agent.post(&request.url);
                 for header in &request.headers {
                     builder = builder.header(&header.name, header.value.expose());
+                }
+                if let Some(timeout) = timeout {
+                    builder = builder
+                        .config()
+                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
+                        .build();
                 }
                 builder.send(request.body.as_slice())
             }

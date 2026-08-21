@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
@@ -22,8 +22,64 @@ const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_RETRIES: usize = 2;
 const MAX_POLLS: usize = 120;
-const MAX_POLL_DURATION_MS: u64 = 60 * 1_000;
+const RESOLUTION_TIMEOUT_MS: u64 = 60 * 1_000;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct ResolutionDeadline {
+    expires_at: Instant,
+    remaining_wait: Duration,
+}
+
+impl ResolutionDeadline {
+    fn new() -> Self {
+        let timeout = Duration::from_millis(RESOLUTION_TIMEOUT_MS);
+        Self {
+            expires_at: Instant::now()
+                .checked_add(timeout)
+                .expect("the fixed Resolution timeout is valid"),
+            remaining_wait: timeout,
+        }
+    }
+
+    fn remaining(&self) -> Result<Duration, RemoteError> {
+        let remaining = self
+            .expires_at
+            .checked_duration_since(Instant::now())
+            .unwrap_or_default()
+            .min(self.remaining_wait);
+        if remaining.is_zero() {
+            Err(resolution_timeout())
+        } else {
+            Ok(remaining)
+        }
+    }
+
+    fn sleep(
+        &mut self,
+        duration: Duration,
+        sleeper: &dyn Sleeper,
+        cancellation: &dyn Cancellation,
+    ) -> Result<(), RemoteError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        let remaining = self.remaining()?;
+        if duration >= remaining {
+            sleeper.sleep(remaining, cancellation)?;
+            if cancellation.is_cancelled() {
+                return Err(cancelled());
+            }
+            self.remaining_wait = Duration::ZERO;
+            return Err(resolution_timeout());
+        }
+        sleeper.sleep(duration, cancellation)?;
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        self.remaining_wait = self.remaining_wait.saturating_sub(duration);
+        self.remaining().map(|_| ())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HttpMethod {
@@ -160,6 +216,7 @@ pub trait HttpAdapter: Send + Sync {
         &self,
         request: &HttpRequest,
         cancellation: &dyn Cancellation,
+        timeout: Option<Duration>,
     ) -> Result<HttpResponse, RemoteError>;
 }
 
@@ -274,8 +331,17 @@ impl SkilldRemote {
 
     fn execute(
         &self,
+        request: HttpRequest,
+        allowed: AllowedOrigin,
+    ) -> Result<HttpResponse, RemoteError> {
+        self.execute_with_deadline(request, allowed, None)
+    }
+
+    fn execute_with_deadline(
+        &self,
         mut request: HttpRequest,
         allowed: AllowedOrigin,
+        mut deadline: Option<&mut ResolutionDeadline>,
     ) -> Result<HttpResponse, RemoteError> {
         let mut redirects = 0_usize;
         loop {
@@ -285,7 +351,20 @@ impl SkilldRemote {
                 if self.cancellation.is_cancelled() {
                     return Err(cancelled());
                 }
-                match self.adapter.send(&request, self.cancellation.as_ref()) {
+                let timeout = deadline
+                    .as_deref()
+                    .map(ResolutionDeadline::remaining)
+                    .transpose()?;
+                let response = self
+                    .adapter
+                    .send(&request, self.cancellation.as_ref(), timeout);
+                if self.cancellation.is_cancelled() {
+                    return Err(cancelled());
+                }
+                if let Some(deadline) = deadline.as_deref() {
+                    deadline.remaining()?;
+                }
+                match response {
                     Ok(response) => {
                         if response.body.len() > request.response_limit {
                             return Err(RemoteError::new(
@@ -295,17 +374,16 @@ impl SkilldRemote {
                         }
                         if matches!(response.status, 429 | 503) && retry < MAX_RETRIES {
                             retry += 1;
-                            self.sleeper
-                                .sleep(retry_delay(&response, retry), self.cancellation.as_ref())?;
+                            self.sleep(retry_delay(&response, retry), deadline.as_deref_mut())?;
                             continue;
                         }
                         break response;
                     }
                     Err(error) if error.code == "HTTP_TRANSPORT" && retry < MAX_RETRIES => {
                         retry += 1;
-                        self.sleeper.sleep(
+                        self.sleep(
                             Duration::from_millis(100 * retry as u64),
-                            self.cancellation.as_ref(),
+                            deadline.as_deref_mut(),
                         )?;
                     }
                     Err(error) => return Err(error),
@@ -336,6 +414,19 @@ impl SkilldRemote {
                 return Err(problem_error(&response));
             }
             return Ok(response);
+        }
+    }
+
+    fn sleep(
+        &self,
+        duration: Duration,
+        deadline: Option<&mut ResolutionDeadline>,
+    ) -> Result<(), RemoteError> {
+        match deadline {
+            Some(deadline) => {
+                deadline.sleep(duration, self.sleeper.as_ref(), self.cancellation.as_ref())
+            }
+            None => self.sleeper.sleep(duration, self.cancellation.as_ref()),
         }
     }
 
@@ -374,6 +465,7 @@ impl SkilldRemote {
     }
 
     fn resolve(&self, source: &SourceRequest) -> Result<ArtifactDescriptor, RemoteError> {
+        let mut deadline = ResolutionDeadline::new();
         let body = serde_json::to_vec(&json!({ "source": source })).map_err(|_| {
             RemoteError::new("INVALID_SOURCE", "the source request cannot be encoded")
         })?;
@@ -387,7 +479,11 @@ impl SkilldRemote {
             body,
             response_limit: JSON_LIMIT,
         };
-        let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
+        let response = self.execute_with_deadline(
+            request,
+            AllowedOrigin::Service(self.endpoint.clone()),
+            Some(&mut deadline),
+        )?;
         let mut resolution: Resolution = parse_json(&response.body)?;
         let resolution_id = resolution.resolution_id().to_owned();
         if !valid_resolution_id(&resolution_id) {
@@ -396,7 +492,6 @@ impl SkilldRemote {
                 "the Resolution identifier is invalid",
             ));
         }
-        let mut poll_duration_ms = 0_u64;
         for _ in 0..MAX_POLLS {
             if resolution.resolution_id() != resolution_id {
                 return Err(RemoteError::new(
@@ -428,12 +523,9 @@ impl SkilldRemote {
                             "the Resolution poll interval is invalid",
                         ));
                     }
-                    poll_duration_ms = poll_duration_ms
-                        .checked_add(poll_after_ms)
-                        .filter(|duration| *duration <= MAX_POLL_DURATION_MS)
-                        .ok_or_else(resolution_timeout)?;
-                    self.sleeper.sleep(
+                    deadline.sleep(
                         Duration::from_millis(poll_after_ms),
+                        self.sleeper.as_ref(),
                         self.cancellation.as_ref(),
                     )?;
                     let path = format!("/api/v1/resolutions/{}", path_segment(&resolution_id));
@@ -444,8 +536,11 @@ impl SkilldRemote {
                         body: vec![],
                         response_limit: JSON_LIMIT,
                     };
-                    let response =
-                        self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
+                    let response = self.execute_with_deadline(
+                        request,
+                        AllowedOrigin::Service(self.endpoint.clone()),
+                        Some(&mut deadline),
+                    )?;
                     resolution = parse_json(&response.body)?;
                 }
                 Resolution::Blocked { .. } => {
