@@ -107,6 +107,29 @@ fn json_search_returns_one_versioned_document() {
 }
 
 #[test]
+fn json_help_and_version_return_versioned_documents() {
+    let root_help = run(&["skilld", "--json", "--help"], OutputContext::Plain);
+    let search_help = run(
+        &["skilld", "search", "--json", "--help"],
+        OutputContext::Plain,
+    );
+    let version = run(&["skilld", "--json", "--version"], OutputContext::Plain);
+
+    assert_eq!(root_help.0, 0);
+    assert!(root_help.2.is_empty());
+    let root = serde_json::from_str::<serde_json::Value>(&root_help.1).unwrap();
+    assert_eq!(root["command"], "help");
+    assert_eq!(root["data"]["path"], "skilld");
+    let search = serde_json::from_str::<serde_json::Value>(&search_help.1).unwrap();
+    assert_eq!(search["command"], "help");
+    assert_eq!(search["data"]["path"], "skilld search");
+    let version = serde_json::from_str::<serde_json::Value>(&version.1).unwrap();
+    assert_eq!(version["command"], "version");
+    assert_eq!(version["data"]["name"], "skilld");
+    assert_eq!(version["data"]["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
 fn non_terminal_and_ci_output_are_stable_plain_records() {
     let expected = concat!(
         "grill-me\tskilld:mattpocock/skills/grill-me\t227068\t",
@@ -127,14 +150,27 @@ fn non_terminal_and_ci_output_are_stable_plain_records() {
 }
 
 #[test]
-fn detected_agent_output_is_plain_even_with_a_tty() {
+fn human_terminal_is_formatted_without_an_explicit_machine_flag() {
     let agent_with_tty = run(
+        &["skilld", "search", "grill"],
+        OutputContext::auto(true, false, false, false, false, 120),
+    );
+
+    assert_eq!(agent_with_tty.0, 0);
+    assert!(agent_with_tty.1.contains("Skill search"));
+    assert!(agent_with_tty.1.contains('\u{1b}'));
+    assert!(agent_with_tty.2.is_empty());
+}
+
+#[test]
+fn active_agent_terminal_is_plain_without_an_explicit_machine_flag() {
+    let result = run(
         &["skilld", "search", "grill"],
         OutputContext::auto(true, true, false, false, false, 120),
     );
 
     assert_eq!(
-        agent_with_tty,
+        result,
         (
             0,
             concat!(
@@ -320,6 +356,37 @@ fn conflicting_output_flags_fail_before_search() {
 }
 
 #[test]
+fn json_search_parse_errors_are_tagged_usage_errors() {
+    let after = run(
+        &["skilld", "search", "grill", "--json", "--unknown"],
+        OutputContext::Plain,
+    );
+    let before = run(
+        &["skilld", "--json", "search", "grill", "--unknown"],
+        OutputContext::Plain,
+    );
+
+    assert_eq!(after.0, 2);
+    assert!(after.1.is_empty());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&after.2).unwrap()["_tag"],
+        "UsageError"
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
+fn empty_json_search_is_a_tagged_usage_error() {
+    let (exit, stdout, stderr) = run(&["skilld", "search", "--json"], OutputContext::Plain);
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    let error = serde_json::from_str::<serde_json::Value>(&stderr).unwrap();
+    assert_eq!(error["_tag"], "UsageError");
+    assert_eq!(error["error"]["code"], "INVALID_SEARCH");
+}
+
+#[test]
 fn json_search_errors_are_tagged_and_written_to_stderr() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -333,7 +400,7 @@ fn json_search_errors_are_tagged_and_written_to_stderr() {
         &mut stderr,
     );
 
-    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.exit_code, 1);
     assert!(stdout.is_empty());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&stderr).unwrap(),
@@ -346,6 +413,27 @@ fn json_search_errors_are_tagged_and_written_to_stderr() {
             }
         })
     );
+}
+
+#[test]
+fn stdout_failures_report_an_operation_error() {
+    let mut stdout = WriteErrorWriter;
+    let mut stderr = Vec::new();
+
+    let result = run_with_output(
+        ["skilld", "search", "grill", "--json"],
+        &SearchHost {
+            response: Ok(response()),
+        },
+        OutputContext::Plain,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 1);
+    let error = serde_json::from_slice::<serde_json::Value>(&stderr).unwrap();
+    assert_eq!(error["_tag"], "OperationError");
+    assert_eq!(error["error"]["code"], "OUTPUT_WRITE_FAILED");
 }
 
 fn strip_ansi(value: &str) -> String {
@@ -365,6 +453,18 @@ struct BrokenPipeWriter;
 impl Write for BrokenPipeWriter {
     fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
         Err(io::Error::from(io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct WriteErrorWriter;
+
+impl Write for WriteErrorWriter {
+    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("write failed"))
     }
 
     fn flush(&mut self) -> io::Result<()> {

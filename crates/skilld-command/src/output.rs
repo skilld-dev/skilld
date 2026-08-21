@@ -1,7 +1,8 @@
+use clap::error::ErrorKind;
 use serde::Serialize;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::CommandError;
+use crate::{CommandError, CommandErrorKind};
 
 const JSON_SCHEMA_VERSION: u8 = 1;
 const MIN_WIDTH: u16 = 20;
@@ -16,13 +17,13 @@ pub enum OutputContext {
 impl OutputContext {
     pub fn auto(
         stdout_is_terminal: bool,
-        detected_agent: bool,
+        active_agent: bool,
         ci: bool,
         no_color: bool,
         term_is_dumb: bool,
         width: u16,
     ) -> Self {
-        if detected_agent || ci || !stdout_is_terminal {
+        if active_agent || ci || !stdout_is_terminal {
             return Self::Plain;
         }
         Self::HumanTerminal {
@@ -94,11 +95,40 @@ pub(crate) fn render_search(
     }
 }
 
+pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8> {
+    let (command, data) = if kind == ErrorKind::DisplayVersion {
+        (
+            "version",
+            JsonDisplayData::Version {
+                name: "skilld",
+                version: skilld_core::VERSION,
+            },
+        )
+    } else {
+        ("help", JsonDisplayData::Help { path, text })
+    };
+    serde_json::to_vec(&JsonSuccess {
+        schema_version: JSON_SCHEMA_VERSION,
+        tag: "Success",
+        command,
+        data,
+        notices: Vec::new(),
+    })
+    .map(|mut bytes| {
+        bytes.push(b'\n');
+        bytes
+    })
+    .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: display output could not be encoded\n".to_vec())
+}
+
 pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
     if mode == OutputMode::JsonV1 {
         return serde_json::to_vec(&JsonFailure {
             schema_version: JSON_SCHEMA_VERSION,
-            tag: "OperationError",
+            tag: match error.kind {
+                CommandErrorKind::Usage => "UsageError",
+                CommandErrorKind::Operation => "OperationError",
+            },
             error: JsonError {
                 code: error.code,
                 message: &error.message,
@@ -290,13 +320,26 @@ fn styled(value: &str, style: &str, color: bool) -> String {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct JsonSuccess<'a> {
+struct JsonSuccess<T> {
     schema_version: u8,
     #[serde(rename = "_tag")]
     tag: &'static str,
     command: &'static str,
-    data: JsonSearchData<'a>,
+    data: T,
     notices: Vec<JsonNotice>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum JsonDisplayData<'a> {
+    Help {
+        path: &'a str,
+        text: &'a str,
+    },
+    Version {
+        name: &'static str,
+        version: &'static str,
+    },
 }
 
 #[derive(Serialize)]
