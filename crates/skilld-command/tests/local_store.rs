@@ -4,15 +4,88 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use skilld_command::{LocalStore, ResolvedTarget, StoreError, TargetInstall, TransactionGate};
+use skilld_command::{
+    LocalStore, PreparedStoreUpdate, ResolvedTarget, StoreError, TargetInstall, TransactionGate,
+};
 use skilld_core::{AgentTargetId, InstallMode, LockedSource, SkillName};
 
 fn source(root: &Path, parent: &str, content: &str) -> PathBuf {
-    let path = root.join(parent).join("example");
+    named_source(root, parent, "example", content)
+}
+
+fn named_source(root: &Path, parent: &str, name: &str, content: &str) -> PathBuf {
+    let path = root.join(parent).join(name);
     fs::create_dir_all(path.join("references")).unwrap();
-    fs::write(path.join("SKILL.md"), skill_text(content)).unwrap();
+    fs::write(
+        path.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: Test fixture.\n---\n\n{content}\n"),
+    )
+    .unwrap();
     fs::write(path.join("references/check.md"), "check").unwrap();
     path
+}
+
+#[test]
+fn unsupported_multi_skill_batch_writes_nothing() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "old-alpha", "alpha", "old alpha");
+    let beta = named_source(temporary.path(), "old-beta", "beta", "old beta");
+    let new_alpha = named_source(temporary.path(), "new-alpha", "alpha", "new alpha");
+    let new_beta = named_source(temporary.path(), "new-beta", "beta", "new beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let before_lock = fs::read(store.root().join("skilld-lock.yaml")).unwrap();
+
+    let error = store
+        .apply_update_batch(
+            vec![
+                PreparedStoreUpdate {
+                    source: new_alpha,
+                    locked_source: local_source(&alpha),
+                    source_status: None,
+                    targets: vec![install.clone()],
+                },
+                PreparedStoreUpdate {
+                    source: new_beta,
+                    locked_source: local_source(&beta),
+                    source_status: None,
+                    targets: vec![install],
+                },
+            ],
+            std::slice::from_ref(&target),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code(), "ATOMIC_UPDATE_UNAVAILABLE");
+    assert_eq!(
+        fs::read_to_string(store.root().join("alpha/SKILL.md")).unwrap(),
+        "---\nname: alpha\ndescription: Test fixture.\n---\n\nold alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(target.root.join("beta/SKILL.md")).unwrap(),
+        "---\nname: beta\ndescription: Test fixture.\n---\n\nold beta\n"
+    );
+    assert_eq!(
+        fs::read(store.root().join("skilld-lock.yaml")).unwrap(),
+        before_lock
+    );
 }
 
 fn skill_text(content: &str) -> String {

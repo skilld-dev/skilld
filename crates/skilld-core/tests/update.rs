@@ -1,8 +1,7 @@
-use std::num::NonZeroU64;
-
 use skilld_core::{
-    CommitSha, SkillName, UpdateCheckV1, UpdateLatestCommit, UpdateModelError, UpdatePlan,
-    UpdatePlanItem, UpdateRelation, classify_update_comparison,
+    CommitAuthor, CommitHistory, CommitSha, CommitSummary, SkillName, UpdateLatestCommit,
+    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    classify_update_comparison,
 };
 
 fn sha(value: char) -> CommitSha {
@@ -25,7 +24,6 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Available {
             locked_commit_sha: locked.clone(),
             latest_commit_sha: latest.clone(),
-            ahead_by: NonZeroU64::new(3).unwrap(),
         }
     );
     assert_eq!(
@@ -33,7 +31,6 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Behind {
             locked_commit_sha: locked.clone(),
             latest_commit_sha: latest.clone(),
-            behind_by: NonZeroU64::new(2).unwrap(),
         }
     );
     assert_eq!(
@@ -41,8 +38,6 @@ fn comparison_counts_classify_every_git_relation() {
         UpdateRelation::Diverged {
             locked_commit_sha: locked,
             latest_commit_sha: latest,
-            ahead_by: NonZeroU64::new(4).unwrap(),
-            behind_by: NonZeroU64::new(2).unwrap(),
         }
     );
 }
@@ -102,15 +97,68 @@ fn update_plan_sorts_skills_and_rejects_duplicates() {
 }
 
 #[test]
+fn update_plan_carries_full_bounded_commit_history() {
+    let item = UpdatePlanItem::with_history(
+        SkillName::parse("grill").unwrap(),
+        UpdateRelation::Available {
+            locked_commit_sha: sha('1'),
+            latest_commit_sha: sha('2'),
+        },
+        CommitHistory::compared(
+            vec![CommitSummary {
+                sha: sha('2'),
+                subject: "Add charcoal timing".to_owned(),
+                author: CommitAuthor {
+                    name: "Ada Lovelace".to_owned(),
+                    login: Some("ada".to_owned()),
+                },
+                timestamp: "2026-08-21T00:00:00Z".to_owned(),
+                url: format!(
+                    "https://github.com/acme/skills/commit/{}",
+                    sha('2').as_str()
+                ),
+            }],
+            501,
+            true,
+            format!(
+                "https://github.com/acme/skills/compare/{}...{}",
+                sha('1').as_str(),
+                sha('2').as_str()
+            ),
+        )
+        .unwrap(),
+    );
+    let plan = UpdatePlanV1::new(UpdatePlan::new(vec![item]).unwrap());
+    let value = serde_json::to_value(plan).unwrap();
+
+    assert_eq!(value["items"][0]["history"]["total"], 501);
+    assert_eq!(value["items"][0]["history"]["truncated"], true);
+    assert_eq!(
+        value["items"][0]["history"]["items"][0]["sha"],
+        sha('2').as_str()
+    );
+    assert_eq!(
+        value["items"][0]["history"]["compareUrl"],
+        format!(
+            "https://github.com/acme/skills/compare/{}...{}",
+            sha('1').as_str(),
+            sha('2').as_str()
+        )
+    );
+}
+
+#[test]
 fn v1_check_fixture_covers_the_published_relations() {
     let bytes = include_bytes!("../../../tests/fixtures/v3-rust/v1/update-check.json");
     let fixture: serde_json::Value = serde_json::from_slice(bytes).unwrap();
-    let check: UpdateCheckV1 = serde_json::from_value(fixture["data"].clone()).unwrap();
+    let check: UpdatePlanV1 = serde_json::from_value(fixture["data"].clone()).unwrap();
 
     assert_eq!(fixture["schemaVersion"], 1);
     assert_eq!(fixture["_tag"], "Success");
     assert_eq!(fixture["command"], "update");
     assert_eq!(check.items().len(), 7);
+    assert!(check.has_changes());
+    assert!(check.is_incomplete());
     assert!(matches!(
         check.items()[6].relation(),
         UpdateRelation::Unavailable {

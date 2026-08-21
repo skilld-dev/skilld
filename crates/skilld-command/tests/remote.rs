@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -10,15 +10,16 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use skilld_command::{
     Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, LocalHost,
-    NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteProvider, RemoteSourceState,
-    SecretValue, SkilldRemote, Sleeper, TokenProvider, run,
+    NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
+    RemoteComparisonOutcome, RemoteComparisonRelation, RemoteProvider, RemoteSourceState,
+    RemoteUpdateComparison, SecretValue, SkilldRemote, Sleeper, TokenProvider, run,
 };
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
-    CheckResult, InstallMode, InstallRequest, InstallScope, InstallSource, LockedSource,
-    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
-    SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
-    UpdateCheckV1, UpdateLatestCommit, UpdateRelation,
+    CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallRequest, InstallScope,
+    InstallSource, LockedSource, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
+    ResolvedSource, SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus,
+    TrustedRootPin, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -60,6 +61,59 @@ impl HttpAdapter for FakeHttp {
                     "the fake response queue is empty",
                 ))
             })
+    }
+}
+
+#[derive(Default)]
+struct UpdatePlansHttp {
+    requests: Mutex<Vec<HttpRequest>>,
+    active: AtomicUsize,
+    maximum_concurrency: AtomicUsize,
+}
+
+impl HttpAdapter for UpdatePlansHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.maximum_concurrency.fetch_max(active, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(5));
+        self.requests.lock().unwrap().push(request.clone());
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        let results = body["comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|comparison| {
+                json!({
+                    "_tag": "ready",
+                    "id": comparison["id"],
+                    "owner": comparison["owner"],
+                    "repository": comparison["repository"],
+                    "baseSha": comparison["baseSha"],
+                    "headSha": comparison["headSha"],
+                    "relation": "identical",
+                    "commits": [],
+                    "total": 0,
+                    "truncated": false,
+                    "compareUrl": format!(
+                        "https://github.com/{}/{}/compare/{}...{}",
+                        comparison["owner"].as_str().unwrap(),
+                        comparison["repository"].as_str().unwrap(),
+                        comparison["baseSha"].as_str().unwrap(),
+                        comparison["headSha"].as_str().unwrap(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(response(
+            200,
+            serde_json::to_vec(&json!({ "results": results })).unwrap(),
+        ))
     }
 }
 
@@ -341,6 +395,281 @@ fn search_uses_only_the_v1_skilld_route_and_retries_a_bounded_failure() {
     assert!(requests.iter().all(|request| {
         request.url == "http://127.0.0.1:8787/api/v1/skills?q=vue+testing&limit=20"
     }));
+}
+
+#[test]
+fn public_comparison_uses_anonymous_github_and_keeps_full_commit_details() {
+    let base = CommitSha::parse("1".repeat(40)).unwrap();
+    let head = CommitSha::parse("2".repeat(40)).unwrap();
+    let commit = "3".repeat(40);
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "status": "ahead",
+            "total_commits": 1,
+            "commits": [{
+                "sha": commit,
+                "commit": {
+                    "message": "Add grill timers\u{1b}[31m\nHidden body",
+                    "author": {
+                        "name": "Ada Lovelace",
+                        "date": "2026-08-21T00:00:00Z"
+                    }
+                },
+                "author": { "login": "ada" }
+            }]
+        }))
+        .unwrap(),
+    )]));
+    let remote = search_remote(http.clone());
+    let comparison = RemoteUpdateComparison::new(
+        "grill",
+        "acme",
+        "skills",
+        base,
+        head,
+        RemoteComparisonAccess::PublicGithub,
+    )
+    .unwrap();
+
+    let results = remote.compare_updates(&[comparison]).unwrap();
+
+    assert_eq!(results.len(), 1);
+    let RemoteComparisonOutcome::Ready {
+        relation,
+        commits,
+        total,
+        truncated,
+        compare_url,
+    } = &results[0].outcome
+    else {
+        panic!("expected a ready comparison")
+    };
+    assert_eq!(*relation, RemoteComparisonRelation::Ahead);
+    assert_eq!((*total, *truncated), (1, false));
+    assert_eq!(
+        commits[0].sha.as_str(),
+        "3333333333333333333333333333333333333333"
+    );
+    assert_eq!(commits[0].subject, "Add grill timers [31m");
+    assert_eq!(commits[0].author.name, "Ada Lovelace");
+    assert_eq!(commits[0].author.login.as_deref(), Some("ada"));
+    assert_eq!(
+        commits[0].url,
+        "https://github.com/acme/skills/commit/3333333333333333333333333333333333333333"
+    );
+    assert_eq!(
+        compare_url,
+        "https://github.com/acme/skills/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222"
+    );
+    let request = &http.requests.lock().unwrap()[0];
+    assert!(
+        request
+            .url
+            .starts_with("https://api.github.com/repos/acme/skills/compare/")
+    );
+    assert!(
+        request
+            .headers
+            .iter()
+            .all(|header| header.name != "authorization")
+    );
+    assert!(request.headers.iter().any(|header| {
+        header.name == "x-github-api-version" && header.value.expose() == "2026-03-10"
+    }));
+}
+
+#[test]
+fn public_comparison_keeps_the_newest_five_hundred_commits() {
+    let responses = (0..6).map(|page| {
+        let start = page * 100 + 1;
+        let count = if page == 5 { 50 } else { 100 };
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "status": "ahead",
+                "total_commits": 550,
+                "commits": (start..start + count).map(|number| json!({
+                    "sha": format!("{number:040x}"),
+                    "commit": {
+                        "message": format!("Commit {number}"),
+                        "author": {
+                            "name": "Ada Lovelace",
+                            "date": "2026-08-21T00:00:00Z"
+                        }
+                    },
+                    "author": { "login": "ada" }
+                })).collect::<Vec<_>>()
+            }))
+            .unwrap(),
+        )
+    });
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = search_remote(http.clone());
+    let comparison = RemoteUpdateComparison::new(
+        "grill",
+        "acme",
+        "skills",
+        CommitSha::parse("1".repeat(40)).unwrap(),
+        CommitSha::parse("2".repeat(40)).unwrap(),
+        RemoteComparisonAccess::PublicGithub,
+    )
+    .unwrap();
+
+    let results = remote.compare_updates(&[comparison]).unwrap();
+
+    let RemoteComparisonOutcome::Ready {
+        commits,
+        total,
+        truncated,
+        ..
+    } = &results[0].outcome
+    else {
+        panic!("expected a ready comparison")
+    };
+    assert_eq!(commits.len(), 500);
+    assert_eq!(commits[0].sha.as_str(), format!("{:040x}", 51));
+    assert_eq!(commits[499].sha.as_str(), format!("{:040x}", 550));
+    assert_eq!((*total, *truncated), (550, true));
+    assert_eq!(http.requests.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn hosted_comparisons_are_authenticated_and_chunked_at_fifty() {
+    let http = Arc::new(UpdatePlansHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(FixedToken),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    let comparisons = (0..51)
+        .map(|index| {
+            RemoteUpdateComparison::new(
+                format!("skill-{index}"),
+                "acme",
+                "private-skills",
+                CommitSha::parse("1".repeat(40)).unwrap(),
+                CommitSha::parse("2".repeat(40)).unwrap(),
+                RemoteComparisonAccess::Hosted,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    let results = remote.compare_updates(&comparisons).unwrap();
+
+    assert_eq!(results.len(), 51);
+    assert!(results.iter().all(|result| matches!(
+        result.outcome,
+        RemoteComparisonOutcome::Ready {
+            relation: RemoteComparisonRelation::Identical,
+            ..
+        }
+    )));
+    let requests = http.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let mut sizes = requests
+        .iter()
+        .map(|request| {
+            assert_eq!(request.url, "http://127.0.0.1:8787/api/v1/update-plans");
+            assert!(request.headers.iter().any(|header| {
+                header.name == "authorization" && header.value.expose() == "Bearer account-token"
+            }));
+            serde_json::from_slice::<serde_json::Value>(&request.body).unwrap()["comparisons"]
+                .as_array()
+                .unwrap()
+                .len()
+        })
+        .collect::<Vec<_>>();
+    sizes.sort_unstable();
+    assert_eq!(sizes, [1, 50]);
+    assert!(http.maximum_concurrency.load(Ordering::SeqCst) <= 4);
+}
+
+#[test]
+fn hosted_comparison_keeps_per_item_failures_and_retry_after() {
+    let inputs = ["ready", "limited"]
+        .into_iter()
+        .map(|id| {
+            RemoteUpdateComparison::new(
+                id,
+                "acme",
+                "private-skills",
+                CommitSha::parse("1".repeat(40)).unwrap(),
+                CommitSha::parse("2".repeat(40)).unwrap(),
+                RemoteComparisonAccess::Hosted,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let identity = |id: &str| {
+        json!({
+            "id": id,
+            "owner": "acme",
+            "repository": "private-skills",
+            "baseSha": "1".repeat(40),
+            "headSha": "2".repeat(40),
+        })
+    };
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "results": [
+                {
+                    "_tag": "ready",
+                    "id": identity("ready")["id"],
+                    "owner": identity("ready")["owner"],
+                    "repository": identity("ready")["repository"],
+                    "baseSha": identity("ready")["baseSha"],
+                    "headSha": identity("ready")["headSha"],
+                    "relation": "identical",
+                    "commits": [],
+                    "total": 0,
+                    "truncated": false,
+                    "compareUrl": format!(
+                        "https://github.com/acme/private-skills/compare/{}...{}",
+                        "1".repeat(40),
+                        "2".repeat(40)
+                    )
+                },
+                {
+                    "_tag": "rate_limited",
+                    "id": identity("limited")["id"],
+                    "owner": identity("limited")["owner"],
+                    "repository": identity("limited")["repository"],
+                    "baseSha": identity("limited")["baseSha"],
+                    "headSha": identity("limited")["headSha"],
+                    "retryAfterSeconds": 12,
+                    "resetAt": "2026-08-21T00:10:00.000Z"
+                }
+            ]
+        }))
+        .unwrap(),
+    )]));
+    let remote = SkilldRemote::new(http, Arc::new(FixedToken), NativeRemoteConfig::Unconfigured)
+        .with_endpoint("http://127.0.0.1:8787")
+        .unwrap()
+        .with_sleeper(Arc::new(NoSleep));
+
+    let results = remote.compare_updates(&inputs).unwrap();
+
+    assert!(matches!(
+        results[0].outcome,
+        RemoteComparisonOutcome::Ready {
+            relation: RemoteComparisonRelation::Identical,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &results[1].outcome,
+        RemoteComparisonOutcome::RateLimited {
+            retry_after_seconds: Some(12),
+            reset_at: Some(reset_at),
+        } if reset_at == "2026-08-21T00:10:00.000Z"
+    ));
 }
 
 #[test]
@@ -771,6 +1100,23 @@ impl RemoteProvider for FakeProvider {
         }
     }
 
+    fn prepare_exact(
+        &self,
+        selector: &RemoteSelector,
+        expected_commit: &CommitSha,
+        _direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        if *self.fail_prepare.lock().unwrap() {
+            return Err(RemoteError::new("CHECK_BLOCKED", "a required check failed"));
+        }
+        let mut prepared = self.prepared(selector);
+        let LockedSource::Remote { commit_sha, .. } = &mut prepared.locked_source else {
+            unreachable!("the fixture uses a remote source")
+        };
+        *commit_sha = expected_commit.as_str().to_owned();
+        Ok(prepared)
+    }
+
     fn source_state(
         &self,
         _selector: &RemoteSelector,
@@ -785,6 +1131,69 @@ impl RemoteProvider for FakeProvider {
         } else {
             Ok(RemoteSourceState::Current)
         }
+    }
+
+    fn compare_updates(
+        &self,
+        comparisons: &[RemoteUpdateComparison],
+    ) -> Result<Vec<skilld_command::RemoteUpdateResult>, RemoteError> {
+        Ok(comparisons
+            .iter()
+            .map(|comparison| skilld_command::RemoteUpdateResult {
+                id: comparison.id.clone(),
+                outcome: RemoteComparisonOutcome::Ready {
+                    relation: if *self.stale.lock().unwrap() {
+                        RemoteComparisonRelation::Ahead
+                    } else {
+                        RemoteComparisonRelation::Identical
+                    },
+                    commits: if *self.stale.lock().unwrap() {
+                        vec![CommitSummary {
+                            sha: comparison.head_sha.clone(),
+                            subject: "Update example".to_owned(),
+                            author: CommitAuthor {
+                                name: "Ada Lovelace".to_owned(),
+                                login: Some("ada".to_owned()),
+                            },
+                            timestamp: "2026-08-21T00:00:00Z".to_owned(),
+                            url: format!(
+                                "https://github.com/{}/{}/commit/{}",
+                                comparison.owner,
+                                comparison.repository,
+                                comparison.head_sha.as_str(),
+                            ),
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    total: u64::from(*self.stale.lock().unwrap()),
+                    truncated: false,
+                    compare_url: format!(
+                        "https://github.com/{}/{}/compare/{}...{}",
+                        comparison.owner,
+                        comparison.repository,
+                        comparison.base_sha.as_str(),
+                        comparison.head_sha.as_str(),
+                    ),
+                },
+            })
+            .collect())
+    }
+
+    fn latest_commit(
+        &self,
+        _selector: &RemoteSelector,
+        _direct: bool,
+    ) -> Result<skilld_command::RemoteLatestCommit, RemoteError> {
+        Ok(skilld_command::RemoteLatestCommit {
+            commit_sha: CommitSha::parse(if *self.stale.lock().unwrap() {
+                "ffffffffffffffffffffffffffffffffffffffff"
+            } else {
+                "0123456789abcdef0123456789abcdef01234567"
+            })
+            .unwrap(),
+            access: RemoteComparisonAccess::PublicGithub,
+        })
     }
 }
 
@@ -809,6 +1218,138 @@ fn provider(content: &str) -> Arc<FakeProvider> {
         stale: Mutex::new(false),
         fail_prepare: Mutex::new(false),
     })
+}
+
+#[derive(Default)]
+struct BatchProvider {
+    version: Mutex<&'static str>,
+    prepared_names: Mutex<Vec<String>>,
+}
+
+impl BatchProvider {
+    fn prepared(&self, selector: &RemoteSelector) -> PreparedRemoteSkill {
+        let skilld_core::SourceSelector::NamedSkill { name } = &selector.source().selector else {
+            panic!("expected a named Skill selector")
+        };
+        self.prepared_names.lock().unwrap().push(name.clone());
+        let bytes = format!(
+            "---\nname: {name}\ndescription: {}\n---\n",
+            *self.version.lock().unwrap()
+        )
+        .into_bytes();
+        let file = PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes,
+        };
+        let digest = installed_digest(std::slice::from_ref(&file));
+        PreparedRemoteSkill {
+            files: vec![file],
+            locked_source: LockedSource::Remote {
+                source: selector.canonical(),
+                commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                skill_path: name.clone(),
+            },
+            source_status: SourceStatus::Verified {
+                artifact_id: format!("sha256:{digest}"),
+                content_sha256: digest.clone(),
+                installed_sha256: digest,
+                attestation_key_id: "test-key".to_owned(),
+            },
+        }
+    }
+}
+
+impl RemoteProvider for BatchProvider {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, RemoteError> {
+        unreachable!("search is outside this test")
+    }
+
+    fn prepare(
+        &self,
+        selector: &RemoteSelector,
+        _direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        Ok(self.prepared(selector))
+    }
+
+    fn prepare_exact(
+        &self,
+        selector: &RemoteSelector,
+        expected_commit: &CommitSha,
+        _direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        let mut prepared = self.prepared(selector);
+        let LockedSource::Remote { commit_sha, .. } = &mut prepared.locked_source else {
+            unreachable!("the fixture uses a remote source")
+        };
+        *commit_sha = expected_commit.as_str().to_owned();
+        Ok(prepared)
+    }
+
+    fn source_state(
+        &self,
+        _selector: &RemoteSelector,
+        _artifact_id: &str,
+        _commit_sha: &str,
+    ) -> Result<RemoteSourceState, RemoteError> {
+        Ok(RemoteSourceState::Current)
+    }
+
+    fn latest_commit(
+        &self,
+        _selector: &RemoteSelector,
+        _direct: bool,
+    ) -> Result<skilld_command::RemoteLatestCommit, RemoteError> {
+        Ok(skilld_command::RemoteLatestCommit {
+            commit_sha: CommitSha::parse("f".repeat(40)).unwrap(),
+            access: RemoteComparisonAccess::PublicGithub,
+        })
+    }
+
+    fn compare_updates(
+        &self,
+        _comparisons: &[RemoteUpdateComparison],
+    ) -> Result<Vec<skilld_command::RemoteUpdateResult>, RemoteError> {
+        unreachable!("comparison is outside this test")
+    }
+}
+
+#[test]
+fn multi_skill_update_prepares_every_artifact_before_refusing_partial_mutation() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta"] {
+        host.install_request(InstallRequest {
+            source: Some(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+
+    let error = host.update(None).unwrap_err();
+
+    assert_eq!(error.code, "ATOMIC_UPDATE_UNAVAILABLE");
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
+    for name in ["alpha", "beta"] {
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: first\n---\n")
+        );
+    }
 }
 
 #[test]
@@ -879,7 +1420,7 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
 }
 
 #[test]
-fn update_check_keeps_an_uncompared_commit_unavailable() {
+fn update_check_carries_the_exact_comparison_and_commit_history() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -914,11 +1455,11 @@ fn update_check_keeps_an_uncompared_commit_unavailable() {
         &mut global_stderr,
     );
     let outcome: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
-    let check: UpdateCheckV1 = serde_json::from_value(outcome["data"].clone()).unwrap();
+    let check: UpdatePlanV1 = serde_json::from_value(outcome["data"].clone()).unwrap();
 
-    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.exit_code, 1);
     assert!(stderr.is_empty());
-    assert_eq!(global_result.exit_code, 0);
+    assert_eq!(global_result.exit_code, 1);
     assert!(global_stderr.is_empty());
     assert_eq!(global_stdout, stdout);
     assert_eq!(outcome["schemaVersion"], 1);
@@ -927,13 +1468,37 @@ fn update_check_keeps_an_uncompared_commit_unavailable() {
     assert_eq!(outcome["notices"], serde_json::json!([]));
     assert!(matches!(
         check.items()[0].relation(),
-        UpdateRelation::Unavailable {
-            latest_commit: UpdateLatestCommit::Known { commit_sha },
-            failure,
+        UpdateRelation::Available {
+            latest_commit_sha: commit_sha,
             ..
         } if commit_sha.as_str() == "ffffffffffffffffffffffffffffffffffffffff"
-            && failure.code == "COMPARISON_UNAVAILABLE"
     ));
+    assert_eq!(
+        check.items()[0].history(),
+        &skilld_core::CommitHistory::compared(
+            vec![CommitSummary {
+                sha: CommitSha::parse("f".repeat(40)).unwrap(),
+                subject: "Update example".to_owned(),
+                author: CommitAuthor {
+                    name: "Ada Lovelace".to_owned(),
+                    login: Some("ada".to_owned()),
+                },
+                timestamp: "2026-08-21T00:00:00Z".to_owned(),
+                url: format!(
+                    "https://github.com/skilld-dev/skills/commit/{}",
+                    "f".repeat(40)
+                ),
+            }],
+            1,
+            false,
+            format!(
+                "https://github.com/skilld-dev/skills/compare/{}...{}",
+                "0123456789abcdef0123456789abcdef01234567",
+                "f".repeat(40)
+            ),
+        )
+        .unwrap()
+    );
 }
 
 #[test]

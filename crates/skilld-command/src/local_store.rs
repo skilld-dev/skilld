@@ -15,6 +15,7 @@ use skilld_core::{
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
+#[cfg(not(target_os = "wasi"))]
 const LOCK_NAME: &str = ".skilld-store-lock";
 const LOCKFILE_NAME: &str = "skilld-lock.yaml";
 static TRANSACTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -55,6 +56,14 @@ pub struct TargetInstall {
     pub mode: InstallMode,
 }
 
+#[derive(Clone, Debug)]
+pub struct PreparedStoreUpdate {
+    pub source: PathBuf,
+    pub locked_source: LockedSource,
+    pub source_status: Option<SourceStatus>,
+    pub targets: Vec<TargetInstall>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SkillView {
     pub name: String,
@@ -64,6 +73,7 @@ pub struct SkillView {
 
 #[derive(Debug)]
 pub enum StoreError {
+    AtomicUpdateUnavailable(String),
     CommittedCleanupPending(String),
     Conflict(String),
     Filesystem(String),
@@ -77,6 +87,7 @@ pub enum StoreError {
 impl StoreError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AtomicUpdateUnavailable(_) => "ATOMIC_UPDATE_UNAVAILABLE",
             Self::CommittedCleanupPending(_) => "COMMITTED_CLEANUP_PENDING",
             Self::Conflict(_) => "TARGET_CONFLICT",
             Self::Filesystem(_) => "SERVICE_UNAVAILABLE",
@@ -92,7 +103,8 @@ impl StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CommittedCleanupPending(message)
+            Self::AtomicUpdateUnavailable(message)
+            | Self::CommittedCleanupPending(message)
             | Self::Conflict(message)
             | Self::Filesystem(message)
             | Self::InvalidLockfile(message)
@@ -383,6 +395,37 @@ impl LocalStore {
         self.cleanup_committed(&journal, known_targets)
             .map_err(|error| StoreError::CommittedCleanupPending(error.to_string()))?;
         Ok(name)
+    }
+
+    pub fn apply_update_batch(
+        &self,
+        mut updates: Vec<PreparedStoreUpdate>,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<Vec<SkillName>, StoreError> {
+        if updates.len() > 1 {
+            return Err(StoreError::AtomicUpdateUnavailable(
+                "Update one Skill at a time. Multi-Skill updates are unavailable.".to_owned(),
+            ));
+        }
+        let Some(update) = updates.pop() else {
+            return Ok(vec![]);
+        };
+        let name = match update.source_status {
+            Some(source_status) => self.install_from_with_status(
+                &update.source,
+                update.locked_source,
+                source_status,
+                &update.targets,
+                known_targets,
+            )?,
+            None => self.install_from(
+                &update.source,
+                update.locked_source,
+                &update.targets,
+                known_targets,
+            )?,
+        };
+        Ok(vec![name])
     }
 
     pub fn remove(

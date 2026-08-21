@@ -14,20 +14,22 @@ use std::sync::Arc;
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
-    AllowTransaction, LocalStore, ResolvedTarget, SkillView, StoreError, TargetInstall,
-    TransactionGate,
+    AllowTransaction, LocalStore, PreparedStoreUpdate, ResolvedTarget, SkillView, StoreError,
+    TargetInstall, TransactionGate,
 };
 pub use output::OutputContext;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
-    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill, RemoteProvider,
-    RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
+    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill,
+    RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit,
+    RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
+    SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
-    AGENT_TARGETS, AgentTargetId, CommitSha, DomainError, GlobalTargetPath, InstallMode,
-    InstallRequest, InstallScope, InstallSource, LockedSource, NotTrackedReason, SourceRef,
-    UpdateCheckV1, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem,
-    UpdateRelation, VERSION, select_target_ids,
+    AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
+    InstallMode, InstallRequest, InstallScope, InstallSource, LockedSource, NotTrackedReason,
+    SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem,
+    UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION, select_target_ids,
 };
 
 use output::{
@@ -168,7 +170,7 @@ pub trait Host {
         ))
     }
 
-    fn update_check(&self, _name: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+    fn update_check(&self, _name: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill update checks are unavailable on this host",
         ))
@@ -313,7 +315,7 @@ pub struct CommandResult {
 enum CommandOutput {
     Lines(Vec<String>),
     Search(SearchOutcome),
-    UpdateCheck(UpdateCheckV1),
+    UpdateCheck(UpdatePlanV1),
 }
 
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
@@ -434,7 +436,16 @@ where
             }
         },
         Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
-            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Ok(bytes) => {
+                let exit_code = if outcome.is_incomplete() {
+                    2
+                } else if outcome.has_changes() {
+                    1
+                } else {
+                    0
+                };
+                write_success_with_exit(&bytes, mode, stdout, stderr, exit_code)
+            }
             Err(error) => {
                 if stderr.write_all(&render_error(&error, mode)).is_err() {
                     return CommandResult {
@@ -497,8 +508,18 @@ fn write_success<O: Write, E: Write>(
     stdout: &mut O,
     stderr: &mut E,
 ) -> CommandResult {
+    write_success_with_exit(bytes, mode, stdout, stderr, 0)
+}
+
+fn write_success_with_exit<O: Write, E: Write>(
+    bytes: &[u8],
+    mode: OutputMode,
+    stdout: &mut O,
+    stderr: &mut E,
+    exit_code: u8,
+) -> CommandResult {
     match stdout.write_all(bytes) {
-        Ok(()) => CommandResult { exit_code: 0 },
+        Ok(()) => CommandResult { exit_code },
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
             CommandResult { exit_code: 0 }
         }
@@ -939,144 +960,6 @@ impl LocalHost {
         })
     }
 
-    fn update_relation(
-        &self,
-        skill: &skilld_core::LockedSkill,
-    ) -> Result<UpdateRelation, CommandError> {
-        let (source, locked_commit_sha) = match &skill.source {
-            LockedSource::Local { .. } => {
-                return Ok(UpdateRelation::NotTracked {
-                    reason: NotTrackedReason::Local,
-                });
-            }
-            LockedSource::BundledSkilld => {
-                return Ok(UpdateRelation::NotTracked {
-                    reason: NotTrackedReason::Bundled,
-                });
-            }
-            LockedSource::Remote {
-                source, commit_sha, ..
-            } => (
-                source,
-                CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?,
-            ),
-        };
-
-        let selector = match skilld_core::RemoteSelector::parse(source) {
-            Ok(selector) => selector,
-            Err(error) => {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Unknown,
-                    error.code,
-                    error.message,
-                ));
-            }
-        };
-        if let Some(SourceRef::Commit { value }) = &selector.source().r#ref {
-            let pinned_commit_sha = match CommitSha::parse(value.clone()) {
-                Ok(commit_sha) => commit_sha,
-                Err(error) => {
-                    return Ok(unavailable_update(
-                        locked_commit_sha,
-                        UpdateLatestCommit::Unknown,
-                        "INVALID_SOURCE",
-                        error.to_string(),
-                    ));
-                }
-            };
-            if pinned_commit_sha != locked_commit_sha {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Known {
-                        commit_sha: pinned_commit_sha,
-                    },
-                    "INVALID_LOCKFILE",
-                    "the locked commit differs from its source selector",
-                ));
-            }
-            return Ok(UpdateRelation::Pinned {
-                commit_sha: locked_commit_sha,
-            });
-        }
-
-        let artifact_id = match &skill.source_status {
-            skilld_core::SourceStatus::Verified { artifact_id, .. } => artifact_id,
-            skilld_core::SourceStatus::Unverified { .. } => {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Unknown,
-                    "UNVERIFIED_SOURCE",
-                    "run an explicit --direct install to update this Skill",
-                ));
-            }
-            skilld_core::SourceStatus::Local { .. } => {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Unknown,
-                    "INVALID_LOCKFILE",
-                    "the remote Skill has a local source status",
-                ));
-            }
-        };
-        let provider = match self.remote_provider() {
-            Ok(provider) => provider,
-            Err(error) => {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Unknown,
-                    error.code,
-                    error.message,
-                ));
-            }
-        };
-        let state = match provider.source_state(&selector, artifact_id, locked_commit_sha.as_str())
-        {
-            Ok(state) => state,
-            Err(error) => {
-                return Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Unknown,
-                    error.code,
-                    error.message,
-                ));
-            }
-        };
-        match state {
-            RemoteSourceState::Current => Ok(UpdateRelation::Current {
-                commit_sha: locked_commit_sha,
-            }),
-            RemoteSourceState::Stale {
-                current_commit_sha, ..
-            } => {
-                let latest_commit_sha = match CommitSha::parse(current_commit_sha) {
-                    Ok(commit_sha) => commit_sha,
-                    Err(error) => {
-                        return Ok(unavailable_update(
-                            locked_commit_sha,
-                            UpdateLatestCommit::Unknown,
-                            "INVALID_RESPONSE",
-                            error.to_string(),
-                        ));
-                    }
-                };
-                if latest_commit_sha == locked_commit_sha {
-                    return Ok(UpdateRelation::Current {
-                        commit_sha: locked_commit_sha,
-                    });
-                }
-                Ok(unavailable_update(
-                    locked_commit_sha,
-                    UpdateLatestCommit::Known {
-                        commit_sha: latest_commit_sha,
-                    },
-                    "COMPARISON_UNAVAILABLE",
-                    "skilld.dev does not provide Git comparison data",
-                ))
-            }
-        }
-    }
-
     fn install_remote(
         &self,
         source: &str,
@@ -1361,12 +1244,12 @@ impl Host for LocalHost {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
-        let mut updated = Vec::new();
+        let mut selected = Vec::new();
         for name in names {
             let skill_name =
                 skilld_core::SkillName::parse(name.clone()).map_err(CommandError::domain)?;
             let view = store
-                .view(&skill_name, &known)
+                .verify_content(&skill_name, &known)
                 .map_err(CommandError::store)?;
             let LockedSource::Remote { source, .. } = &view.skill.source else {
                 continue;
@@ -1382,9 +1265,13 @@ impl Host for LocalHost {
             }
             let selector =
                 skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
-            let prepared = self
-                .remote_provider()?
-                .prepare(&selector, false)
+            let provider = self.remote_provider()?;
+            let expected_commit = provider
+                .latest_commit(&selector, false)
+                .map_err(CommandError::remote)?
+                .commit_sha;
+            let prepared = provider
+                .prepare_exact(&selector, &expected_commit, false)
                 .map_err(CommandError::remote)?;
             let staged = materialize_remote(&prepared.files)?;
             let staged_name =
@@ -1415,36 +1302,301 @@ impl Host for LocalHost {
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            store
-                .install_from_with_status(
-                    staged.path(),
-                    prepared.locked_source,
-                    prepared.source_status,
-                    &targets,
-                    &known,
-                )
-                .map_err(CommandError::store)?;
-            updated.push(format!("Updated Skill {name}."));
+            selected.push(PreparedUpdateSelection {
+                name,
+                staged,
+                prepared,
+                targets,
+            });
         }
-        Ok(updated)
+        let updates = selected
+            .iter()
+            .map(|selection| PreparedStoreUpdate {
+                source: selection.staged.path().to_owned(),
+                locked_source: selection.prepared.locked_source.clone(),
+                source_status: Some(selection.prepared.source_status.clone()),
+                targets: selection.targets.clone(),
+            })
+            .collect();
+        store
+            .apply_update_batch(updates, &known)
+            .map_err(CommandError::store)?;
+        Ok(selected
+            .into_iter()
+            .map(|selection| format!("Updated Skill {}.", selection.name))
+            .collect())
     }
 
-    fn update_check(&self, requested: Option<&str>) -> Result<UpdateCheckV1, CommandError> {
+    fn update_check(&self, requested: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
         let names = selected_names(&store, &known, requested)?;
         let mut items = Vec::with_capacity(names.len());
+        let mut pending = Vec::new();
         for name in names {
             let skill_name = skilld_core::SkillName::parse(name).map_err(CommandError::domain)?;
             let view = store
-                .view(&skill_name, &known)
+                .verify_content(&skill_name, &known)
                 .map_err(CommandError::store)?;
-            let relation = self.update_relation(&view.skill)?;
-            items.push(UpdatePlanItem::new(skill_name, relation));
+            let (source, locked_commit_sha) = match &view.skill.source {
+                LockedSource::Local { .. } => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        UpdateRelation::NotTracked {
+                            reason: NotTrackedReason::Local,
+                        },
+                    ));
+                    continue;
+                }
+                LockedSource::BundledSkilld => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        UpdateRelation::NotTracked {
+                            reason: NotTrackedReason::Bundled,
+                        },
+                    ));
+                    continue;
+                }
+                LockedSource::Remote {
+                    source, commit_sha, ..
+                } => (
+                    source,
+                    CommitSha::parse(commit_sha.clone()).map_err(update_model_error)?,
+                ),
+            };
+            let selector = match skilld_core::RemoteSelector::parse(source) {
+                Ok(selector) => selector,
+                Err(error) => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            error.code,
+                            error.message,
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            if let Some(SourceRef::Commit { value }) = &selector.source().r#ref {
+                let pinned = CommitSha::parse(value.clone()).map_err(update_model_error)?;
+                let relation = if pinned == locked_commit_sha {
+                    UpdateRelation::Pinned {
+                        commit_sha: locked_commit_sha,
+                    }
+                } else {
+                    unavailable_update(
+                        locked_commit_sha,
+                        UpdateLatestCommit::Known { commit_sha: pinned },
+                        "INVALID_LOCKFILE",
+                        "The locked commit differs from its source selector",
+                    )
+                };
+                items.push(UpdatePlanItem::new(skill_name, relation));
+                continue;
+            }
+            let direct = match &view.skill.source_status {
+                skilld_core::SourceStatus::Verified { .. } => false,
+                skilld_core::SourceStatus::Unverified { .. } => true,
+                skilld_core::SourceStatus::Local { .. } => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            "INVALID_LOCKFILE",
+                            "A remote Skill has a local source status",
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            let latest = match self.remote_provider().and_then(|provider| {
+                provider
+                    .latest_commit(&selector, direct)
+                    .map_err(CommandError::remote)
+            }) {
+                Ok(latest) => latest,
+                Err(error) => {
+                    items.push(UpdatePlanItem::new(
+                        skill_name,
+                        unavailable_update(
+                            locked_commit_sha,
+                            UpdateLatestCommit::Unknown,
+                            error.code,
+                            error.message,
+                        ),
+                    ));
+                    continue;
+                }
+            };
+            if latest.commit_sha == locked_commit_sha {
+                items.push(UpdatePlanItem::new(
+                    skill_name,
+                    UpdateRelation::Current {
+                        commit_sha: locked_commit_sha,
+                    },
+                ));
+                continue;
+            }
+            let comparison = RemoteUpdateComparison::new(
+                skill_name.as_str(),
+                &selector.source().owner,
+                &selector.source().repository,
+                locked_commit_sha.clone(),
+                latest.commit_sha.clone(),
+                latest.access,
+            )
+            .map_err(CommandError::remote)?;
+            pending.push(PendingUpdateComparison {
+                name: skill_name,
+                locked_commit_sha,
+                latest_commit_sha: latest.commit_sha,
+                comparison,
+            });
+        }
+        if !pending.is_empty() {
+            let comparisons = pending
+                .iter()
+                .map(|pending| pending.comparison.clone())
+                .collect::<Vec<_>>();
+            let results = self
+                .remote_provider()?
+                .compare_updates(&comparisons)
+                .map_err(CommandError::remote)?;
+            if results.len() != pending.len() {
+                return Err(CommandError::service(
+                    "Update comparison results were incomplete",
+                ));
+            }
+            for (pending, result) in pending.into_iter().zip(results) {
+                if pending.comparison.id != result.id {
+                    return Err(CommandError::service(
+                        "Update comparison results changed order",
+                    ));
+                }
+                items.push(update_plan_item(pending, result.outcome));
+            }
         }
         let plan = UpdatePlan::new(items).map_err(update_model_error)?;
-        Ok(UpdateCheckV1::new(plan))
+        Ok(UpdatePlanV1::new(plan))
+    }
+}
+
+struct PendingUpdateComparison {
+    name: skilld_core::SkillName,
+    locked_commit_sha: CommitSha,
+    latest_commit_sha: CommitSha,
+    comparison: RemoteUpdateComparison,
+}
+
+struct PreparedUpdateSelection {
+    name: String,
+    staged: StagedRemote,
+    prepared: PreparedRemoteSkill,
+    targets: Vec<TargetInstall>,
+}
+
+fn update_plan_item(
+    pending: PendingUpdateComparison,
+    outcome: RemoteComparisonOutcome,
+) -> UpdatePlanItem {
+    let unavailable = |code: &'static str, message: String| {
+        UpdatePlanItem::new(
+            pending.name.clone(),
+            unavailable_update(
+                pending.locked_commit_sha.clone(),
+                UpdateLatestCommit::Known {
+                    commit_sha: pending.latest_commit_sha.clone(),
+                },
+                code,
+                message,
+            ),
+        )
+    };
+    match outcome {
+        RemoteComparisonOutcome::Ready {
+            relation,
+            commits,
+            total,
+            truncated,
+            compare_url,
+        } => {
+            let relation = match relation {
+                RemoteComparisonRelation::Identical
+                    if pending.locked_commit_sha == pending.latest_commit_sha =>
+                {
+                    UpdateRelation::Current {
+                        commit_sha: pending.locked_commit_sha.clone(),
+                    }
+                }
+                RemoteComparisonRelation::Ahead if total > 0 => UpdateRelation::Available {
+                    locked_commit_sha: pending.locked_commit_sha.clone(),
+                    latest_commit_sha: pending.latest_commit_sha.clone(),
+                },
+                RemoteComparisonRelation::Behind => UpdateRelation::Behind {
+                    locked_commit_sha: pending.locked_commit_sha.clone(),
+                    latest_commit_sha: pending.latest_commit_sha.clone(),
+                },
+                RemoteComparisonRelation::Diverged => UpdateRelation::Diverged {
+                    locked_commit_sha: pending.locked_commit_sha.clone(),
+                    latest_commit_sha: pending.latest_commit_sha.clone(),
+                },
+                RemoteComparisonRelation::Identical | RemoteComparisonRelation::Ahead => {
+                    return unavailable(
+                        "INVALID_RESPONSE",
+                        "GitHub returned an impossible update relation".to_owned(),
+                    );
+                }
+            };
+            match CommitHistory::compared(commits, total, truncated, compare_url) {
+                Ok(history) => UpdatePlanItem::with_history(pending.name, relation, history),
+                Err(error) => unavailable("INVALID_RESPONSE", error.to_string()),
+            }
+        }
+        RemoteComparisonOutcome::NotFound => unavailable(
+            "SOURCE_NOT_FOUND",
+            "The Repository or commit is unavailable".to_owned(),
+        ),
+        RemoteComparisonOutcome::InvalidComparison => unavailable(
+            "COMMIT_NOT_FOUND",
+            "GitHub could not compare the installed commit".to_owned(),
+        ),
+        RemoteComparisonOutcome::RateLimited {
+            retry_after_seconds,
+            reset_at,
+        } => {
+            let retry_after = match (retry_after_seconds, reset_at) {
+                (Some(seconds), Some(reset_at)) => {
+                    UpdateRetryAfter::SecondsAndReset { seconds, reset_at }
+                }
+                (Some(seconds), None) => UpdateRetryAfter::Seconds { seconds },
+                (None, Some(reset_at)) => UpdateRetryAfter::Reset { reset_at },
+                (None, None) => UpdateRetryAfter::Unknown,
+            };
+            let failure =
+                UpdateFailure::rate_limited("GitHub rate limited the update check.", retry_after);
+            UpdatePlanItem::new(
+                pending.name,
+                UpdateRelation::Unavailable {
+                    locked_commit_sha: pending.locked_commit_sha,
+                    latest_commit: UpdateLatestCommit::Known {
+                        commit_sha: pending.latest_commit_sha,
+                    },
+                    failure,
+                },
+            )
+        }
+        RemoteComparisonOutcome::ProviderFailure { status } => unavailable(
+            "SERVICE_UNAVAILABLE",
+            status.map_or_else(
+                || "GitHub comparison failed".to_owned(),
+                |status| format!("GitHub comparison returned HTTP {status}"),
+            ),
+        ),
+        RemoteComparisonOutcome::RequestFailure { code, message } => unavailable(code, message),
     }
 }
 

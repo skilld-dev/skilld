@@ -22,8 +22,9 @@ pub use target::{
     AGENT_TARGETS, AgentTarget, AgentTargetId, GlobalTargetPath, TargetSelection, select_target_ids,
 };
 pub use update::{
-    CommitSha, NotTrackedReason, UpdateCheckV1, UpdateFailure, UpdateLatestCommit,
-    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdateRelation, classify_update_comparison,
+    CommitAuthor, CommitHistory, CommitSha, CommitSummary, NotTrackedReason, UpdateFailure,
+    UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    UpdateRetryAfter, classify_update_comparison,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
