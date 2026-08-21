@@ -1224,6 +1224,7 @@ fn provider(content: &str) -> Arc<FakeProvider> {
 struct BatchProvider {
     version: Mutex<&'static str>,
     prepared_names: Mutex<Vec<String>>,
+    fail_name: Mutex<Option<&'static str>>,
 }
 
 impl BatchProvider {
@@ -1280,6 +1281,12 @@ impl RemoteProvider for BatchProvider {
         _direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
         let mut prepared = self.prepared(selector);
+        let skilld_core::SourceSelector::NamedSkill { name } = &selector.source().selector else {
+            panic!("expected a named Skill selector")
+        };
+        if self.fail_name.lock().unwrap().as_ref() == Some(&name.as_str()) {
+            return Err(RemoteError::new("CHECK_BLOCKED", "a required check failed"));
+        }
         let LockedSource::Remote { commit_sha, .. } = &mut prepared.locked_source else {
             unreachable!("the fixture uses a remote source")
         };
@@ -1316,13 +1323,14 @@ impl RemoteProvider for BatchProvider {
 }
 
 #[test]
-fn multi_skill_update_prepares_every_artifact_before_refusing_partial_mutation() {
+fn multi_skill_update_prepares_then_commits_every_artifact() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
     let provider = Arc::new(BatchProvider {
         version: Mutex::new("first"),
         prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -1340,14 +1348,62 @@ fn multi_skill_update_prepares_every_artifact_before_refusing_partial_mutation()
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
 
-    let error = host.update(None).unwrap_err();
+    let lines = host.update(None).unwrap();
 
-    assert_eq!(error.code, "ATOMIC_UPDATE_UNAVAILABLE");
+    assert_eq!(lines, ["Updated Skill alpha.", "Updated Skill beta."]);
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
     for name in ["alpha", "beta"] {
         assert_eq!(
             fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
-            format!("---\nname: {name}\ndescription: first\n---\n")
+            format!("---\nname: {name}\ndescription: second\n---\n")
+        );
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".agents/skills/{name}/SKILL.md"))).unwrap(),
+            format!("---\nname: {name}\ndescription: second\n---\n")
+        );
+    }
+}
+
+#[test]
+fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    for name in ["alpha", "beta"] {
+        host.install_request(InstallRequest {
+            source: Some(InstallSource::Remote(format!(
+                "skilld:skilld-dev/skills/{name}"
+            ))),
+            scope: InstallScope::Project,
+            targets: vec![AgentTargetId::Codex],
+            mode: Some(InstallMode::Copy),
+        })
+        .unwrap();
+    }
+    provider.prepared_names.lock().unwrap().clear();
+    *provider.version.lock().unwrap() = "second";
+    *provider.fail_name.lock().unwrap() = Some("beta");
+
+    let error = host.update(None).unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
+    for name in ["alpha", "beta"] {
+        let expected = format!("---\nname: {name}\ndescription: first\n---\n");
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".skills/{name}/SKILL.md"))).unwrap(),
+            expected
+        );
+        assert_eq!(
+            fs::read_to_string(project.join(format!(".agents/skills/{name}/SKILL.md"))).unwrap(),
+            expected
         );
     }
 }
