@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use skilld_command::{DetectionEnvironment, Host, LocalHost, TargetRoots};
-use skilld_core::{AgentTargetId, InstallRequest, InstallScope, InstallSource};
+use skilld_core::{AgentTargetId, InstallOperation, InstallRequest, InstallScope, InstallSource};
 
 fn source(root: &Path) -> std::path::PathBuf {
     let source = root.join("source/example");
@@ -57,7 +57,7 @@ fn every_project_signal_selects_the_matching_agent_target() {
 
         let names = host
             .install_request(InstallRequest {
-                source: Some(InstallSource::Local(source)),
+                operation: InstallOperation::Install(InstallSource::Local(source)),
                 scope: InstallScope::Project,
                 targets: vec![],
                 mode: None,
@@ -117,7 +117,7 @@ fn every_runtime_signal_selects_the_matching_agent_target() {
             .with_detection_environment(DetectionEnvironment::new([signal.to_owned()]));
 
         host.install_request(InstallRequest {
-            source: Some(InstallSource::Local(source)),
+            operation: InstallOperation::Install(InstallSource::Local(source)),
             scope: InstallScope::Project,
             targets: vec![],
             mode: None,
@@ -148,7 +148,7 @@ fn an_existing_global_target_directory_is_detected() {
     ));
 
     host.install_request(InstallRequest {
-        source: Some(InstallSource::Local(source)),
+        operation: InstallOperation::Install(InstallSource::Local(source)),
         scope: InstallScope::Global,
         targets: vec![],
         mode: None,

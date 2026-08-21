@@ -22,8 +22,8 @@ pub use remote::{
     RemoteSourceState, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 use skilld_core::{
-    AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallRequest,
-    InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
+    AGENT_TARGETS, AgentTargetId, DomainError, GlobalTargetPath, InstallMode, InstallOperation,
+    InstallRequest, InstallScope, InstallSource, LockedSource, VERSION, select_target_ids,
 };
 
 #[derive(Debug, Parser)]
@@ -112,9 +112,11 @@ pub trait Host {
                 "Agent target selection is unavailable on this host",
             ));
         }
-        let source = request
-            .source
-            .ok_or_else(|| CommandError::unsupported_host("lockfile restore is unavailable"))?;
+        let InstallOperation::Install(source) = request.operation else {
+            return Err(CommandError::unsupported_host(
+                "lockfile restore is unavailable",
+            ));
+        };
         self.install(source, request.scope).map(|name| vec![name])
     }
 
@@ -345,19 +347,24 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
             direct,
         } => {
             let scope = scope(global);
-            let source = source
-                .map(|source| InstallSource::parse(&source))
-                .map(|source| match (direct, source) {
+            let operation = match source {
+                Some(source) => match (direct, InstallSource::parse(&source)) {
                     (true, InstallSource::Remote(source)) => {
-                        Ok(InstallSource::DirectRemote(source))
+                        InstallOperation::Install(InstallSource::DirectRemote(source))
                     }
-                    (true, _) => Err(CommandError::input(
-                        "--direct needs an explicit public GitHub Repository selector",
-                    )),
-                    (false, source) => Ok(source),
-                })
-                .transpose()?;
-            if source == Some(InstallSource::BundledSkilld) && scope != InstallScope::Global {
+                    (true, _) => {
+                        return Err(CommandError::input(
+                            "--direct needs an explicit public GitHub Repository selector",
+                        ));
+                    }
+                    (false, source) => InstallOperation::Install(source),
+                },
+                None if direct => InstallOperation::DirectRestore,
+                None => InstallOperation::Restore,
+            };
+            if operation == InstallOperation::Install(InstallSource::BundledSkilld)
+                && scope != InstallScope::Global
+            {
                 return Err(CommandError::input(
                     "install the skilld-maintained Skill with --global",
                 ));
@@ -372,7 +379,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<Vec<String>, CommandE
                 .transpose()
                 .map_err(CommandError::domain)?;
             let names = host.install_request(InstallRequest {
-                source,
+                operation,
                 scope,
                 targets,
                 mode,
@@ -749,8 +756,13 @@ impl LocalHost {
         Ok(name.to_string())
     }
 
-    fn restore(&self, request: &InstallRequest) -> Result<Vec<String>, CommandError> {
-        let (targets, known) = self.select_installs(request)?;
+    fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
+        let (targets, known) = if request.targets.is_empty() {
+            (None, self.known_targets(request.scope)?)
+        } else {
+            let (targets, known) = self.select_installs(request)?;
+            (Some(targets), known)
+        };
         let store = self.store(request.scope);
         let names = store.list(&known).map_err(CommandError::store)?;
         if names.is_empty() {
@@ -769,24 +781,46 @@ impl LocalHost {
             let view = store
                 .view(&skill_name, &known)
                 .map_err(CommandError::store)?;
-            let restored_targets = targets
-                .iter()
-                .map(|target| {
-                    let mode = if request.mode.is_some() {
-                        target.mode
-                    } else {
-                        view.skill
-                            .targets
+            let restored_targets = if let Some(targets) = &targets {
+                targets
+                    .iter()
+                    .map(|target| {
+                        let mode = if request.mode.is_some() {
+                            target.mode
+                        } else {
+                            view.skill
+                                .targets
+                                .iter()
+                                .find(|locked| locked.agent == target.target.agent)
+                                .map_or(target.mode, |locked| locked.mode)
+                        };
+                        TargetInstall {
+                            target: target.target.clone(),
+                            mode,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                view.skill
+                    .targets
+                    .iter()
+                    .map(|locked| {
+                        known
                             .iter()
-                            .find(|locked| locked.agent == target.target.agent)
-                            .map_or(target.mode, |locked| locked.mode)
-                    };
-                    TargetInstall {
-                        target: target.target.clone(),
-                        mode,
-                    }
-                })
-                .collect::<Vec<_>>();
+                            .find(|target| target.agent == locked.agent)
+                            .cloned()
+                            .map(|target| TargetInstall {
+                                target,
+                                mode: request.mode.unwrap_or(locked.mode),
+                            })
+                            .ok_or_else(|| {
+                                CommandError::domain(DomainError::InvalidTarget(
+                                    locked.agent.to_string(),
+                                ))
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
             match view.skill.source {
                 LockedSource::Local { path } => {
                     let (source, locked_source) =
@@ -805,17 +839,18 @@ impl LocalHost {
                 LockedSource::Remote {
                     source, commit_sha, ..
                 } => {
-                    if !matches!(
-                        view.skill.source_status,
-                        skilld_core::SourceStatus::Verified { .. }
-                    ) {
-                        return Err(CommandError {
-                            code: "UNVERIFIED_SOURCE",
-                            message:
-                                "restore an unverified Skill with an explicit --direct install"
-                                    .to_owned(),
-                        });
-                    }
+                    let direct = match view.skill.source_status {
+                        skilld_core::SourceStatus::Verified { .. } => false,
+                        skilld_core::SourceStatus::Unverified { .. } if direct => true,
+                        _ => {
+                            return Err(CommandError {
+                                code: "UNVERIFIED_SOURCE",
+                                message:
+                                    "run skilld install --direct to restore an unverified Skill"
+                                        .to_owned(),
+                            });
+                        }
+                    };
                     let selector = skilld_core::RemoteSelector::parse(&source)
                         .map_err(CommandError::remote)?;
                     let mut exact_source = selector.source().clone();
@@ -830,7 +865,7 @@ impl LocalHost {
                     };
                     let prepared = self
                         .remote_provider()?
-                        .prepare(&exact, false)
+                        .prepare(&exact, direct)
                         .map_err(CommandError::remote)?;
                     let staged = materialize_remote(&prepared.files)?;
                     store
@@ -858,7 +893,7 @@ impl Host for LocalHost {
 
     fn install(&self, source: InstallSource, scope: InstallScope) -> Result<String, CommandError> {
         self.install_request(InstallRequest {
-            source: Some(source),
+            operation: InstallOperation::Install(source),
             scope,
             targets: vec![],
             mode: None,
@@ -869,8 +904,10 @@ impl Host for LocalHost {
     }
 
     fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
-        let Some(source) = request.source.clone() else {
-            return self.restore(&request);
+        let source = match request.operation.clone() {
+            InstallOperation::Restore => return self.restore(&request, false),
+            InstallOperation::DirectRestore => return self.restore(&request, true),
+            InstallOperation::Install(source) => source,
         };
         let (targets, known) = self.select_installs(&request)?;
         match source {
@@ -1291,7 +1328,10 @@ mod tests {
         }
 
         fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
-            assert_eq!(request.source, Some(InstallSource::BundledSkilld));
+            assert_eq!(
+                request.operation,
+                InstallOperation::Install(InstallSource::BundledSkilld)
+            );
             assert_eq!(request.scope, InstallScope::Global);
             assert_eq!(request.targets, [AgentTargetId::Codex]);
             Ok(vec!["skilld".to_owned()])
