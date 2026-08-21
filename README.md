@@ -84,6 +84,11 @@ The API does not expose private storage addresses.
 ### Direct mode
 
 `--direct` fetches a public GitHub Repository without the skilld.dev API.
+
+```sh
+skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex
+```
+
 The installed Skill receives the `unverified` source status.
 The user reviews the Skill before use.
 
