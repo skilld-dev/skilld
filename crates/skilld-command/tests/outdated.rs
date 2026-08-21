@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use skilld_command::{
@@ -21,6 +23,10 @@ struct Provider {
     fail_state: Mutex<bool>,
     search_results: Mutex<Vec<SearchResult>>,
     fail_search: Mutex<bool>,
+    search_calls: AtomicUsize,
+    search_in_flight: AtomicUsize,
+    search_max_in_flight: Mutex<usize>,
+    delay_search: Option<Duration>,
 }
 
 impl Provider {
@@ -31,7 +37,16 @@ impl Provider {
             fail_state: Mutex::new(false),
             search_results: Mutex::new(vec![]),
             fail_search: Mutex::new(false),
+            search_calls: std::sync::atomic::AtomicUsize::new(0),
+            search_in_flight: std::sync::atomic::AtomicUsize::new(0),
+            search_max_in_flight: Mutex::new(0),
+            delay_search: None,
         }
+    }
+
+    fn with_search_delay(mut self, delay: Duration) -> Self {
+        self.delay_search = Some(delay);
+        self
     }
 
     fn search_result(name: &str) -> SearchResult {
@@ -67,17 +82,32 @@ fn installed_digest(file: &PreparedFile) -> String {
 
 impl RemoteProvider for Provider {
     fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, RemoteError> {
-        if *self.fail_search.lock().unwrap() {
-            return Err(RemoteError::new(
-                "INVALID_RESPONSE",
-                "Skill search returned invalid JSON",
-            ));
+        self.search_calls.fetch_add(1, Ordering::Relaxed);
+        let in_flight = self.search_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        {
+            let mut max = self.search_max_in_flight.lock().unwrap();
+            if in_flight > *max {
+                *max = in_flight;
+            }
         }
-        let items = self.search_results.lock().unwrap().clone();
-        Ok(SearchResponse {
-            total: items.len() as u64,
-            items,
-        })
+        let outcome = (|| {
+            if let Some(delay) = self.delay_search {
+                std::thread::sleep(delay);
+            }
+            if *self.fail_search.lock().unwrap() {
+                return Err(RemoteError::new(
+                    "INVALID_RESPONSE",
+                    "Skill search returned invalid JSON",
+                ));
+            }
+            let items = self.search_results.lock().unwrap().clone();
+            Ok(SearchResponse {
+                total: items.len() as u64,
+                items,
+            })
+        })();
+        self.search_in_flight.fetch_sub(1, Ordering::SeqCst);
+        outcome
     }
 
     fn prepare(
@@ -283,7 +313,7 @@ fn outdated_system_reports_a_stale_global_skill_with_the_global_update() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -310,7 +340,7 @@ fn outdated_system_links_unmanaged_skills_to_a_repository() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -339,7 +369,7 @@ fn outdated_system_reports_unmanaged_skills_without_a_match() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -348,7 +378,7 @@ fn outdated_system_reports_unmanaged_skills_without_a_match() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Unmanaged Skill private-skill (codex). No Repository match found.\n"
+        "No Repository match for 1 Skill (private-skill (codex)).\n"
     );
 }
 
@@ -368,7 +398,7 @@ fn outdated_system_surfaces_a_search_failure_and_keeps_scanning() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -377,7 +407,7 @@ fn outdated_system_surfaces_a_search_failure_and_keeps_scanning() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Unmanaged Skill other-skill (codex). Skill search unavailable: Skill search returned invalid JSON.\nUnmanaged Skill vue-testing (claude-code). Skill search unavailable: Skill search returned invalid JSON.\n"
+        "Skill search unavailable for 2 Skills (other-skill (codex), vue-testing (claude-code)): Skill search returned invalid JSON.\n"
     );
 }
 
@@ -396,7 +426,7 @@ fn outdated_system_reports_a_managed_skill_once() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -503,7 +533,7 @@ fn outdated_system_survives_a_corrupt_global_store() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -515,11 +545,7 @@ fn outdated_system_survives_a_corrupt_global_store() {
         output.starts_with("Skill store unavailable in global scope: "),
         "expected a store failure line, got: {output}"
     );
-    assert!(
-        output.contains(
-            "Unmanaged Skill unmanaged-project (amp, codex). No Repository match found.\n"
-        )
-    );
+    assert!(output.contains("No Repository match for 1 Skill (unmanaged-project (amp, codex)).\n"));
     assert!(
         !output.contains("hidden-global"),
         "a scope with an unreadable lockfile must not report its Skills: {output}"
@@ -539,7 +565,7 @@ fn outdated_system_groups_agents_sharing_one_directory() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -548,7 +574,7 @@ fn outdated_system_groups_agents_sharing_one_directory() {
     assert_eq!(result.exit_code, 0);
     let output = String::from_utf8(stdout).unwrap();
     assert!(
-        output.contains("Unmanaged Skill shared (amp, codex). No Repository match found.\n"),
+        output.contains("No Repository match for 1 Skill (shared (amp, codex)).\n"),
         "expected both agents sharing .agents/skills, got: {output}"
     );
 }
@@ -611,7 +637,7 @@ fn outdated_reports_the_bundled_skill_by_its_source() {
     let mut stderr = Vec::new();
 
     let result = run(
-        ["skilld", "outdated", "--system"],
+        ["skilld", "outdated", "--all"],
         &host,
         &mut stdout,
         &mut stderr,
@@ -622,4 +648,151 @@ fn outdated_reports_the_bundled_skill_by_its_source() {
         String::from_utf8(stdout).unwrap(),
         "skilld-maintained Skill skilld.\n"
     );
+}
+
+#[test]
+fn outdated_system_runs_candidate_searches_in_parallel_with_a_bound() {
+    use std::time::Instant;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let home = temporary.path();
+    for index in 0..16 {
+        unmanaged_skill(home, ".claude", &format!("parallel-{index:02}"));
+    }
+    let provider = Arc::new(
+        Provider::new("---\nname: example\n---\n").with_search_delay(Duration::from_millis(50)),
+    );
+    *provider.search_max_in_flight.lock().unwrap() = 0;
+    let host = LocalHost::new(project, home.join("data")).with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let started = Instant::now();
+    let result = run(
+        ["skilld", "outdated", "--all"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+    let elapsed = started.elapsed();
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(provider.search_calls.load(Ordering::Relaxed), 16);
+    assert!(
+        *provider.search_max_in_flight.lock().unwrap() <= 8,
+        "the concurrency bound was exceeded"
+    );
+    assert!(
+        elapsed < Duration::from_millis(16 * 50),
+        "16 delayed searches finished far slower than a bounded parallel run: {elapsed:?}"
+    );
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(output.contains("No Repository match for 16 Skills"));
+}
+
+#[test]
+fn ancestor_roots_stop_at_home() {
+    let home = Path::new("/home/user");
+    let roots = skilld_command::ancestor_roots(&home.join("pkg/app"), home);
+    assert_eq!(
+        roots,
+        vec![
+            Path::new("/home/user/pkg/app").to_path_buf(),
+            Path::new("/home/user/pkg").to_path_buf(),
+            Path::new("/home/user").to_path_buf(),
+        ]
+    );
+}
+
+#[test]
+fn ancestor_roots_continue_to_the_root_outside_home() {
+    let roots = skilld_command::ancestor_roots(Path::new("/tmp/work/app"), Path::new("/home/user"));
+    assert_eq!(roots.first().unwrap(), Path::new("/tmp/work/app"));
+    assert_eq!(roots.last().unwrap(), Path::new("/"));
+    assert_eq!(roots.len(), 4);
+}
+
+#[test]
+fn outdated_system_finds_skills_in_parent_directories() {
+    let temporary = tempfile::tempdir().unwrap();
+    let nested = temporary.path().join("work/app");
+    fs::create_dir_all(&nested).unwrap();
+    unmanaged_skill(temporary.path(), ".claude", "parent-skill");
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(nested, temporary.path().join("data")).with_remote_provider(provider);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--all"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains("No Repository match for 1 Skill (parent-skill (claude-code))."),
+        "expected the parent directory Skill, got: {output}"
+    );
+}
+
+struct RecordingProgress {
+    found: Mutex<Vec<String>>,
+    checking: Mutex<Vec<String>>,
+    finished: Mutex<bool>,
+}
+
+impl skilld_command::OutdatedProgress for RecordingProgress {
+    fn found(&self, line: &str) {
+        self.found.lock().unwrap().push(line.to_owned());
+    }
+
+    fn checking(&self, name: &str) {
+        self.checking.lock().unwrap().push(name.to_owned());
+    }
+
+    fn finish(&self) {
+        *self.finished.lock().unwrap() = true;
+    }
+}
+
+#[test]
+fn outdated_reports_found_skills_before_remote_checks() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let home = temporary.path();
+    unmanaged_skill(home, ".claude", "vue-testing");
+    let provider = Arc::new(Provider::new(
+        "---\nname: example\ndescription: first\n---\n",
+    ));
+    let progress = Arc::new(RecordingProgress {
+        found: Mutex::new(vec![]),
+        checking: Mutex::new(vec![]),
+        finished: Mutex::new(false),
+    });
+    let host = LocalHost::new(project, home.join("data"))
+        .with_remote_provider(provider)
+        .with_outdated_progress(progress.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        ["skilld", "outdated", "--all"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        *progress.found.lock().unwrap(),
+        vec!["vue-testing (claude-code, unmanaged)".to_owned()]
+    );
+    assert_eq!(*progress.checking.lock().unwrap(), vec!["vue-testing"]);
+    assert!(*progress.finished.lock().unwrap());
 }

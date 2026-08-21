@@ -1,11 +1,40 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use skilld_core::{AgentTargetId, InstallScope, SkillName};
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
+
+pub trait OutdatedProgress: Send + Sync {
+    fn found(&self, _line: &str) {}
+    fn checking(&self, _name: &str) {}
+    fn finish(&self) {}
+}
+
+pub struct NoOutdatedProgress;
+
+impl OutdatedProgress for NoOutdatedProgress {}
+
+/// Directories from `start` up to and including `stop`.
+/// When `stop` is not an ancestor of `start`, every ancestor up to the
+/// filesystem root is included, so a project outside the home directory
+/// still reports its own Skills.
+pub fn ancestor_roots(start: &Path, stop: &Path) -> Vec<PathBuf> {
+    let start = normalize_path(start);
+    let stop = normalize_path(stop);
+    let mut roots = Vec::new();
+    let mut current = start.as_path();
+    loop {
+        roots.push(current.to_path_buf());
+        if current == stop || current.parent().is_none() {
+            break;
+        }
+        current = current.parent().expect("a checked parent exists");
+    }
+    roots
+}
 
 pub(crate) struct UnmanagedSkill {
     pub name: String,
@@ -89,12 +118,55 @@ pub(crate) fn scan_unmanaged(
     skills
 }
 
-pub(crate) fn render_search_failure(skill: &UnmanagedSkill, message: &str) -> String {
+pub(crate) fn found_line(skill: &UnmanagedSkill) -> String {
     format!(
-        "Unmanaged Skill {} ({}). Skill search unavailable: {message}.",
+        "{} ({}, unmanaged)",
         skill.name,
-        agent_list(skill)
+        skill
+            .agents
+            .iter()
+            .map(|agent| agent.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     )
+}
+
+pub(crate) fn render_no_match(skills: &[&UnmanagedSkill]) -> Vec<String> {
+    if skills.is_empty() {
+        return vec![];
+    }
+    vec![format!(
+        "No Repository match for {} ({}).",
+        skill_count(skills.len()),
+        name_list(skills)
+    )]
+}
+
+pub(crate) fn render_search_failures(
+    failures: &BTreeMap<String, Vec<&UnmanagedSkill>>,
+) -> Vec<String> {
+    failures
+        .iter()
+        .map(|(message, skills)| {
+            format!(
+                "Skill search unavailable for {} ({}): {message}.",
+                skill_count(skills.len()),
+                name_list(skills)
+            )
+        })
+        .collect()
+}
+
+fn name_list(skills: &[&UnmanagedSkill]) -> String {
+    skills
+        .iter()
+        .map(|skill| format!("{} ({})", skill.name, agent_list(skill)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn skill_count(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "Skill" } else { "Skills" })
 }
 
 pub(crate) fn render_unmanaged(
@@ -103,10 +175,7 @@ pub(crate) fn render_unmanaged(
 ) -> Vec<String> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
-        return vec![format!(
-            "Unmanaged Skill {} ({agents}). No Repository match found.",
-            skill.name
-        )];
+        return vec![];
     };
     let global = if skill.scope == InstallScope::Global {
         " --global"

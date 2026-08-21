@@ -33,6 +33,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld update --check --json` | update relation check |
 | `skilld verify` | source verification |
 | `skilld outdated` | outdated Skill report |
+| `skilld outdated --all` | system-wide outdated Skill report |
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
 | `skilld auth status` | account authentication status |
