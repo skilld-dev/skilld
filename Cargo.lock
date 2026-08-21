@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-auth"
-version = "3.0.0-beta.0"
+version = "3.0.0-beta.1"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-command"
-version = "3.0.0-beta.0"
+version = "3.0.0-beta.1"
 dependencies = [
  "base64",
  "clap",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-core"
-version = "3.0.0-beta.0"
+version = "3.0.0-beta.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-native"
-version = "3.0.0-beta.0"
+version = "3.0.0-beta.1"
 dependencies = [
  "skilld-auth",
  "skilld-command",
@@ -1737,7 +1737,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-wasi"
-version = "3.0.0-beta.0"
+version = "3.0.0-beta.1"
 dependencies = [
  "skilld-command",
  "skilld-core",

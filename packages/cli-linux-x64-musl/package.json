@@ -1,6 +1,6 @@
 {
   "name": "skilld-cli-linux-x64-musl",
-  "version": "3.0.0-beta.0",
+  "version": "3.0.0-beta.1",
   "description": "Linux x64 musl executable for the skilld CLI",
   "license": "MIT",
   "repository": "github:skilld-dev/skilld",

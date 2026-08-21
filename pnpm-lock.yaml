@@ -76,28 +76,28 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@7.3.1(@types/node@26.2.0)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
     optionalDependencies:
       skilld-cli-darwin-arm64:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-darwin-arm64
       skilld-cli-darwin-x64:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-darwin-x64
       skilld-cli-linux-arm64-gnu:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-linux-arm64-gnu
       skilld-cli-linux-arm64-musl:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-linux-arm64-musl
       skilld-cli-linux-x64-gnu:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-linux-x64-gnu
       skilld-cli-linux-x64-musl:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-linux-x64-musl
       skilld-cli-win32-arm64-msvc:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-win32-arm64-msvc
       skilld-cli-win32-x64-msvc:
-        specifier: workspace:3.0.0-beta.0
+        specifier: workspace:3.0.0-beta.1
         version: link:packages/cli-win32-x64-msvc
 
   packages/cli-darwin-arm64: {}
