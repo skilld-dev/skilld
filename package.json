@@ -42,7 +42,8 @@
     "lint:fix": "eslint . --fix && cargo fmt --all",
     "typecheck": "pnpm --filter skilld-protocol typecheck && pnpm --filter skilld-harness typecheck",
     "test": "vitest",
-    "test:run": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run && cargo test --workspace",
+    "test:js": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run",
+    "test:run": "pnpm test:js && cargo test --workspace",
     "prepack": "pnpm test:loader",
     "test:loader": "vitest run --config vitest.config.mjs"
   },

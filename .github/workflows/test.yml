@@ -2,6 +2,8 @@ name: Test
 
 on:
   push:
+    branches:
+      - main
     paths-ignore:
       - '**/README.md'
       - 'docs/**'
@@ -31,18 +33,28 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
-      - run: pnpm test:run
-      - run: pnpm --filter skilld-protocol check:v1
-      - run: pnpm --filter skilld-protocol publint
-      - run: pnpm --filter skilld-protocol attw
-      - run: pnpm --filter skilld-harness publint
-      - run: pnpm --filter skilld-harness attw
+      - run: pnpm test:js
+      - name: Rust tests
+        if: github.event_name == 'push'
+        run: cargo test --workspace
+      - name: Protocol v1 drift check
+        if: github.event_name == 'push'
+        run: pnpm --filter skilld-protocol check:v1
+      - name: Package health checks
+        if: github.event_name == 'push'
+        run: |
+          pnpm --filter skilld-protocol publint
+          pnpm --filter skilld-protocol attw
+          pnpm --filter skilld-harness publint
+          pnpm --filter skilld-harness attw
       - name: Pack root CLI
+        if: github.event_name == 'push'
         run: |
           mkdir -p artifacts
           pnpm pack --pack-destination artifacts
 
   native-host:
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
