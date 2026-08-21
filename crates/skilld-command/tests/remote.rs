@@ -918,11 +918,22 @@ fn update_check_keeps_an_uncompared_commit_unavailable() {
         &mut stdout,
         &mut stderr,
     );
+    let mut global_stdout = Vec::new();
+    let mut global_stderr = Vec::new();
+    let global_result = run(
+        ["skilld", "--json", "update", "example", "--check"],
+        &host,
+        &mut global_stdout,
+        &mut global_stderr,
+    );
     let outcome: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
     let check: UpdateCheckV1 = serde_json::from_value(outcome["data"].clone()).unwrap();
 
     assert_eq!(result.exit_code, 0);
     assert!(stderr.is_empty());
+    assert_eq!(global_result.exit_code, 0);
+    assert!(global_stderr.is_empty());
+    assert_eq!(global_stdout, stdout);
     assert_eq!(outcome["schemaVersion"], 1);
     assert_eq!(outcome["_tag"], "Success");
     assert_eq!(outcome["command"], "update");

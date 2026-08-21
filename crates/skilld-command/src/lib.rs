@@ -90,7 +90,7 @@ enum Command {
     Update {
         skill: Option<String>,
         /// Check update relations without changing files.
-        #[arg(long, requires = "json")]
+        #[arg(long)]
         check: bool,
     },
     /// Verify a Skill source.
@@ -393,6 +393,13 @@ where
     };
 
     let mode = resolve_mode(cli.json, cli.plain, context);
+    if matches!(&cli.command, Command::Update { check: true, .. }) && mode != OutputMode::JsonV1 {
+        let error = CommandError::usage("UNSUPPORTED_OUTPUT", "Skill update checks need --json");
+        if stderr.write_all(&render_error(&error, mode)).is_err() {
+            return CommandResult { exit_code: 2 };
+        }
+        return CommandResult { exit_code: 2 };
+    }
     let supports_json = matches!(&cli.command, Command::Search { .. })
         || matches!(&cli.command, Command::Update { check: true, .. });
     if mode == OutputMode::JsonV1 && !supports_json {
@@ -1558,10 +1565,7 @@ fn unavailable_update(
 }
 
 fn update_model_error(error: UpdateModelError) -> CommandError {
-    CommandError {
-        code: "INVALID_LOCKFILE",
-        message: error.to_string(),
-    }
+    CommandError::operation("INVALID_LOCKFILE", error.to_string())
 }
 
 fn detects_environment(agent: AgentTargetId, environment: &DetectionEnvironment) -> bool {
