@@ -45,7 +45,7 @@
     "openapi"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "pnpm generate:v1 && obuild",

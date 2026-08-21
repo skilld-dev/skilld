@@ -34,7 +34,7 @@
     "loader"
   ],
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "pnpm --filter skilld-protocol build && pnpm --filter skilld-harness build && cargo build --workspace",

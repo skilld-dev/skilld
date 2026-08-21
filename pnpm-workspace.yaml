@@ -14,13 +14,11 @@ catalog:
   '@ai-sdk/harness': ^1.0.77
   '@ai-sdk/provider-utils': ^5.0.28
   '@arethetypeswrong/cli': ^0.18.5
-  '@bytecodealliance/preview2-shim': 0.20.2
   '@redocly/cli': ^2.46.2
   '@typescript/native': npm:typescript@7.0.2
   openapi-typescript: ^7.13.0
   publint: ^0.3.23
   typescript: npm:@typescript/typescript6@^6.0.2
-  ws: ^8.21.0
   yaml: ^2.9.0
   zod: ^4.4.3
 catalogs:
