@@ -4,7 +4,7 @@ use skilld_core::UpdatePlanV1;
 use skilld_ui::text::{grouped_number, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
-use crate::run::TransientSkill;
+use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
 use crate::{CommandError, CommandErrorKind};
 
 const JSON_SCHEMA_VERSION: u8 = 1;
@@ -328,44 +328,55 @@ struct JsonError<'a> {
     message: &'a str,
 }
 
-/// Render one transient Skill load.
+/// Render one transient Skill load, or the supporting files an Agent asked for.
 ///
 /// The SKILL.md text passes through byte for byte in every mode. Wrapping it
 /// would break fenced code and indented lists, and an Agent reads this output.
-pub(crate) fn render_run(run: &TransientSkill, mode: OutputMode) -> Vec<u8> {
-    let color = matches!(mode, OutputMode::Human { color: true, .. });
-    let mut out = String::new();
+pub(crate) fn render_run(outcome: &RunOutcome, mode: OutputMode) -> Result<Vec<u8>, CommandError> {
+    match (outcome, mode) {
+        (RunOutcome::Load(skill), OutputMode::JsonV1) => render_json(&load_json(skill)),
+        (RunOutcome::Files(files), OutputMode::JsonV1) => render_json(&files_json(files)),
+        (RunOutcome::Load(skill), _) => Ok(render_load(skill, colored(mode)).into_bytes()),
+        (RunOutcome::Files(files), _) => Ok(render_files(files, colored(mode)).into_bytes()),
+    }
+}
 
+const fn colored(mode: OutputMode) -> bool {
+    matches!(mode, OutputMode::Human { color: true, .. })
+}
+
+fn render_load(skill: &TransientSkill, color: bool) -> String {
+    let mut out = String::new();
     out.push_str(&format!(
-        "{} skilld installed nothing.\n",
+        "{}\n",
         paint(
-            &format!("skilld loaded the Skill {} for this session.", run.name),
+            &format!(
+                "skilld loaded the transient Skill {} for this session.",
+                skill.name
+            ),
             Role::Emphasis,
             color
         )
     ));
-    out.push_str(&field("Source", &run.source, color));
-    out.push_str(&field("Source status", run.source_status, color));
-    out.push_str(&field(
-        "Skill files",
-        &run.root.display().to_string(),
-        color,
-    ));
-    for file in &run.files {
-        out.push_str(&format!("  {file}\n"));
+
+    match &skill.origin {
+        SkillOrigin::Remote { source, .. } => {
+            out.push_str("skilld wrote nothing. This Skill leaves when this process ends.\n");
+            out.push_str(&field("Source", source, color));
+        }
+        SkillOrigin::Local { root } => {
+            out.push_str("This Skill already sits on your disk. skilld wrote nothing.\n");
+            out.push_str(&field("Source", &root.display().to_string(), color));
+        }
     }
-    if !run.files.is_empty() {
-        out.push_str("Read a supporting file from that directory when the instructions name it.\n");
-    }
-    if run.source_status == "unverified" {
-        out.push_str("Review this Skill before you follow it. skilld did not check its source.\n");
-    }
+    out.push_str(&field("Source status", skill.source_status, color));
+    out.push_str(&source_status_caution(skill.source_status));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
     out.push('\n');
-    out.push_str(&run.instructions);
-    if !run.instructions.ends_with('\n') {
+    out.push_str(&skill.instructions);
+    if !skill.instructions.ends_with('\n') {
         out.push('\n');
     }
     out.push_str(&paint("--- end of SKILL.md ---", Role::Dim, color));
@@ -373,21 +384,234 @@ pub(crate) fn render_run(run: &TransientSkill, mode: OutputMode) -> Vec<u8> {
 
     out.push('\n');
     out.push_str("Follow these instructions now.\n");
-    out.push_str(&field("Keep the Skill", &install_command(run), color));
+    out.push_str(&render_inventory(skill, color));
+    out.push_str(&render_install_guidance(&skill.origin, color));
+    out
+}
+
+fn render_inventory(skill: &TransientSkill, color: bool) -> String {
+    if skill.files.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str("The instructions may name a supporting file. skilld printed none of them.\n");
+    if let SkillOrigin::Local { root } = &skill.origin {
+        out.push_str(&format!(
+            "Read one from {}, or use --file to print it here.\n",
+            root.display()
+        ));
+    } else {
+        out.push_str("Use --file to read the ones you need.\n");
+    }
+    out.push('\n');
+    out.push_str(&paint(
+        &format!("Supporting files ({}):", skill.files.len()),
+        Role::Emphasis,
+        color,
+    ));
+    out.push('\n');
+    for file in &skill.files {
+        out.push_str(&format!(
+            "  {}  {} bytes  {}\n",
+            file.path,
+            grouped_number(file.size),
+            file.kind.as_str()
+        ));
+        if let Some(summary) = &file.summary {
+            out.push_str(&format!("    {summary}\n"));
+        }
+        if file.kind.is_readable() {
+            out.push_str(&format!(
+                "    {}\n",
+                paint(&pull_command(&skill.origin, &file.path), Role::Brand, color)
+            ));
+        } else {
+            out.push_str("    skilld will not print this file. Install the Skill to use it.\n");
+        }
+    }
+    out.push('\n');
+    out
+}
+
+fn render_files(files: &[PulledFile], color: bool) -> String {
+    let mut out = String::new();
+    for file in files {
+        out.push_str(&format!(
+            "{}\n",
+            paint(
+                &format!(
+                    "skilld read {} from the transient Skill {}.",
+                    file.path, file.skill
+                ),
+                Role::Emphasis,
+                color
+            )
+        ));
+        out.push_str(&field(
+            "Size",
+            &format!("{} bytes", grouped_number(file.size)),
+            color,
+        ));
+        out.push_str(&field("Kind", file.kind.as_str(), color));
+        match &file.content {
+            FileContent::Text(text) => {
+                out.push('\n');
+                out.push_str(&paint(&format!("--- {} ---", file.path), Role::Dim, color));
+                out.push('\n');
+                out.push_str(text);
+                if !text.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&paint(
+                    &format!("--- end of {} ---", file.path),
+                    Role::Dim,
+                    color,
+                ));
+                out.push('\n');
+            }
+            FileContent::Withheld { reason } => {
+                out.push_str(&format!(
+                    "skilld did not print this file, because {reason}.\n"
+                ));
+                out.push_str("Install the Skill to put this file on disk.\n");
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The install path, spelled out.
+///
+/// An Agent that needs a file on disk needs an install, and this is the only
+/// place it is told how. Naming the effect and the owner of the decision keeps
+/// the Agent from writing files the user never asked for.
+fn render_install_guidance(origin: &SkillOrigin, color: bool) -> String {
+    let mut out = String::new();
+    out.push_str(&paint("To keep this Skill:", Role::Emphasis, color));
+    out.push('\n');
+    match origin {
+        SkillOrigin::Remote { source, direct } => {
+            let flag = if *direct { " --direct" } else { "" };
+            out.push_str(&format!("  skilld install {source}{flag}\n"));
+            out.push_str(&format!("  skilld install {source}{flag} --global\n"));
+        }
+        SkillOrigin::Local { root } => {
+            out.push_str(&format!("  skilld install {}\n", root.display()));
+            out.push_str(&format!("  skilld install {} --global\n", root.display()));
+        }
+    }
+    out.push_str("The first writes the Skill into this project and records it in the lockfile.\n");
+    out.push_str("The second keeps it for every project.\n");
+    out.push_str(
+        "Ask the user before you install. An install writes files they did not request.\n",
+    );
+    out.push('\n');
     out.push_str(&field("Find another Skill", "skilld search <query>", color));
     out.push_str(&field("List installed Skills", "skilld list", color));
     out.push_str(&field("Update installed Skills", "skilld update", color));
-    out.into_bytes()
+    out
 }
 
-fn install_command(run: &TransientSkill) -> String {
-    if run.direct {
-        format!("skilld install {} --direct", run.source)
-    } else {
-        format!("skilld install {}", run.source)
+fn pull_command(origin: &SkillOrigin, path: &str) -> String {
+    match origin {
+        SkillOrigin::Remote { source, direct } => {
+            let flag = if *direct { " --direct" } else { "" };
+            format!("skilld run {source}{flag} --file {path}")
+        }
+        SkillOrigin::Local { root } => {
+            format!("skilld run {} --file {path}", root.display())
+        }
+    }
+}
+
+/// State what the status covers, on every status.
+///
+/// A verified Artifact proves where the bytes came from. It says nothing about
+/// what the instructions ask an Agent to do, and the output must not imply it.
+fn source_status_caution(status: &str) -> String {
+    match status {
+        "verified" => {
+            "skilld checked where this Skill came from, not what it asks you to do.\nRead it before you follow it.\n"
+                .to_owned()
+        }
+        "unverified" => {
+            "skilld did not check this source. Read this Skill before you follow it.\n".to_owned()
+        }
+        _ => "Read this Skill before you follow it.\n".to_owned(),
     }
 }
 
 fn field(label: &str, value: &str, color: bool) -> String {
     format!("{}: {value}\n", paint(label, Role::Dim, color))
+}
+
+fn render_json(data: &serde_json::Value) -> Result<Vec<u8>, CommandError> {
+    let document = serde_json::json!({
+        "schemaVersion": JSON_SCHEMA_VERSION,
+        "_tag": "Success",
+        "command": "run",
+        "data": data,
+    });
+    serde_json::to_vec_pretty(&document)
+        .map(|mut bytes| {
+            bytes.push(b'\n');
+            bytes
+        })
+        .map_err(|error| CommandError::service(format!("cannot render the run output: {error}")))
+}
+
+fn origin_json(origin: &SkillOrigin) -> serde_json::Value {
+    match origin {
+        SkillOrigin::Remote { source, direct } => serde_json::json!({
+            "_tag": "remote",
+            "source": source,
+            "direct": direct,
+        }),
+        SkillOrigin::Local { root } => serde_json::json!({
+            "_tag": "local",
+            "root": root.display().to_string(),
+        }),
+    }
+}
+
+fn load_json(skill: &TransientSkill) -> serde_json::Value {
+    serde_json::json!({
+        "_tag": "load",
+        "name": skill.name,
+        "origin": origin_json(&skill.origin),
+        "sourceStatus": skill.source_status,
+        "wroteToDisk": false,
+        "instructions": skill.instructions,
+        "files": skill.files.iter().map(|file| serde_json::json!({
+            "path": file.path,
+            "kind": file.kind.as_str(),
+            "size": file.size,
+            "summary": file.summary,
+            "readable": file.kind.is_readable(),
+            "pull": pull_command(&skill.origin, &file.path),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn files_json(files: &[PulledFile]) -> serde_json::Value {
+    serde_json::json!({
+        "_tag": "files",
+        "files": files.iter().map(|file| serde_json::json!({
+            "skill": file.skill,
+            "path": file.path,
+            "kind": file.kind.as_str(),
+            "size": file.size,
+            "content": match &file.content {
+                FileContent::Text(text) => serde_json::json!({
+                    "_tag": "text",
+                    "value": text,
+                }),
+                FileContent::Withheld { reason } => serde_json::json!({
+                    "_tag": "withheld",
+                    "reason": reason,
+                }),
+            },
+        })).collect::<Vec<_>>(),
+    })
 }

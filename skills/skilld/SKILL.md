@@ -32,22 +32,40 @@ Never parse formatted terminal output.
 Run the selector returned by search:
 
 ```sh
-skilld run <selector>
+skilld run <selector> --json
 ```
 
-The command prints the Skill and installs nothing.
+The command prints SKILL.md and writes nothing to disk.
 Read the printed SKILL.md, then follow it for the current task.
-The output names a directory that holds the supporting files.
-Read a supporting file from that directory when the instructions name it.
-
 Prefer `skilld run` for a one-off task.
-Report which Skill you ran and that nothing was installed.
 
-If the source status is `unverified`, tell the user before you follow the Skill.
+Read `data.files` for the supporting files the Skill carries.
+skilld prints none of them.
+Read one only when the instructions name it:
+
+```sh
+skilld run <selector> --file <path> --json
+```
+
+Use the exact path from `data.files[].path`.
+Repeat `--file` to read several files in one command.
+
+Check `data.files[].readable` before you ask for a file.
+A file with `readable: false` never prints.
+Its `kind` is `executable` or `binary`.
+Tell the user the Skill needs an install to use that file.
+
+Report which Skill you ran and that nothing was installed.
+Read `data.sourceStatus` before you follow the Skill.
+A `verified` status covers where the Skill came from.
+It does not cover what the instructions ask you to do.
+If the status is `unverified`, tell the user before you follow the Skill.
 
 ## Install a Skill
 
 Install a Skill when the user wants it in every session.
+Install a Skill when it must run its own script.
+Ask the user before you install. An install writes files they did not request.
 
 Install the selector returned by search into the detected Agent target:
 

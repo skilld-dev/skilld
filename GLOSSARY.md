@@ -27,6 +27,7 @@ Every public export, command, error, route, and document uses these terms.
 | --- | --- |
 | `skilld search` | Skill search |
 | `skilld run` | transient Skill load |
+| `skilld run --file` | supporting file read |
 | `skilld install` | Skill install |
 | `skilld list` | installed Skills |
 | `skilld view` | Skill details |
@@ -105,7 +106,7 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 
 **Is:** a Skill that `skilld run` loads for the current Agent session.
 
-**Use for:** any Skill used without an install.
+**Use for:** any Skill used without an install. A remote transient Skill never reaches disk.
 
 **Never:** ephemeral skill, temporary install, one-off install, Skill run.
 

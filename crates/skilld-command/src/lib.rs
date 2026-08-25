@@ -28,7 +28,9 @@ pub use remote::{
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
     SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
-pub use run::TransientSkill;
+pub use run::{
+    FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
+};
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
@@ -101,13 +103,19 @@ enum Command {
     },
     /// Load a Skill for this session without installing it.
     #[command(
-        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints the Skill so the calling Agent follows it now.\nIt writes no lockfile entry, no Agent target, and no project file.\nSupporting files land in a run cache, and the output names that directory.\n\nGive SOURCE in the same forms skilld install accepts.",
-        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run writes nothing: no lockfile entry, no Agent target, no project\nfile, and no cache. The Skill leaves with the process.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Use skilld install to put them on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
+        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run skilld:skilld-dev/skills/find-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
     )]
     Run {
         /// The Skill source to load.
         #[arg(value_name = "SOURCE")]
         source: String,
+        #[arg(
+            long = "file",
+            value_name = "PATH",
+            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nskilld never prints an executable file. Install the Skill to run one."
+        )]
+        files: Vec<String>,
         #[arg(
             long,
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct run carries the unverified source status."
@@ -200,7 +208,11 @@ pub trait Host {
         self.install(source, request.scope).map(|name| vec![name])
     }
 
-    fn run_skill(&self, _source: InstallSource) -> Result<TransientSkill, CommandError> {
+    fn run_skill(
+        &self,
+        _source: InstallSource,
+        _files: &[String],
+    ) -> Result<RunOutcome, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill runs are unavailable on this host",
         ))
@@ -425,7 +437,7 @@ enum CommandOutput {
     Screen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
-    Run(Box<TransientSkill>),
+    Run(RunOutcome),
 }
 
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
@@ -511,11 +523,12 @@ where
         return CommandResult { exit_code: 2 };
     }
     let supports_json = matches!(&cli.command, Command::Search { .. })
+        || matches!(&cli.command, Command::Run { .. })
         || matches!(&cli.command, Command::Update { check: true, .. });
     if mode == OutputMode::JsonV1 && !supports_json {
         let error = CommandError::usage(
             "UNSUPPORTED_OUTPUT",
-            "JSON output is available for Skill search and update checks",
+            "JSON output is available for Skill search, Skill runs and update checks",
         );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
@@ -544,10 +557,19 @@ where
                 }
             }
         },
-        Ok(CommandOutput::Run(run)) => {
-            let bytes = render_run(&run, mode);
-            write_success(&bytes, mode, stdout, stderr)
-        }
+        Ok(CommandOutput::Run(outcome)) => match render_run(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
+            }
+        },
         Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
             Ok(bytes) => {
                 let exit_code = if outcome.is_incomplete() {
@@ -728,7 +750,11 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             }
             Ok(CommandOutput::Screen(Screen::new(lines)))
         }
-        Command::Run { source, direct } => {
+        Command::Run {
+            source,
+            files,
+            direct,
+        } => {
             let source = match (direct, InstallSource::parse(&source)) {
                 (true, InstallSource::Remote(source) | InstallSource::DirectRemote(source)) => {
                     InstallSource::DirectRemote(source)
@@ -739,8 +765,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 }
                 (false, source) => source,
             };
-            let run = host.run_skill(source)?;
-            Ok(CommandOutput::Run(Box::new(run)))
+            Ok(CommandOutput::Run(host.run_skill(source, &files)?))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
@@ -1170,48 +1195,57 @@ impl LocalHost {
         Ok(name.to_string())
     }
 
-    fn run_cache_root(&self) -> PathBuf {
-        self.global_root.join("runs")
-    }
-
-    fn run_remote(&self, source: &str, direct: bool) -> Result<TransientSkill, CommandError> {
+    fn run_remote(
+        &self,
+        source: &str,
+        direct: bool,
+        wanted: &[String],
+    ) -> Result<RunOutcome, CommandError> {
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
         let prepared = self
             .remote_provider()?
             .prepare(&selector, direct)
             .map_err(CommandError::remote)?;
-        let (name, digest, files) =
+        // The digest is dropped on purpose. Nothing is stored, so nothing needs
+        // a cache key, and a key invites a cache back.
+        let (name, _, files) =
             skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
-        let instructions = run::read_instructions(&files)?;
-        let supporting = run::supporting_files(&files);
-        let root = run::write_cache(&self.run_cache_root(), &digest, &name, &files)?;
-        Ok(TransientSkill {
-            name: name.as_str().to_owned(),
-            instructions,
-            root,
-            files: supporting,
-            source: selector.canonical(),
+        let name = name.as_str().to_owned();
+        if !wanted.is_empty() {
+            return run::pull_files(&name, &files, wanted).map(RunOutcome::Files);
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
+            name,
+            origin: SkillOrigin::Remote {
+                source: selector.canonical(),
+                direct,
+            },
             source_status: prepared.source_status.as_str(),
-            direct,
-        })
+        })))
     }
 
-    fn run_directory(&self, source: InstallSource) -> Result<TransientSkill, CommandError> {
+    fn run_directory(
+        &self,
+        source: InstallSource,
+        wanted: &[String],
+    ) -> Result<RunOutcome, CommandError> {
         let (path, _) = self.resolve_source(source)?;
         // The output names this directory to the Agent, so give it the real
         // path rather than the one the user typed.
         let path = path.canonicalize().unwrap_or(path);
-        let (name, instructions, files) = run::read_local(&path)?;
-        let display = path.display().to_string();
-        Ok(TransientSkill {
+        let (name, files) = run::read_local(&path)?;
+        if !wanted.is_empty() {
+            return run::pull_files(&name, &files, wanted).map(RunOutcome::Files);
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
             name,
-            instructions,
-            root: path,
-            files,
-            source: display,
+            origin: SkillOrigin::Local { root: path },
             source_status: "local",
-            direct: false,
-        })
+        })))
     }
 
     fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
@@ -1385,11 +1419,15 @@ impl Host for LocalHost {
         }
     }
 
-    fn run_skill(&self, source: InstallSource) -> Result<TransientSkill, CommandError> {
+    fn run_skill(
+        &self,
+        source: InstallSource,
+        files: &[String],
+    ) -> Result<RunOutcome, CommandError> {
         match source {
-            InstallSource::Remote(source) => self.run_remote(&source, false),
-            InstallSource::DirectRemote(source) => self.run_remote(&source, true),
-            source => self.run_directory(source),
+            InstallSource::Remote(source) => self.run_remote(&source, false, files),
+            InstallSource::DirectRemote(source) => self.run_remote(&source, true, files),
+            source => self.run_directory(source, files),
         }
     }
 
