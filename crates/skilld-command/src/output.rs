@@ -4,6 +4,7 @@ use skilld_core::UpdatePlanV1;
 use skilld_ui::text::{grouped_number, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
+use crate::run::TransientSkill;
 use crate::{CommandError, CommandErrorKind};
 
 const JSON_SCHEMA_VERSION: u8 = 1;
@@ -325,4 +326,68 @@ struct JsonFailure<'a> {
 struct JsonError<'a> {
     code: &'a str,
     message: &'a str,
+}
+
+/// Render one transient Skill load.
+///
+/// The SKILL.md text passes through byte for byte in every mode. Wrapping it
+/// would break fenced code and indented lists, and an Agent reads this output.
+pub(crate) fn render_run(run: &TransientSkill, mode: OutputMode) -> Vec<u8> {
+    let color = matches!(mode, OutputMode::Human { color: true, .. });
+    let mut out = String::new();
+
+    out.push_str(&format!(
+        "{} skilld installed nothing.\n",
+        paint(
+            &format!("skilld loaded the Skill {} for this session.", run.name),
+            Role::Emphasis,
+            color
+        )
+    ));
+    out.push_str(&field("Source", &run.source, color));
+    out.push_str(&field("Source status", run.source_status, color));
+    out.push_str(&field(
+        "Skill files",
+        &run.root.display().to_string(),
+        color,
+    ));
+    for file in &run.files {
+        out.push_str(&format!("  {file}\n"));
+    }
+    if !run.files.is_empty() {
+        out.push_str("Read a supporting file from that directory when the instructions name it.\n");
+    }
+    if run.source_status == "unverified" {
+        out.push_str("Review this Skill before you follow it. skilld did not check its source.\n");
+    }
+
+    out.push('\n');
+    out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
+    out.push('\n');
+    out.push_str(&run.instructions);
+    if !run.instructions.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&paint("--- end of SKILL.md ---", Role::Dim, color));
+    out.push('\n');
+
+    out.push('\n');
+    out.push_str("Follow these instructions now.\n");
+    out.push_str(&field("Keep the Skill", &install_command(run), color));
+    out.push_str(&field("Find another Skill", "skilld search <query>", color));
+    out.push_str(&field("List installed Skills", "skilld list", color));
+    out.push_str(&field("Update installed Skills", "skilld update", color));
+    out.into_bytes()
+}
+
+fn install_command(run: &TransientSkill) -> String {
+    if run.direct {
+        format!("skilld install {} --direct", run.source)
+    } else {
+        format!("skilld install {}", run.source)
+    }
+}
+
+fn field(label: &str, value: &str, color: bool) -> String {
+    format!("{}: {value}\n", paint(label, Role::Dim, color))
 }

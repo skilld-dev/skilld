@@ -4,6 +4,7 @@ mod outdated;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
 mod output;
 mod remote;
+mod run;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -27,6 +28,7 @@ pub use remote::{
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
     SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
+pub use run::TransientSkill;
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
@@ -37,8 +39,8 @@ use skilld_core::{
 use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
-    OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
-    resolve_mode,
+    OutputMode, SearchItem, SearchOutcome, render_error, render_run, render_search,
+    render_update_check, resolve_mode,
 };
 
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
@@ -94,6 +96,21 @@ enum Command {
         #[arg(
             long,
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct install records the unverified source status."
+        )]
+        direct: bool,
+    },
+    /// Load a Skill for this session without installing it.
+    #[command(
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints the Skill so the calling Agent follows it now.\nIt writes no lockfile entry, no Agent target, and no project file.\nSupporting files land in a run cache, and the output names that directory.\n\nGive SOURCE in the same forms skilld install accepts.",
+        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+    )]
+    Run {
+        /// The Skill source to load.
+        #[arg(value_name = "SOURCE")]
+        source: String,
+        #[arg(
+            long,
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct run carries the unverified source status."
         )]
         direct: bool,
     },
@@ -181,6 +198,12 @@ pub trait Host {
             ));
         };
         self.install(source, request.scope).map(|name| vec![name])
+    }
+
+    fn run_skill(&self, _source: InstallSource) -> Result<TransientSkill, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill runs are unavailable on this host",
+        ))
     }
 
     fn view(&self, _name: &str, _scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -402,6 +425,7 @@ enum CommandOutput {
     Screen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
+    Run(Box<TransientSkill>),
 }
 
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
@@ -520,6 +544,10 @@ where
                 }
             }
         },
+        Ok(CommandOutput::Run(run)) => {
+            let bytes = render_run(&run, mode);
+            write_success(&bytes, mode, stdout, stderr)
+        }
         Ok(CommandOutput::UpdateCheck(outcome)) => match render_update_check(&outcome, mode) {
             Ok(bytes) => {
                 let exit_code = if outcome.is_incomplete() {
@@ -699,6 +727,20 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 lines.push(Line::hint("Review the unverified Skill before use."));
             }
             Ok(CommandOutput::Screen(Screen::new(lines)))
+        }
+        Command::Run { source, direct } => {
+            let source = match (direct, InstallSource::parse(&source)) {
+                (true, InstallSource::Remote(source) | InstallSource::DirectRemote(source)) => {
+                    InstallSource::DirectRemote(source)
+                }
+                (true, InstallSource::Local(_)) => return Err(CommandError::direct_local_source()),
+                (true, InstallSource::BundledSkilld) => {
+                    return Err(CommandError::direct_bundled_source());
+                }
+                (false, source) => source,
+            };
+            let run = host.run_skill(source)?;
+            Ok(CommandOutput::Run(Box::new(run)))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
@@ -1128,6 +1170,50 @@ impl LocalHost {
         Ok(name.to_string())
     }
 
+    fn run_cache_root(&self) -> PathBuf {
+        self.global_root.join("runs")
+    }
+
+    fn run_remote(&self, source: &str, direct: bool) -> Result<TransientSkill, CommandError> {
+        let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+        let prepared = self
+            .remote_provider()?
+            .prepare(&selector, direct)
+            .map_err(CommandError::remote)?;
+        let (name, digest, files) =
+            skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
+        let instructions = run::read_instructions(&files)?;
+        let supporting = run::supporting_files(&files);
+        let root = run::write_cache(&self.run_cache_root(), &digest, &name, &files)?;
+        Ok(TransientSkill {
+            name: name.as_str().to_owned(),
+            instructions,
+            root,
+            files: supporting,
+            source: selector.canonical(),
+            source_status: prepared.source_status.as_str(),
+            direct,
+        })
+    }
+
+    fn run_directory(&self, source: InstallSource) -> Result<TransientSkill, CommandError> {
+        let (path, _) = self.resolve_source(source)?;
+        // The output names this directory to the Agent, so give it the real
+        // path rather than the one the user typed.
+        let path = path.canonicalize().unwrap_or(path);
+        let (name, instructions, files) = run::read_local(&path)?;
+        let display = path.display().to_string();
+        Ok(TransientSkill {
+            name,
+            instructions,
+            root: path,
+            files,
+            source: display,
+            source_status: "local",
+            direct: false,
+        })
+    }
+
     fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
         let (targets, known) = if request.targets.is_empty() {
             (None, self.known_targets(request.scope)?)
@@ -1296,6 +1382,14 @@ impl Host for LocalHost {
                     .map_err(CommandError::store)?;
                 Ok(vec![name.to_string()])
             }
+        }
+    }
+
+    fn run_skill(&self, source: InstallSource) -> Result<TransientSkill, CommandError> {
+        match source {
+            InstallSource::Remote(source) => self.run_remote(&source, false),
+            InstallSource::DirectRemote(source) => self.run_remote(&source, true),
+            source => self.run_directory(source),
         }
     }
 
@@ -2680,8 +2774,8 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "update", "verify", "outdated",
-                "auth", "config"
+                "search", "install", "run", "list", "view", "remove", "update", "verify",
+                "outdated", "auth", "config"
             ]
         );
     }

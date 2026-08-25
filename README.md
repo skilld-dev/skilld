@@ -34,11 +34,33 @@ Use `--agent` when you want an explicit Agent target:
 skilld install skilld --global --agent codex
 ```
 
+## Run a Skill without installing it
+
+`skilld run` is the default way to use a Skill.
+It prints the Skill so your Agent follows it now.
+
+```sh
+npx skilld run skilld:skilld-dev/skills/vue
+```
+
+The command writes no lockfile entry, no Agent target, and no project file.
+Supporting files land in a run cache, and the output names that directory.
+Tell your Agent to run the command, then read the output.
+
+Install the Skill when you want it in every session:
+
+```sh
+skilld install skilld:skilld-dev/skills/vue
+```
+
 ## Use the skilld CLI
 
 ```sh
 # Find a Skill
 skilld search vue
+
+# Run a Skill for this session only
+skilld run skilld:skilld-dev/skills/vue
 
 # Install a Skill in the current project
 skilld install skilld:skilld-dev/skills/vue

@@ -54,4 +54,6 @@ Users may request explicit direct remote access with an unverified source status
 
 Strict CI rejects unverified remote sources.
 
-`skilld install skilld --global` installs the skilld-maintained Skill for search and install guidance.
+`skilld install skilld --global` installs the skilld-maintained Skill for search, run, and install guidance.
+`skilld run <selector>` prints a Skill for the current session and writes nothing outside its run cache.
+It never executes the Skill, so the no Agent runtime boundary holds.

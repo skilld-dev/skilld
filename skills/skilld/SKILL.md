@@ -1,11 +1,13 @@
 ---
 name: skilld
-description: Search, view, install, update, verify, and remove Skills with skilld CLI, including private repository access.
+description: Search, run, view, install, update, verify, and remove Skills with skilld CLI, including private repository access.
 ---
 
 # Use skilld CLI
 
-Use skilld CLI to search for and install Skills.
+Use skilld CLI to search for, run, and install Skills.
+
+Run a Skill first. Install a Skill only when the user asks to keep it.
 
 ## Search for a Skill
 
@@ -25,7 +27,27 @@ If search fails, read the tagged JSON error from stderr.
 Use `--plain` only when another command needs stable text.
 Never parse formatted terminal output.
 
+## Run a Skill
+
+Run the selector returned by search:
+
+```sh
+skilld run <selector>
+```
+
+The command prints the Skill and installs nothing.
+Read the printed SKILL.md, then follow it for the current task.
+The output names a directory that holds the supporting files.
+Read a supporting file from that directory when the instructions name it.
+
+Prefer `skilld run` for a one-off task.
+Report which Skill you ran and that nothing was installed.
+
+If the source status is `unverified`, tell the user before you follow the Skill.
+
 ## Install a Skill
+
+Install a Skill when the user wants it in every session.
 
 Install the selector returned by search into the detected Agent target:
 

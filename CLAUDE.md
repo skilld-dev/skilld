@@ -24,8 +24,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Product boundary
 
-The native `skilld` CLI searches, installs, lists, views, removes, updates, and verifies Skills.
+The native `skilld` CLI searches, runs, installs, lists, views, removes, updates, and verifies Skills.
 It also manages account authentication and Agent target configuration.
+
+`skilld run` loads a transient Skill: it prints the Skill and installs nothing.
+The calling Agent follows the instructions. The CLI never executes them.
 
 The skilld CLI contains no Skill generation logic or Agent runtime.
 
