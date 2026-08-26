@@ -11,25 +11,25 @@ packages:
   - playground
   - packages/*
 catalog:
-  '@ai-sdk/harness': ^1.0.77
-  '@ai-sdk/provider-utils': ^5.0.28
+  '@ai-sdk/harness': ^1.0.87
+  '@ai-sdk/provider-utils': ^5.0.30
   '@arethetypeswrong/cli': ^0.18.5
-  '@redocly/cli': ^2.46.2
+  '@redocly/cli': ^2.47.0
   '@typescript/native': npm:typescript@7.0.2
   openapi-typescript: ^7.13.0
-  publint: ^0.3.23
+  publint: ^0.3.24
   typescript: npm:@typescript/typescript6@^6.0.2
   yaml: ^2.9.0
   zod: ^4.4.3
 catalogs:
   dev-build:
-    '@types/node': ^26.2.0
+    '@types/node': ^26.3.0
     obuild: ^0.4.38
   dev-lint:
     '@antfu/eslint-config': ^9.3.0
-    eslint: ^10.8.1
+    eslint: ^10.9.1
   dev-test:
-    vitest: ^4.1.10
+    vitest: ^4.1.11
 
 onlyBuiltDependencies:
   - esbuild
