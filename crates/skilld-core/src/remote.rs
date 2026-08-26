@@ -1076,8 +1076,8 @@ fn validate_relative_path(value: &str, maximum: usize) -> Result<(), RemoteError
     let path = Path::new(value);
     let valid = !value.is_empty()
         && value.len() <= maximum
-        && !value.contains(['\\', '\0', ':'])
-        && !value.bytes().any(|byte| byte < b' ' || byte == 0x7f)
+        && !value.contains(['\\', ':'])
+        && !value.chars().any(char::is_control)
         && !path.is_absolute()
         && path.components().all(|component| {
             matches!(component, Component::Normal(_))

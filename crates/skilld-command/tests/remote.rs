@@ -1311,6 +1311,38 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
 }
 
 #[test]
+fn direct_github_access_rejects_a_commit_response_that_changed_the_requested_commit() {
+    let requested = "0123456789abcdef0123456789abcdef01234567";
+    let returned = "ffffffffffffffffffffffffffffffffffffffff";
+    let tree = "89abcdef0123456789abcdef0123456789abcdef";
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            br#"{"private":false,"default_branch":"main"}"#.to_vec(),
+        ),
+        response(
+            200,
+            format!(r#"{{"sha":"{returned}","commit":{{"tree":{{"sha":"{tree}"}}}}}}"#),
+        ),
+    ]));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse(&format!(
+        "github:skilld-dev/skills/skills/example#commit:{requested}"
+    ))
+    .unwrap();
+
+    let error = remote.prepare(&selector, true).unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_MISMATCH");
+    assert_eq!(http.requests.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn direct_install_error_gives_an_agent_an_exact_recovery() {
     let remote = SkilldRemote::new(
         Arc::new(FakeHttp::default()),

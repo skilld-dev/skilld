@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/skilld?color=yellow)](https://npm.chart.dev/skilld)
 [![license](https://img.shields.io/npm/l/skilld?color=yellow)](https://github.com/skilld-dev/skilld/blob/main/LICENSE)
 
-Search, install, and keep Agent Skills current.
+Search, run, install, and keep Agent Skills current.
 
 skilld v3 has two products:
 

@@ -650,7 +650,7 @@ fn skill_md_is_not_a_pullable_file() {
 
 #[test]
 fn generated_file_read_uses_the_loaded_remote_revision() {
-    let fixture = remote_fixture(skill_files());
+    let fixture = remote_fixture_with_skill_path(skill_files(), "packages/vue");
     let (_, stdout, stderr) = run_cli(
         &fixture.host,
         vec![
@@ -668,6 +668,10 @@ fn generated_file_read_uses_the_loaded_remote_revision() {
         .map(|value| value.as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
     assert!(stderr.is_empty());
+    assert_eq!(
+        read_argv[2],
+        "github:vuejs/core/packages/vue#commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
 
     let (exit, stdout, stderr) = run_cli(&fixture.host, read_argv);
     let files: serde_json::Value = serde_json::from_str(&stdout).unwrap();
@@ -680,7 +684,10 @@ fn generated_file_read_uses_the_loaded_remote_revision() {
         files["data"]["sourceCaution"],
         "skilld did not check this source. Read this Skill before you follow it."
     );
-    assert_eq!(files["data"]["origin"]["source"], "skilld:vuejs/core/vue");
+    assert_eq!(
+        files["data"]["origin"]["source"],
+        "github:vuejs/core/packages/vue#commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
     assert_eq!(files["data"]["wroteSkillFiles"], false);
     assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 1);
@@ -773,7 +780,7 @@ fn json_run_is_compact_typed_and_uses_argument_arrays() {
         serde_json::json!([
             "skilld",
             "run",
-            "skilld:vuejs/core/vue",
+            "github:vuejs/core/skills/vue#commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--revision",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "--file=references/api.md",
@@ -1129,6 +1136,31 @@ fn duplicate_file_requests_fail_before_remote_content_is_loaded() {
     assert!(stdout.is_empty());
     assert_eq!(error["error"]["code"], "INVALID_SOURCE");
     assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn remote_file_requests_reject_c1_control_characters_before_fetch() {
+    let fixture = remote_fixture(skill_files());
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--revision".to_owned(),
+            "a".repeat(40),
+            format!("--file=references/api\u{0085}forged.md"),
+            "--json".to_owned(),
+        ],
+    );
+    let error: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(error["error"]["code"], "INVALID_SOURCE");
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]

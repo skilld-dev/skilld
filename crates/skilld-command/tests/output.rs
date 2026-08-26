@@ -154,10 +154,17 @@ fn json_help_and_version_return_versioned_documents() {
 }
 
 #[test]
-fn help_explains_remote_file_revisions_and_direct_delivery() {
+fn help_explains_primary_flow_remote_file_revisions_and_direct_delivery() {
+    let root = run(&["skilld", "--help"], PLAIN);
     let install = run(&["skilld", "install", "--help"], PLAIN);
     let run_help = run(&["skilld", "run", "--help"], PLAIN);
 
+    assert_eq!(root.0, 0);
+    assert!(root.2.is_empty());
+    assert!(
+        root.1
+            .contains("Search, run, install, and keep Skills current")
+    );
     assert_eq!(install.0, 0);
     assert!(install.2.is_empty());
     assert!(

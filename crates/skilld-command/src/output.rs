@@ -684,7 +684,7 @@ fn install_argv(origin: &SkillOrigin, global: bool) -> Vec<String> {
 fn source_argument(origin: &SkillOrigin) -> String {
     match origin {
         SkillOrigin::Bundled => "skilld".to_owned(),
-        SkillOrigin::Remote { source, .. } => source.clone(),
+        SkillOrigin::Remote { exact_source, .. } => exact_source.clone(),
         SkillOrigin::Local { root } => root.display().to_string(),
     }
 }

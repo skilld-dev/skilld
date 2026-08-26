@@ -118,6 +118,11 @@ pub enum RunOutcome {
 }
 
 pub(crate) fn reject_duplicate_files(wanted: &[String]) -> Result<(), CommandError> {
+    if wanted.iter().any(|path| path.chars().any(char::is_control)) {
+        return Err(CommandError::input(
+            "--file paths cannot contain control characters",
+        ));
+    }
     let mut unique = BTreeSet::new();
     if wanted.iter().any(|path| !unique.insert(path)) {
         return Err(CommandError::input(

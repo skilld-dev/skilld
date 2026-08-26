@@ -4,9 +4,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use skilld_core::{
     ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
-    RemoteSelector, RepositoryVisibility, ResolvedSource, SignatureAlgorithm, SourceProvider,
-    TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin, verify_artifact,
-    verify_trusted_root,
+    PreparedFile, RemoteSelector, RepositoryVisibility, ResolvedSource, SignatureAlgorithm,
+    SourceProvider, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin,
+    prepare_unverified_files, verify_artifact, verify_trusted_root,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -278,6 +278,26 @@ fn rejects_a_hash_in_the_attested_skill_path_but_allows_it_in_supporting_files()
 
     assert_eq!(valid.files[1].path, "references/topic#part.md");
     assert_eq!(error.code, "INVALID_SOURCE");
+}
+
+#[test]
+fn unverified_files_reject_c1_control_characters_in_paths() {
+    let files = vec![
+        PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes: b"---\nname: example\n---\n".to_vec(),
+        },
+        PreparedFile {
+            path: "references/api\u{0085}forged.md".to_owned(),
+            mode: 0o644,
+            bytes: b"# API\n".to_vec(),
+        },
+    ];
+
+    let error = prepare_unverified_files(files).unwrap_err();
+
+    assert_eq!(error.code, "INVALID_PATH");
 }
 
 #[test]

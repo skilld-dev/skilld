@@ -51,7 +51,7 @@ const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITOR
 #[command(
     name = "skilld",
     version = VERSION,
-    about = "Search, install, and keep Skills current",
+    about = "Search, run, install, and keep Skills current",
     disable_help_subcommand = true
 )]
 pub struct Cli {

@@ -1090,6 +1090,15 @@ impl SkilldRemote {
         if !valid_sha(&commit.sha) || !valid_sha(&commit.commit.tree.sha) {
             return Err(invalid_github());
         }
+        if matches!(
+            &source.r#ref,
+            Some(SourceRef::Commit { value }) if value != &commit.sha
+        ) {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "GitHub resolved a different commit than requested",
+            ));
+        }
         Ok((repository_url, skill_path.clone(), commit))
     }
 
