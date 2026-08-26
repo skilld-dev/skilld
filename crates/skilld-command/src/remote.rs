@@ -672,6 +672,14 @@ pub trait RemoteProgress: Send + Sync {
     fn stage(&self, stage: RemoteProgressStage);
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RemotePendingStage {
+    Known(RemoteProgressStage),
+    #[allow(dead_code)]
+    Unknown(String),
+}
+
 #[derive(Default)]
 pub struct NoRemoteProgress;
 
@@ -933,7 +941,9 @@ impl SkilldRemote {
                     stage,
                     poll_after_ms,
                 } => {
-                    self.progress.stage(stage);
+                    if let RemotePendingStage::Known(stage) = stage {
+                        self.progress.stage(stage);
+                    }
                     if !(250..=60_000).contains(&poll_after_ms) {
                         return Err(RemoteError::new(
                             "INVALID_RESPONSE",
@@ -2307,7 +2317,7 @@ enum Resolution {
     Pending {
         #[serde(rename = "resolutionId")]
         resolution_id: String,
-        stage: RemoteProgressStage,
+        stage: RemotePendingStage,
         #[serde(rename = "pollAfterMs")]
         poll_after_ms: u64,
     },

@@ -1092,6 +1092,50 @@ fn a_hosted_resolution_reports_each_service_stage() {
 }
 
 #[test]
+fn an_unknown_pending_stage_does_not_abort_the_resolution() {
+    let (pin, mut responses) = verified_remote_responses();
+    let pending = response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "pending",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "stage": "queueing",
+            "pollAfterMs": 250
+        }))
+        .unwrap(),
+    );
+    responses.insert(0, pending);
+    let progress = Arc::new(RecordingProgress::default());
+    let remote = SkilldRemote::new(
+        Arc::new(FakeHttp::with(responses)),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep))
+    .with_progress(progress.clone());
+    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+
+    let prepared = remote.prepare(&selector, false).unwrap();
+
+    assert!(matches!(
+        prepared.source_status,
+        SourceStatus::Verified { .. }
+    ));
+    assert_eq!(
+        *progress.0.lock().unwrap(),
+        [
+            RemoteProgressStage::RequestingResolution,
+            RemoteProgressStage::VerifyingAttestation,
+            RemoteProgressStage::RequestingDownload,
+            RemoteProgressStage::DownloadingArtifact,
+            RemoteProgressStage::VerifyingArtifact,
+        ]
+    );
+}
+
+#[test]
 fn a_pending_resolution_times_out_after_at_most_sixty_seconds() {
     let resolution_id = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
     let pending = || {
