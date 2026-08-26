@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use skilld_command::{
     CommandPlatform, Host, LocalHost, OutputContext, PreparedRemoteSkill, RemoteComparisonAccess,
@@ -126,12 +127,16 @@ impl RemoteProvider for Provider {
             bytes,
         };
         let digest = installed_digest(&file);
+        let skill_path = match &selector.source().selector {
+            SourceSelector::Path { path } => path.clone(),
+            SourceSelector::NamedSkill { name } => format!("skills/{name}"),
+        };
         Ok(PreparedRemoteSkill {
             files: vec![file],
             locked_source: LockedSource::Remote {
                 source: selector.canonical(),
                 commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-                skill_path: "skills/example".to_owned(),
+                skill_path,
             },
             source_status: if direct {
                 SourceStatus::Unverified {
@@ -257,6 +262,24 @@ fn install_global(host: &LocalHost, selector: &str) {
     .unwrap();
 }
 
+fn install_direct_project(host: &LocalHost, selector: &str) {
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::DirectRemote(selector.to_owned())),
+        scope: InstallScope::Project,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+    })
+    .unwrap();
+}
+
+fn replace_project_locked_source(project: &Path, source: &str) {
+    let path = project.join(".skills/skilld-lock.yaml");
+    let mut document =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap();
+    document["skills"]["example"]["source"]["source"] = json!(source);
+    fs::write(path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+}
+
 fn unmanaged_skill(home: &Path, agent_dir: &str, name: &str) {
     let directory = home.join(agent_dir).join("skills").join(name);
     fs::create_dir_all(&directory).unwrap();
@@ -299,6 +322,165 @@ fn outdated_reports_current_and_stale_project_skills() {
         String::from_utf8(stdout).unwrap(),
         "Outdated Skill example. Run skilld update example.\n"
     );
+}
+
+#[test]
+fn view_and_outdated_reject_terminal_formatting_from_a_remote_lock_source() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host = LocalHost::new(project.clone(), temporary.path().join("data")).with_remote_provider(
+        Arc::new(Provider::new(
+            "---\nname: example\ndescription: direct\n---\n",
+        )),
+    );
+    install_direct_project(&host, "github:skilld-dev/skills/skills/example");
+    replace_project_locked_source(
+        &project,
+        "github:skilld-dev/skills/skills/example\u{1b}]8;;https://evil.invalid\u{1b}\\\u{202e}",
+    );
+
+    for context in [
+        OutputContext::Plain {
+            platform: CommandPlatform::Unix,
+        },
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+    ] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let view = run_with_output(
+            ["skilld", "view", "example"],
+            &host,
+            context,
+            &mut stdout,
+            &mut stderr,
+        );
+        let stderr = String::from_utf8(stderr).unwrap();
+
+        assert_eq!(view.exit_code, 1);
+        assert!(stdout.is_empty());
+        assert!(stderr.contains("INVALID_LOCKFILE"));
+        assert!(!stderr.contains('\u{1b}'));
+        assert!(!stderr.contains('\u{202e}'));
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let outdated = run_with_output(
+            ["skilld", "outdated"],
+            &host,
+            context,
+            &mut stdout,
+            &mut stderr,
+        );
+        let stdout = String::from_utf8(stdout).unwrap();
+
+        assert_eq!(outdated.exit_code, 0);
+        assert!(stderr.is_empty());
+        assert!(stdout.contains("Skill store unavailable in project scope"));
+        assert!(!stdout.contains('\u{1b}'));
+        assert!(!stdout.contains('\u{202e}'));
+    }
+}
+
+#[test]
+fn view_and_outdated_preserve_valid_metacharacters_as_quoted_data() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host =
+        LocalHost::new(project, temporary.path().join("data")).with_remote_provider(Arc::new(
+            Provider::new("---\nname: example\ndescription: direct\n---\n"),
+        ));
+    let source = r#"github:skilld-dev/skills/skills/o'hare$("quoted")"#;
+    install_direct_project(&host, source);
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let plain_view = run_with_output(
+        ["skilld", "view", "example", "--plain"],
+        &host,
+        OutputContext::Plain {
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(plain_view.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(
+        String::from_utf8(stdout)
+            .unwrap()
+            .contains(&format!("Source: {source}\n"))
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let view = run_with_output(
+        ["skilld", "view", "example"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: true,
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+
+    assert_eq!(view.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(stdout.contains(source));
+    assert!(stdout.contains("\u{1b}]8;;https://github.com/skilld-dev/skills\u{1b}\\"));
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let plain = run_with_output(
+        ["skilld", "outdated", "--plain"],
+        &host,
+        OutputContext::Plain {
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(plain.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        concat!(
+            "Unverified Skill example. Run skilld install ",
+            "'github:skilld-dev/skills/skills/o'\\''hare$(\"quoted\")' ",
+            "--direct --agent codex to update it.\n"
+        )
+    );
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let human = run_with_output(
+        ["skilld", "outdated"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::WindowsPowerShell,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+
+    assert_eq!(human.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(stdout.contains(
+        r#"skilld install 'github:skilld-dev/skills/skills/o''hare$("quoted")' --direct --agent codex"#
+    ));
 }
 
 #[test]

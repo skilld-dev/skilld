@@ -34,16 +34,16 @@ pub use run::{
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    NotTrackedReason, SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan,
-    UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
-    classify_update_comparison, select_target_ids,
+    NotTrackedReason, RemoteSelector, SourceRef, UpdateFailure, UpdateLatestCommit,
+    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter,
+    VERSION, classify_update_comparison, select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
     OutputMode, SearchItem, SearchOutcome, render_error, render_run, render_search,
-    render_update_check, resolve_mode, screen_message,
+    render_update_check, resolve_mode, screen_message, shell_command,
 };
 
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
@@ -270,7 +270,7 @@ pub trait Host {
         ))
     }
 
-    fn outdated(&self, _all: bool) -> Result<Vec<Line>, CommandError> {
+    fn outdated(&self, _all: bool, _platform: CommandPlatform) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "Outdated Skill reports are unavailable on this host",
         ))
@@ -585,7 +585,7 @@ where
         return CommandResult { exit_code: 2 };
     }
 
-    match dispatch(cli.command, host) {
+    match dispatch(cli.command, host, context.platform()) {
         Ok(CommandOutput::Screen(screen)) => {
             let bytes = match mode {
                 OutputMode::Human { color, .. } => screen.render_human(color),
@@ -775,7 +775,11 @@ pub fn run_stdio_probe<R: Read, O: Write, E: Write>(
     }
 }
 
-fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, CommandError> {
+fn dispatch<H: Host>(
+    command: Command,
+    host: &H,
+    platform: CommandPlatform,
+) -> Result<CommandOutput, CommandError> {
     match command {
         Command::Install {
             source,
@@ -986,7 +990,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             .verify(skill.as_deref())
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
         Command::Outdated { all } => host
-            .outdated(all)
+            .outdated(all, platform)
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
     }
 }
@@ -995,10 +999,10 @@ fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     let source = match view.skill.source {
         LockedSource::Local { path } => Line::field("Source", format!("local {path}")),
         LockedSource::BundledSkilld => Line::field("Source", "skilld-maintained Skill"),
-        LockedSource::Remote { source, .. } => match github_url(&source) {
-            Some(url) => Line::linked_field("Source", source, url),
-            None => Line::field("Source", source),
-        },
+        LockedSource::Remote { source, .. } => {
+            let selector = RemoteSelector::parse(&source).map_err(CommandError::remote)?;
+            Line::linked_field("Source", selector.canonical(), github_url(&selector)?)
+        }
     };
     let targets = if view.skill.targets.is_empty() {
         "none".to_owned()
@@ -1019,15 +1023,15 @@ fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     ])
 }
 
-/// A GitHub repository URL for a remote Skill source, when the source names
-/// one.
-fn github_url(source: &str) -> Option<String> {
-    let body = source.split_once(':')?.1;
-    let mut segments = body.split('/');
-    let owner = segments.next()?;
-    let repository = segments.next()?;
-    (!owner.is_empty() && !repository.is_empty())
-        .then(|| format!("https://github.com/{owner}/{repository}"))
+/// Build a GitHub repository URL from a parsed remote selector.
+fn github_url(selector: &RemoteSelector) -> Result<String, CommandError> {
+    let mut url = url::Url::parse("https://github.com/")
+        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?;
+    url.path_segments_mut()
+        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?
+        .push(&selector.source().owner)
+        .push(&selector.source().repository);
+    Ok(url.into())
 }
 
 fn scope(global: bool) -> InstallScope {
@@ -2131,7 +2135,7 @@ impl Host for LocalHost {
         Ok(UpdatePlanV1::new(plan))
     }
 
-    fn outdated(&self, all: bool) -> Result<Vec<Line>, CommandError> {
+    fn outdated(&self, all: bool, platform: CommandPlatform) -> Result<Vec<Line>, CommandError> {
         let scopes = if all {
             vec![InstallScope::Project, InstallScope::Global]
         } else {
@@ -2224,7 +2228,7 @@ impl Host for LocalHost {
         }
         for (view, scope) in &views {
             progress.checking(&view.name);
-            lines.extend(self.report_outdated_view(view, *scope));
+            lines.extend(self.report_outdated_view(view, *scope, platform));
         }
         if all {
             #[cfg(not(target_os = "wasi"))]
@@ -2242,6 +2246,7 @@ impl Host for LocalHost {
                         skill,
                         Some(&candidate),
                         &self.project_root,
+                        platform,
                     )),
                     Ok(None) => no_match.push(skill),
                     Err(error) => failures
@@ -2669,13 +2674,13 @@ fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> Command
 }
 
 impl LocalHost {
-    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<Line> {
+    fn report_outdated_view(
+        &self,
+        view: &SkillView,
+        scope: InstallScope,
+        platform: CommandPlatform,
+    ) -> Vec<Line> {
         let name = &view.name;
-        let global = if scope == InstallScope::Global {
-            " --global"
-        } else {
-            ""
-        };
         match (&view.skill.source, &view.skill.source_status) {
             (
                 LockedSource::Remote {
@@ -2701,7 +2706,12 @@ impl LocalHost {
                         )]
                     }
                     Ok(RemoteSourceState::Stale { .. }) => {
-                        let update = format!("skilld update {name}{global}");
+                        let mut argv =
+                            vec!["skilld".to_owned(), "update".to_owned(), name.to_owned()];
+                        if scope == InstallScope::Global {
+                            argv.push("--global".to_owned());
+                        }
+                        let update = shell_command(&argv, platform);
                         vec![Line::record(
                             Marker::Warn,
                             format!("Outdated Skill {name}. Run {update}."),
@@ -2729,8 +2739,13 @@ impl LocalHost {
                     .iter()
                     .map(|locked| locked.agent)
                     .collect::<Vec<_>>();
-                let agent_flags = outdated::agent_flags(&agents);
-                let install = format!("skilld install {source} --direct{global}{agent_flags}");
+                let install = outdated::install_command(
+                    source,
+                    true,
+                    scope == InstallScope::Global,
+                    &agents,
+                    platform,
+                );
                 vec![Line::record(
                     Marker::Warn,
                     format!("Unverified Skill {name}. Run {install} to update it."),

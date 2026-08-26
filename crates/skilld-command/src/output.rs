@@ -713,7 +713,7 @@ fn install_source_argument(origin: &SkillOrigin) -> String {
     }
 }
 
-fn shell_command(argv: &[String], platform: CommandPlatform) -> String {
+pub(crate) fn shell_command(argv: &[String], platform: CommandPlatform) -> String {
     argv.iter()
         .map(|argument| shell_quote(argument, platform))
         .collect::<Vec<_>>()

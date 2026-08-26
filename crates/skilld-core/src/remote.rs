@@ -64,7 +64,12 @@ impl RemoteSelector {
         }
         let value = value.trim();
         if let Some(rest) = value.strip_prefix("skilld:") {
-            let (owner, repository, name) = split_three(rest)?;
+            let (source, reference) = rest
+                .split_once('#')
+                .map_or((rest, None), |(source, value)| {
+                    (source, Some(parse_source_ref(value)))
+                });
+            let (owner, repository, name) = split_three(source)?;
             let request = SourceRequest {
                 provider: SourceProvider::Github,
                 owner: owner.to_owned(),
@@ -72,7 +77,7 @@ impl RemoteSelector {
                 selector: SourceSelector::NamedSkill {
                     name: name.to_owned(),
                 },
-                r#ref: None,
+                r#ref: reference,
             };
             validate_source_request(&request)?;
             return Ok(Self::Skilld(request));
@@ -1197,6 +1202,14 @@ mod tests {
     fn parses_canonical_skilld_and_github_selectors() {
         let skilld = RemoteSelector::parse("skilld:skilld-dev/skills/vue-testing").unwrap();
         assert_eq!(skilld.canonical(), "skilld:skilld-dev/skills/vue-testing");
+        let exact_skilld = RemoteSelector::parse(
+            "skilld:skilld-dev/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567",
+        )
+        .unwrap();
+        assert_eq!(
+            exact_skilld.canonical(),
+            "skilld:skilld-dev/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567"
+        );
         let github = RemoteSelector::parse(
             "github:skilld-dev/skills/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567",
         )
