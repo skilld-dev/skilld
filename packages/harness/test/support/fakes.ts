@@ -78,7 +78,9 @@ export function createFakeHarness(settings: FakeHarnessOptions): {
             throw settings.failPrompt
           await settings.onPrompt({
             options: promptOptions,
-            sandbox: options.sandboxSession.restricted(),
+            sandbox: 'restricted' in options.sandboxSession
+              ? options.sandboxSession.restricted()
+              : options.sandboxSession,
             workDir: options.sessionWorkDir,
           })
           promptOptions.emit({ type: 'stream-start' })
