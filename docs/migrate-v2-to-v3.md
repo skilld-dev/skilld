@@ -68,9 +68,15 @@ skilld auth status
 
 You only need an account for private repository access.
 
-## 4. Install the global skilld Skill
+## 4. Run the skilld Skill
 
-Install search, run, and install guidance for your Agent:
+Ask your Agent to load search, run, and install guidance for the current session:
+
+```sh
+skilld run skilld
+```
+
+Install it globally only when you want your Agent to keep it across sessions:
 
 ```sh
 skilld install skilld --global --agent codex

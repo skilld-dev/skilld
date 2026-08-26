@@ -22,7 +22,13 @@ npm install --global skilld
 The npm package selects a native executable for the current system.
 It has no JavaScript CLI engine or JavaScript fallback.
 
-Install the skilld-maintained Skill for your Agent:
+Ask your Agent to run the skilld-maintained Skill for the current session:
+
+```sh
+skilld run skilld
+```
+
+Install it only when you want your Agent to keep it across sessions:
 
 ```sh
 skilld install skilld --global
@@ -37,7 +43,9 @@ skilld install skilld --global --agent codex
 ## Run a Skill without installing it
 
 `skilld run` is the default way to use a Skill.
-It prints SKILL.md so your Agent follows it now.
+It prints `SKILL.md` to stdout.
+Ask your Agent to run the command and follow the printed instructions.
+If you run it yourself, pass the output to your Agent.
 
 ```sh
 npx skilld run skilld:skilld-dev/skills/vue

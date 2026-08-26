@@ -1,7 +1,7 @@
 use skilld_command::{CommandError, CommandPlatform, Host, OutputContext, run_with_output};
 use skilld_core::{
-    InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
-    SourceSelector,
+    InstallScope, InstallSource, RemoteError, SearchResponse, SearchResult, SourceProvider,
+    SourceRequest, SourceSelector,
 };
 use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
@@ -502,6 +502,65 @@ fn json_search_errors_are_tagged_and_written_to_stderr() {
             }
         })
     );
+}
+
+#[test]
+fn remote_errors_are_terminal_safe_and_json_preserves_the_original_text() {
+    let code = "REMOTE\nCODE\u{202e}";
+    let message = "line one\u{1b}[31m\u{0085}\u{202e}\rforged\nline two";
+    let host = SearchHost {
+        response: Err(CommandError::remote(RemoteError::new(code, message))),
+    };
+    let mut human_stdout = Vec::new();
+    let mut human_stderr = Vec::new();
+    let mut plain_stdout = Vec::new();
+    let mut plain_stderr = Vec::new();
+    let mut json_stdout = Vec::new();
+    let mut json_stderr = Vec::new();
+
+    let human = run_with_output(
+        ["skilld", "search", "grill"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut human_stdout,
+        &mut human_stderr,
+    );
+    let plain = run_with_output(
+        ["skilld", "search", "grill", "--plain"],
+        &host,
+        PLAIN,
+        &mut plain_stdout,
+        &mut plain_stderr,
+    );
+    let json = run_with_output(
+        ["skilld", "search", "grill", "--json"],
+        &host,
+        PLAIN,
+        &mut json_stdout,
+        &mut json_stderr,
+    );
+
+    assert_eq!(human.exit_code, 1);
+    assert!(human_stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(human_stderr).unwrap(),
+        "✗ line one [31m   forged line two (REMOTE CODE )\n"
+    );
+    assert_eq!(plain.exit_code, 1);
+    assert!(plain_stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(plain_stderr).unwrap(),
+        "REMOTE\\nCODE\\u{202E}: line one\\u{001B}[31m\\u{0085}\\u{202E}\\rforged\\nline two\n"
+    );
+    assert_eq!(json.exit_code, 1);
+    assert!(json_stdout.is_empty());
+    let json_error = serde_json::from_slice::<serde_json::Value>(&json_stderr).unwrap();
+    assert_eq!(json_error["error"]["code"], code);
+    assert_eq!(json_error["error"]["message"], message);
 }
 
 #[test]

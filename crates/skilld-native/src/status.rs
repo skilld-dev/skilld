@@ -188,6 +188,7 @@ where
     match subcommand.as_deref() {
         Some("search") => Some("Searching"),
         Some("install") => Some("Installing"),
+        Some("run") => Some("Loading"),
         Some("view") => Some("Loading"),
         Some("verify") => Some("Verifying"),
         Some("update") => Some("Updating"),
@@ -360,6 +361,8 @@ mod tests {
         assert_eq!(status_label(args), Some("Searching"));
         let args = ["skilld", "install", "skilld:owner/repo/skill"];
         assert_eq!(status_label(args), Some("Installing"));
+        let args = ["skilld", "run", "skilld:owner/repo/skill"];
+        assert_eq!(status_label(args), Some("Loading"));
         let args = ["skilld", "list"];
         assert_eq!(status_label(args), None);
         let args = ["skilld"];

@@ -212,14 +212,23 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
         .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: error output could not be encoded\n".to_vec());
     }
     match mode {
-        OutputMode::Human { color, .. } => format!(
-            "{} {} {}\n",
-            skilld_ui::paint("✗", skilld_ui::Role::Error, color),
-            skilld_ui::paint(&error.message, skilld_ui::Role::Emphasis, color),
-            skilld_ui::paint(&format!("({})", error.code), skilld_ui::Role::Dim, color),
+        OutputMode::Human { color, .. } => {
+            let message = sanitize(&error.message);
+            let code = sanitize(error.code);
+            format!(
+                "{} {} {}\n",
+                skilld_ui::paint("✗", skilld_ui::Role::Error, color),
+                skilld_ui::paint(&message, skilld_ui::Role::Emphasis, color),
+                skilld_ui::paint(&format!("({code})"), skilld_ui::Role::Dim, color),
+            )
+            .into_bytes()
+        }
+        OutputMode::Plain { .. } => format!(
+            "{}: {}\n",
+            escape_plain(error.code),
+            escape_plain(&error.message)
         )
         .into_bytes(),
-        OutputMode::Plain { .. } => format!("{error}\n").into_bytes(),
         OutputMode::JsonV1 => unreachable!("JSON errors return early"),
     }
 }
