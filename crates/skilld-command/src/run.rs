@@ -12,6 +12,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use skilld_core::PreparedFile;
+use skilld_ui::text::is_unsafe_terminal;
 
 use crate::CommandError;
 
@@ -118,9 +119,12 @@ pub enum RunOutcome {
 }
 
 pub(crate) fn reject_duplicate_files(wanted: &[String]) -> Result<(), CommandError> {
-    if wanted.iter().any(|path| path.chars().any(char::is_control)) {
+    if wanted
+        .iter()
+        .any(|path| path.chars().any(is_unsafe_terminal))
+    {
         return Err(CommandError::input(
-            "--file paths cannot contain control characters",
+            "--file paths cannot contain terminal formatting characters",
         ));
     }
     let mut unique = BTreeSet::new();
@@ -337,9 +341,9 @@ fn invalid_local(message: &'static str) -> CommandError {
 }
 
 fn reject_local_path_controls(value: &str) -> Result<(), CommandError> {
-    if value.chars().any(char::is_control) {
+    if value.chars().any(is_unsafe_terminal) {
         return Err(invalid_local(
-            "local Skill paths cannot contain control characters",
+            "local Skill paths cannot contain terminal formatting characters",
         ));
     }
     Ok(())

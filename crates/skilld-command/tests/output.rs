@@ -260,7 +260,7 @@ fn explicit_plain_overrides_a_human_terminal() {
 #[test]
 fn plain_search_escapes_record_delimiters() {
     let mut response = response();
-    response.items[0].description = Some("first\nsecond\tvalue\u{1b}".to_owned());
+    response.items[0].description = Some("first\nsecond\tvalue\u{1b}\u{202e}".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -278,7 +278,7 @@ fn plain_search_escapes_record_delimiters() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\tfirst\\nsecond\\tvalue\\u{001B}\n"
+        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\n"
     );
 }
 
@@ -365,11 +365,11 @@ fn human_empty_search_names_the_query_and_suggests_a_next_step() {
 }
 
 #[test]
-fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
+fn human_search_uses_display_cells_and_sanitizes_terminal_formatting() {
     let mut response = response();
     response.items[0].name = "\u{6280}\u{80fd}\u{1f642}".to_owned();
     response.items[0].description =
-        Some("\u{6f22}\u{5b57}\u{1f642} cafe\u{301} \u{1b}[31mred".to_owned());
+        Some("\u{6f22}\u{5b57}\u{1f642} cafe\u{301} \u{1b}[31mred\u{202e}forged".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -390,6 +390,7 @@ fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
     assert!(stdout.contains("\u{6f22}\u{5b57}\u{1f642}"));
     assert!(stdout.contains("cafe\u{301}"));
     assert!(!stdout.contains('\u{1b}'));
+    assert!(!stdout.contains('\u{202e}'));
     assert!(
         stdout
             .lines()

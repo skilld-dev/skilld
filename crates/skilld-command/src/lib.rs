@@ -1276,6 +1276,15 @@ impl LocalHost {
         expected_revision: Option<&CommitSha>,
     ) -> Result<RunOutcome, CommandError> {
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+        if let (Some(revision), Some(SourceRef::Commit { value })) =
+            (expected_revision, &selector.source().r#ref)
+            && value != revision.as_str()
+        {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the source commit does not match --revision",
+            ));
+        }
         let provider = self.remote_provider()?;
         let prepared = match expected_revision {
             Some(revision) => provider.prepare_exact(&selector, revision, direct),

@@ -2,13 +2,22 @@
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Replace terminal control characters with spaces so untrusted text can
-/// never move a cursor or forge an escape sequence.
+/// Whether a character can change terminal state or visual text order.
+pub fn is_unsafe_terminal(character: char) -> bool {
+    let code = u32::from(character);
+    character.is_control()
+        || matches!(
+            code,
+            0x061C | 0x200E..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069
+        )
+}
+
+/// Replace unsafe terminal characters with spaces.
 pub fn sanitize(value: &str) -> String {
     value
         .chars()
         .map(|character| {
-            if character.is_control() {
+            if is_unsafe_terminal(character) {
                 ' '
             } else {
                 character
@@ -129,9 +138,15 @@ mod tests {
     };
 
     #[test]
-    fn sanitize_replaces_control_characters() {
+    fn sanitize_replaces_unsafe_terminal_characters() {
         assert_eq!(sanitize("a\u{1b}[31mb"), "a [31mb");
         assert_eq!(sanitize("a\tb"), "a b");
+        for character in [
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+            '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ] {
+            assert_eq!(sanitize(&format!("left{character}right")), "left right");
+        }
     }
 
     #[test]

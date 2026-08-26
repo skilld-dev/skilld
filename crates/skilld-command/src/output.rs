@@ -1,7 +1,7 @@
 use clap::error::ErrorKind;
 use serde::Serialize;
 use skilld_core::UpdatePlanV1;
-use skilld_ui::text::{grouped_number, sanitize, width, wrap};
+use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
 use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
@@ -325,7 +325,7 @@ fn escape_plain(value: &str) -> String {
             '\t' => output.push_str("\\t"),
             '\r' => output.push_str("\\r"),
             '\n' => output.push_str("\\n"),
-            character if character.is_control() => {
+            character if is_unsafe_terminal(character) => {
                 output.push_str(&format!("\\u{{{:04X}}}", u32::from(character)));
             }
             character => output.push(character),
@@ -751,7 +751,7 @@ fn origin_field(origin: &SkillOrigin, color: bool) -> String {
 fn safe_terminal_text(value: &str) -> String {
     value
         .chars()
-        .filter(|character| !character.is_control() || matches!(character, '\n' | '\t'))
+        .filter(|character| !is_unsafe_terminal(*character) || matches!(character, '\n' | '\t'))
         .collect()
 }
 

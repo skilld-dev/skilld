@@ -16,6 +16,7 @@ use skilld_core::{
     parse_search_response, prepare_unverified_files, verify_artifact, verify_attestation,
     verify_trusted_root,
 };
+use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
 
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
@@ -1928,11 +1929,6 @@ fn sanitize_line(value: &str, maximum: usize, fallback: &str) -> String {
         &sanitized
     };
     value.chars().take(maximum).collect()
-}
-
-fn is_unsafe_terminal(character: char) -> bool {
-    let code = u32::from(character);
-    character.is_control() || matches!(code, 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
 }
 
 fn valid_timestamp(value: &str) -> bool {

@@ -56,10 +56,10 @@ pub enum RemoteSelector {
 
 impl RemoteSelector {
     pub fn parse(value: &str) -> Result<Self, RemoteError> {
-        if value.chars().any(char::is_control) {
+        if value.chars().any(is_unsafe_terminal) {
             return Err(RemoteError::new(
                 "INVALID_SOURCE",
-                "the remote selector cannot contain control characters",
+                "the remote selector cannot contain terminal formatting characters",
             ));
         }
         let value = value.trim();
@@ -253,7 +253,7 @@ fn validate_source_request(source: &SourceRequest) -> Result<(), RemoteError> {
                 if value.is_empty()
                     || value.len() > 255
                     || value.contains(['\0', '\\'])
-                    || value.chars().any(char::is_control)
+                    || value.chars().any(is_unsafe_terminal)
                     || value.starts_with('-')
                 {
                     return Err(RemoteError::new(
@@ -1077,7 +1077,7 @@ fn validate_relative_path(value: &str, maximum: usize) -> Result<(), RemoteError
     let valid = !value.is_empty()
         && value.len() <= maximum
         && !value.contains(['\\', ':'])
-        && !value.chars().any(char::is_control)
+        && !value.chars().any(is_unsafe_terminal)
         && !path.is_absolute()
         && path.components().all(|component| {
             matches!(component, Component::Normal(_))
@@ -1091,6 +1091,15 @@ fn validate_relative_path(value: &str, maximum: usize) -> Result<(), RemoteError
             "the Skill path must stay inside the Artifact root",
         ))
     }
+}
+
+fn is_unsafe_terminal(character: char) -> bool {
+    let code = u32::from(character);
+    character.is_control()
+        || matches!(
+            code,
+            0x061C | 0x200E..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069
+        )
 }
 
 fn valid_path_part(part: &str) -> bool {

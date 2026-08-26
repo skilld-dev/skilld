@@ -22,6 +22,7 @@ use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Tabs};
 use skilld_command::{CommandError, Host};
 use skilld_core::{CommitHistory, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter};
 use skilld_ui::spinner;
+use skilld_ui::text::sanitize;
 use skilld_ui::time::relative_time;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use url::Url;
@@ -1399,16 +1400,7 @@ fn short_sha(value: &str) -> &str {
 }
 
 fn clean_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>()
+    sanitize(value)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

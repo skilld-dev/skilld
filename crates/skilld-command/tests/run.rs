@@ -694,6 +694,60 @@ fn generated_file_read_uses_the_loaded_remote_revision() {
 }
 
 #[test]
+fn conflicting_source_commit_and_revision_fail_before_fetch() {
+    let fixture = remote_fixture(skill_files());
+    let source = format!("github:vuejs/core/skills/vue#commit:{}", "a".repeat(40));
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            source,
+            "--revision".to_owned(),
+            "b".repeat(40),
+            "--file=references/api.md".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let error: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+
+    assert_eq!(exit, 1);
+    assert!(stdout.is_empty());
+    assert_eq!(error["_tag"], "OperationError");
+    assert_eq!(error["error"]["code"], "SOURCE_MISMATCH");
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn matching_source_commit_and_revision_keep_exact_provenance() {
+    let fixture = remote_fixture(skill_files());
+    let source = format!("github:vuejs/core/skills/vue#commit:{}", "a".repeat(40));
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            source.clone(),
+            "--revision".to_owned(),
+            "a".repeat(40),
+            "--file=references/api.md".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(exit, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(output["data"]["origin"]["source"], source);
+    assert_eq!(output["data"]["revision"], "a".repeat(40));
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn remote_file_read_without_revision_fails_before_fetch() {
     let fixture = remote_fixture(skill_files());
 
@@ -962,8 +1016,8 @@ fn generated_commands_quote_apostrophes_for_the_declared_platform() {
 
 #[cfg(unix)]
 #[test]
-fn local_run_rejects_control_characters_in_the_source_root_without_stdout() {
-    for control in ['\n', '\t', '\u{0085}'] {
+fn local_run_rejects_terminal_formatting_in_the_source_root_without_stdout() {
+    for control in ['\n', '\t', '\u{0085}', '\u{202e}'] {
         let temporary = tempfile::tempdir().unwrap();
         let project = temporary.path().join(format!("project{control}forged"));
         let skill = project.join("my-skill");
@@ -991,8 +1045,8 @@ fn local_run_rejects_control_characters_in_the_source_root_without_stdout() {
 
 #[cfg(unix)]
 #[test]
-fn local_run_rejects_control_characters_in_file_names_without_stdout() {
-    for control in ['\n', '\t', '\u{0085}'] {
+fn local_run_rejects_terminal_formatting_in_file_names_without_stdout() {
+    for control in ['\n', '\t', '\u{0085}', '\u{202e}'] {
         let temporary = tempfile::tempdir().unwrap();
         let skill = temporary.path().join("my-skill");
         write_local_skill(&skill, "my-skill");
@@ -1023,9 +1077,10 @@ fn local_run_rejects_control_characters_in_file_names_without_stdout() {
 }
 
 #[test]
-fn plain_run_output_removes_terminal_controls_but_json_preserves_text() {
-    let instructions = "---\nname: vue\ndescription: Test.\n---\n\n# Start\n\u{1b}[2JCSI\n\u{1b}]0;forged\u{7}OSC\tkept\n";
-    let supporting = "before\u{1b}[31mred\u{1b}[0m\n\u{1b}]8;;https://example.com\u{7}link\n";
+fn plain_run_removes_terminal_formatting_but_json_preserves_text() {
+    let instructions = "---\nname: vue\ndescription: Test.\n---\n\n# Start\n\u{1b}[2JCSI\n\u{1b}]0;forged\u{7}OSC\tkept\n\u{202e}reordered\n";
+    let supporting =
+        "before\u{1b}[31mred\u{1b}[0m\n\u{1b}]8;;https://example.com\u{7}link\n\u{2067}isolated\n";
     let fixture = remote_fixture(vec![
         file("SKILL.md", 0o644, instructions.as_bytes()),
         file("references/api.md", 0o644, supporting.as_bytes()),
@@ -1082,6 +1137,8 @@ fn plain_run_output_removes_terminal_controls_but_json_preserves_text() {
             .chain(pulled_plain.chars())
             .all(|character| !character.is_control() || matches!(character, '\n' | '\t'))
     );
+    assert!(!loaded_plain.contains('\u{202e}'));
+    assert!(!pulled_plain.contains('\u{2067}'));
     assert_eq!(json["data"]["instructions"], instructions);
     assert_eq!(
         pulled_json["data"]["files"][0]["content"]["value"],
@@ -1150,7 +1207,32 @@ fn remote_file_requests_reject_c1_control_characters_before_fetch() {
             "skilld:vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "a".repeat(40),
-            format!("--file=references/api\u{0085}forged.md"),
+            "--file=references/api\u{0085}forged.md".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let error: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(error["error"]["code"], "INVALID_SOURCE");
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn remote_file_requests_reject_bidi_formatting_before_fetch() {
+    let fixture = remote_fixture(skill_files());
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--revision".to_owned(),
+            "a".repeat(40),
+            "--file=references/api\u{202e}forged.md".to_owned(),
             "--json".to_owned(),
         ],
     );
