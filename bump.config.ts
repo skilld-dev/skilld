@@ -16,5 +16,5 @@ export default defineConfig({
     'Cargo.toml',
     'Cargo.lock',
   ],
-  noGitCheck: false,
+  noGitCheck: true,
 })
