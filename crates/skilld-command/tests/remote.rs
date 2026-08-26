@@ -1311,6 +1311,63 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
 }
 
 #[test]
+fn prepare_exact_rejects_a_conflicting_selector_commit_before_http() {
+    let selector_commit = "0123456789abcdef0123456789abcdef01234567";
+    let expected_commit = CommitSha::parse("ffffffffffffffffffffffffffffffffffffffff").unwrap();
+    let http = Arc::new(FakeHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    );
+    let selector = RemoteSelector::parse(&format!(
+        "github:skilld-dev/skills/skills/example#commit:{selector_commit}"
+    ))
+    .unwrap();
+
+    let error = remote
+        .prepare_exact(&selector, &expected_commit, true)
+        .unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_MISMATCH");
+    assert!(http.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn prepare_exact_keeps_a_matching_selector_commit_as_provenance() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let expected_commit = CommitSha::parse(commit).unwrap();
+    let (pin, responses) = verified_remote_responses();
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse(&format!(
+        "github:skilld-dev/skills/skills/example#commit:{commit}"
+    ))
+    .unwrap();
+
+    let prepared = remote
+        .prepare_exact(&selector, &expected_commit, false)
+        .unwrap();
+
+    assert!(matches!(
+        prepared.locked_source,
+        LockedSource::Remote {
+            ref source,
+            ref commit_sha,
+            ..
+        } if source == &selector.canonical() && commit_sha == commit
+    ));
+    assert_eq!(http.requests.lock().unwrap().len(), 4);
+}
+
+#[test]
 fn direct_github_access_rejects_a_commit_response_that_changed_the_requested_commit() {
     let requested = "0123456789abcdef0123456789abcdef01234567";
     let returned = "ffffffffffffffffffffffffffffffffffffffff";

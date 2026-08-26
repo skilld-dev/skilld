@@ -1504,6 +1504,14 @@ impl RemoteProvider for SkilldRemote {
         expected_commit: &CommitSha,
         direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
+        if let Some(SourceRef::Commit { value }) = &selector.source().r#ref
+            && value != expected_commit.as_str()
+        {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "the source commit does not match the expected commit",
+            ));
+        }
         let mut source = selector.source().clone();
         source.r#ref = Some(SourceRef::Commit {
             value: expected_commit.as_str().to_owned(),
