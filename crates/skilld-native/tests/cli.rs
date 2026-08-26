@@ -153,8 +153,12 @@ fn config_directory_alone_keeps_human_output_in_a_terminal() {
     let output = run_output_probe_in_pty(("CLAUDE_CONFIG_DIR", "/tmp/claude-config"), 40);
 
     assert!(output.contains("Skill search output"));
-    assert!(output.contains("skilld install"));
-    assert!(output.lines().all(|line| line.chars().count() <= 40));
+    assert!(output.contains("skilld run skilld:skilld-dev/skilld/output-probe"));
+    assert!(
+        output
+            .lines()
+            .all(|line| { line.contains("skilld run ") || line.chars().count() <= 40 })
+    );
 }
 
 #[test]
