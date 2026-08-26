@@ -44,21 +44,23 @@
     "test": "vitest",
     "test:js": "vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run",
     "test:run": "pnpm test:js && cargo test --workspace",
+    "release": "pnpm build && bumpp",
     "prepack": "pnpm test:loader",
     "test:loader": "vitest run --config vitest.config.mjs"
   },
   "optionalDependencies": {
-    "skilld-cli-darwin-arm64": "workspace:3.0.0-beta.1",
-    "skilld-cli-darwin-x64": "workspace:3.0.0-beta.1",
-    "skilld-cli-linux-arm64-gnu": "workspace:3.0.0-beta.1",
-    "skilld-cli-linux-arm64-musl": "workspace:3.0.0-beta.1",
-    "skilld-cli-linux-x64-gnu": "workspace:3.0.0-beta.1",
-    "skilld-cli-linux-x64-musl": "workspace:3.0.0-beta.1",
-    "skilld-cli-win32-arm64-msvc": "workspace:3.0.0-beta.1",
-    "skilld-cli-win32-x64-msvc": "workspace:3.0.0-beta.1"
+    "skilld-cli-darwin-arm64": "workspace:*",
+    "skilld-cli-darwin-x64": "workspace:*",
+    "skilld-cli-linux-arm64-gnu": "workspace:*",
+    "skilld-cli-linux-arm64-musl": "workspace:*",
+    "skilld-cli-linux-x64-gnu": "workspace:*",
+    "skilld-cli-linux-x64-musl": "workspace:*",
+    "skilld-cli-win32-arm64-msvc": "workspace:*",
+    "skilld-cli-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev-lint",
+    "bumpp": "catalog:",
     "eslint": "catalog:dev-lint",
     "vitest": "catalog:dev-test"
   }
