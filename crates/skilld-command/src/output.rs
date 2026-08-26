@@ -345,6 +345,19 @@ const fn colored(mode: OutputMode) -> bool {
     matches!(mode, OutputMode::Human { color: true, .. })
 }
 
+/// Strip control characters from unverified Skill text before printing it.
+///
+/// Newlines survive so the document keeps its shape. Every other control
+/// character becomes a space, so a remote Skill cannot move the cursor or
+/// forge skilld's own marker lines. JSON mode escapes these bytes already and
+/// receives the raw text.
+fn sanitize_printed(text: &str) -> String {
+    text.split('\n')
+        .map(sanitize)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn render_load(skill: &TransientSkill, color: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -375,7 +388,7 @@ fn render_load(skill: &TransientSkill, color: bool) -> String {
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
     out.push('\n');
-    out.push_str(&skill.instructions);
+    out.push_str(&sanitize_printed(&skill.instructions));
     if !skill.instructions.ends_with('\n') {
         out.push('\n');
     }
@@ -458,7 +471,7 @@ fn render_files(files: &[PulledFile], color: bool) -> String {
                 out.push('\n');
                 out.push_str(&paint(&format!("--- {} ---", file.path), Role::Dim, color));
                 out.push('\n');
-                out.push_str(text);
+                out.push_str(&sanitize_printed(text));
                 if !text.ends_with('\n') {
                     out.push('\n');
                 }

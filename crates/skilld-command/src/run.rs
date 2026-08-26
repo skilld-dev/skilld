@@ -220,8 +220,17 @@ fn collect_local(
     depth: usize,
     files: &mut Vec<PreparedFile>,
 ) -> Result<(), CommandError> {
-    if depth > MAX_LOCAL_DEPTH || files.len() >= MAX_LOCAL_FILES {
-        return Ok(());
+    if depth > MAX_LOCAL_DEPTH {
+        return Err(CommandError::operation(
+            "SKILL_TOO_LARGE",
+            format!("the Skill nests deeper than {MAX_LOCAL_DEPTH} directories"),
+        ));
+    }
+    if files.len() >= MAX_LOCAL_FILES {
+        return Err(CommandError::operation(
+            "SKILL_TOO_LARGE",
+            format!("the Skill carries more than {MAX_LOCAL_FILES} files"),
+        ));
     }
     let entries = fs::read_dir(root.join(relative)).map_err(|error| {
         CommandError::operation(
@@ -243,12 +252,17 @@ fn collect_local(
             collect_local(root, &child, depth + 1, files)?;
             continue;
         }
+        // Symlinks are skipped on purpose, never followed. Following one could
+        // escape the Skill directory or loop forever.
         if !kind.is_file() {
             continue;
         }
         let Some(path) = child.to_str() else { continue };
         if files.len() >= MAX_LOCAL_FILES {
-            return Ok(());
+            return Err(CommandError::operation(
+                "SKILL_TOO_LARGE",
+                format!("the Skill carries more than {MAX_LOCAL_FILES} files"),
+            ));
         }
         let bytes = fs::read(entry.path()).map_err(|error| {
             CommandError::filesystem(format!("cannot read a Skill file: {error}"))
