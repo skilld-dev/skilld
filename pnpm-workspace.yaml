@@ -16,6 +16,7 @@ catalog:
   '@arethetypeswrong/cli': ^0.18.5
   '@redocly/cli': ^2.47.0
   '@typescript/native': npm:typescript@7.0.2
+  bumpp: ^12.2.1
   openapi-typescript: ^7.13.0
   publint: ^0.3.24
   typescript: npm:@typescript/typescript6@^6.0.2
