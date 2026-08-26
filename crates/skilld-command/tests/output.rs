@@ -1,7 +1,7 @@
-use skilld_command::{CommandError, Host, OutputContext, run_with_output};
+use skilld_command::{CommandError, CommandPlatform, Host, OutputContext, run_with_output};
 use skilld_core::{
-    InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
-    SourceSelector,
+    InstallScope, InstallSource, RemoteError, SearchResponse, SearchResult, SourceProvider,
+    SourceRequest, SourceSelector,
 };
 use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
@@ -70,15 +70,38 @@ fn run(args: &[&str], context: OutputContext) -> (u8, String, String) {
     )
 }
 
+const PLAIN: OutputContext = OutputContext::Plain {
+    platform: CommandPlatform::Unix,
+};
+
+fn auto(
+    stdout_is_terminal: bool,
+    active_agent: bool,
+    ci: bool,
+    no_color: bool,
+    term_is_dumb: bool,
+    width: u16,
+) -> OutputContext {
+    OutputContext::auto(
+        stdout_is_terminal,
+        active_agent,
+        ci,
+        no_color,
+        term_is_dumb,
+        width,
+        CommandPlatform::Unix,
+    )
+}
+
 #[test]
 fn json_search_returns_one_versioned_document() {
     let (exit, stdout, stderr) = run(
         &["skilld", "search", "grill", "--json"],
-        OutputContext::auto(true, true, false, false, false, 80),
+        auto(true, true, false, false, false, 80),
     );
     let global_form = run(
         &["skilld", "--json", "search", "grill"],
-        OutputContext::auto(true, true, false, false, false, 80),
+        auto(true, true, false, false, false, 80),
     );
 
     assert_eq!(exit, 0);
@@ -108,12 +131,10 @@ fn json_search_returns_one_versioned_document() {
 
 #[test]
 fn json_help_and_version_return_versioned_documents() {
-    let root_help = run(&["skilld", "--json", "--help"], OutputContext::Plain);
-    let search_help = run(
-        &["skilld", "search", "--json", "--help"],
-        OutputContext::Plain,
-    );
-    let version = run(&["skilld", "--json", "--version"], OutputContext::Plain);
+    let root_help = run(&["skilld", "--json", "--help"], PLAIN);
+    let search_help = run(&["skilld", "search", "--json", "--help"], PLAIN);
+    let run_help = run(&["skilld", "run", "--json", "--help"], PLAIN);
+    let version = run(&["skilld", "--json", "--version"], PLAIN);
 
     assert_eq!(root_help.0, 0);
     assert!(root_help.2.is_empty());
@@ -123,10 +144,46 @@ fn json_help_and_version_return_versioned_documents() {
     let search = serde_json::from_str::<serde_json::Value>(&search_help.1).unwrap();
     assert_eq!(search["command"], "help");
     assert_eq!(search["data"]["path"], "skilld search");
+    let run = serde_json::from_str::<serde_json::Value>(&run_help.1).unwrap();
+    assert_eq!(run["command"], "help");
+    assert_eq!(run["data"]["path"], "skilld run");
     let version = serde_json::from_str::<serde_json::Value>(&version.1).unwrap();
     assert_eq!(version["command"], "version");
     assert_eq!(version["data"]["name"], "skilld");
     assert_eq!(version["data"]["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
+fn help_explains_primary_flow_remote_file_revisions_and_direct_delivery() {
+    let root = run(&["skilld", "--help"], PLAIN);
+    let install = run(&["skilld", "install", "--help"], PLAIN);
+    let run_help = run(&["skilld", "run", "--help"], PLAIN);
+
+    assert_eq!(root.0, 0);
+    assert!(root.2.is_empty());
+    assert!(
+        root.1
+            .contains("Search, run, install, and keep Skills current")
+    );
+    assert_eq!(install.0, 0);
+    assert!(install.2.is_empty());
+    assert!(
+        install
+            .1
+            .contains("Install a hosted Artifact from an explicit GitHub selector.")
+    );
+    assert!(
+        install
+            .1
+            .contains("Add --direct to fetch a public GitHub Repository instead.")
+    );
+    assert_eq!(run_help.0, 0);
+    assert!(run_help.2.is_empty());
+    assert!(
+        run_help
+            .1
+            .contains("Remote file reads also require the returned --revision.")
+    );
 }
 
 #[test]
@@ -138,11 +195,11 @@ fn non_terminal_and_ci_output_are_stable_plain_records() {
 
     let non_terminal = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(false, false, false, false, false, 80),
+        auto(false, false, false, false, false, 80),
     );
     let ci_with_tty = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, true, false, false, 120),
+        auto(true, false, true, false, false, 120),
     );
 
     assert_eq!(non_terminal, (0, expected.to_owned(), String::new()));
@@ -153,7 +210,7 @@ fn non_terminal_and_ci_output_are_stable_plain_records() {
 fn human_terminal_is_formatted_without_an_explicit_machine_flag() {
     let agent_with_tty = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, false, false, false, 120),
+        auto(true, false, false, false, false, 120),
     );
 
     assert_eq!(agent_with_tty.0, 0);
@@ -166,7 +223,7 @@ fn human_terminal_is_formatted_without_an_explicit_machine_flag() {
 fn active_agent_terminal_is_plain_without_an_explicit_machine_flag() {
     let result = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, true, false, false, false, 120),
+        auto(true, true, false, false, false, 120),
     );
 
     assert_eq!(
@@ -187,7 +244,7 @@ fn active_agent_terminal_is_plain_without_an_explicit_machine_flag() {
 fn explicit_plain_overrides_a_human_terminal() {
     let (_, stdout, stderr) = run(
         &["skilld", "search", "grill", "--plain"],
-        OutputContext::auto(true, false, false, false, false, 120),
+        auto(true, false, false, false, false, 120),
     );
 
     assert!(stderr.is_empty());
@@ -203,7 +260,7 @@ fn explicit_plain_overrides_a_human_terminal() {
 #[test]
 fn plain_search_escapes_record_delimiters() {
     let mut response = response();
-    response.items[0].description = Some("first\nsecond\tvalue\u{1b}".to_owned());
+    response.items[0].description = Some("first\nsecond\tvalue\u{1b}\u{202e}".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -212,7 +269,7 @@ fn plain_search_escapes_record_delimiters() {
         &SearchHost {
             response: Ok(response),
         },
-        OutputContext::auto(true, false, false, false, false, 80),
+        auto(true, false, false, false, false, 80),
         &mut stdout,
         &mut stderr,
     );
@@ -221,7 +278,7 @@ fn plain_search_escapes_record_delimiters() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\tfirst\\nsecond\\tvalue\\u{001B}\n"
+        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\n"
     );
 }
 
@@ -229,7 +286,7 @@ fn plain_search_escapes_record_delimiters() {
 fn human_search_is_polished_and_respects_terminal_width() {
     let (_, stdout, stderr) = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, false, true, false, 40),
+        auto(true, false, false, true, false, 40),
     );
 
     assert!(stderr.is_empty());
@@ -237,13 +294,49 @@ fn human_search_is_polished_and_respects_terminal_width() {
     assert!(stdout.contains("1 of 14 Skills"));
     assert!(stdout.contains("227,068 stars"));
     assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
-    assert!(stdout.contains("skilld install"));
+    assert!(stdout.contains("skilld run"));
+    assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
+    assert!(!stdout.contains("skilld install"));
     assert!(
         stdout
             .lines()
+            .filter(|line| !line.trim_start().starts_with("skilld run "))
             .all(|line| UnicodeWidthStr::width(line) <= 40)
     );
     assert!(!stdout.contains('\u{1b}'));
+}
+
+#[test]
+fn human_search_keeps_the_run_command_on_one_line() {
+    let mut response = response();
+    let name = "a-very-long-skill-name".to_owned();
+    response.items[0].name.clone_from(&name);
+    response.items[0].source.selector = SourceSelector::NamedSkill { name };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run_with_output(
+        ["skilld", "search", "grill"],
+        &SearchHost {
+            response: Ok(response),
+        },
+        OutputContext::HumanTerminal {
+            width: 20,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "  skilld run skilld:mattpocock/skills/a-very-long-skill-name")
+    );
 }
 
 #[test]
@@ -259,7 +352,7 @@ fn human_empty_search_names_the_query_and_suggests_a_next_step() {
         &SearchHost {
             response: Ok(response),
         },
-        OutputContext::auto(true, false, false, true, false, 40),
+        auto(true, false, false, true, false, 40),
         &mut stdout,
         &mut stderr,
     );
@@ -272,11 +365,11 @@ fn human_empty_search_names_the_query_and_suggests_a_next_step() {
 }
 
 #[test]
-fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
+fn human_search_uses_display_cells_and_sanitizes_terminal_formatting() {
     let mut response = response();
     response.items[0].name = "\u{6280}\u{80fd}\u{1f642}".to_owned();
     response.items[0].description =
-        Some("\u{6f22}\u{5b57}\u{1f642} cafe\u{301} \u{1b}[31mred".to_owned());
+        Some("\u{6f22}\u{5b57}\u{1f642} cafe\u{301} \u{1b}[31mred\u{202e}forged".to_owned());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -285,7 +378,7 @@ fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
         &SearchHost {
             response: Ok(response),
         },
-        OutputContext::auto(true, false, false, true, false, 20),
+        auto(true, false, false, true, false, 20),
         &mut stdout,
         &mut stderr,
     );
@@ -297,9 +390,11 @@ fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
     assert!(stdout.contains("\u{6f22}\u{5b57}\u{1f642}"));
     assert!(stdout.contains("cafe\u{301}"));
     assert!(!stdout.contains('\u{1b}'));
+    assert!(!stdout.contains('\u{202e}'));
     assert!(
         stdout
             .lines()
+            .filter(|line| !line.trim_start().starts_with("skilld run "))
             .all(|line| UnicodeWidthStr::width(line) <= 20)
     );
 }
@@ -314,7 +409,7 @@ fn broken_pipe_is_a_successful_search_exit() {
         &SearchHost {
             response: Ok(response()),
         },
-        OutputContext::Plain,
+        PLAIN,
         &mut stdout,
         &mut stderr,
     );
@@ -327,15 +422,15 @@ fn broken_pipe_is_a_successful_search_exit() {
 fn color_capabilities_change_ansi_only() {
     let (_, colored, _) = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, false, false, false, 100),
+        auto(true, false, false, false, false, 100),
     );
     let (_, no_color, _) = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, false, true, false, 100),
+        auto(true, false, false, true, false, 100),
     );
     let (_, dumb_terminal, _) = run(
         &["skilld", "search", "grill"],
-        OutputContext::auto(true, false, false, false, true, 100),
+        auto(true, false, false, false, true, 100),
     );
 
     assert!(colored.contains('\u{1b}'));
@@ -347,7 +442,7 @@ fn color_capabilities_change_ansi_only() {
 fn conflicting_output_flags_fail_before_search() {
     let (exit, stdout, stderr) = run(
         &["skilld", "search", "grill", "--json", "--plain"],
-        OutputContext::auto(false, false, false, false, false, 80),
+        auto(false, false, false, false, false, 80),
     );
 
     assert_eq!(exit, 2);
@@ -357,14 +452,8 @@ fn conflicting_output_flags_fail_before_search() {
 
 #[test]
 fn json_search_parse_errors_are_tagged_usage_errors() {
-    let after = run(
-        &["skilld", "search", "grill", "--json", "--unknown"],
-        OutputContext::Plain,
-    );
-    let before = run(
-        &["skilld", "--json", "search", "grill", "--unknown"],
-        OutputContext::Plain,
-    );
+    let after = run(&["skilld", "search", "grill", "--json", "--unknown"], PLAIN);
+    let before = run(&["skilld", "--json", "search", "grill", "--unknown"], PLAIN);
 
     assert_eq!(after.0, 2);
     assert!(after.1.is_empty());
@@ -376,8 +465,70 @@ fn json_search_parse_errors_are_tagged_usage_errors() {
 }
 
 #[test]
+fn human_parse_errors_keep_clap_guidance_without_untrusted_terminal_formatting() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(
+        &["skilld", "search", "grill", hostile],
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+    );
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("unexpected argument"));
+    assert!(stderr.contains("Usage:"));
+    assert!(stderr.contains("\\u{001B}"));
+    assert!(stderr.contains("\\u{0085}"));
+    assert!(stderr.contains("\\u{202E}"));
+    assert!(stderr.contains("\\rforged\\nline"));
+    assert!(!stderr.contains('\u{1b}'));
+    assert!(!stderr.contains('\u{0085}'));
+    assert!(!stderr.contains('\u{202e}'));
+    assert!(!stderr.contains('\r'));
+}
+
+#[test]
+fn plain_parse_errors_escape_record_delimiters_and_terminal_formatting() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(&["skilld", "search", "grill", hostile, "--plain"], PLAIN);
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(stderr.lines().count(), 1);
+    assert!(stderr.contains("INVALID_ARGUMENT:"));
+    assert!(stderr.contains("\\u{0085}"));
+    assert!(stderr.contains("\\u{202E}"));
+    assert!(stderr.contains("\\rforged\\nline"));
+    assert!(!stderr.contains('\u{1b}'));
+    assert!(!stderr.contains('\u{0085}'));
+    assert!(!stderr.contains('\u{202e}'));
+    assert!(!stderr.contains('\r'));
+}
+
+#[test]
+fn json_parse_errors_keep_the_typed_error_contract_for_untrusted_arguments() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(&["skilld", "search", "grill", hostile, "--json"], PLAIN);
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(stderr.lines().count(), 1);
+    let error = serde_json::from_str::<serde_json::Value>(&stderr).unwrap();
+    assert_eq!(error["schemaVersion"], 1);
+    assert_eq!(error["_tag"], "UsageError");
+    assert_eq!(error["error"]["code"], "INVALID_ARGUMENT");
+    assert_eq!(
+        error["error"]["message"],
+        "unexpected argument '--unknown\u{0085}\u{202e}\rforged"
+    );
+}
+
+#[test]
 fn empty_json_search_is_a_tagged_usage_error() {
-    let (exit, stdout, stderr) = run(&["skilld", "search", "--json"], OutputContext::Plain);
+    let (exit, stdout, stderr) = run(&["skilld", "search", "--json"], PLAIN);
 
     assert_eq!(exit, 2);
     assert!(stdout.is_empty());
@@ -395,7 +546,7 @@ fn json_search_errors_are_tagged_and_written_to_stderr() {
         &SearchHost {
             response: Err(CommandError::service("Skill search timed out")),
         },
-        OutputContext::auto(false, false, false, false, false, 80),
+        auto(false, false, false, false, false, 80),
         &mut stdout,
         &mut stderr,
     );
@@ -416,6 +567,65 @@ fn json_search_errors_are_tagged_and_written_to_stderr() {
 }
 
 #[test]
+fn remote_errors_are_terminal_safe_and_json_preserves_the_original_text() {
+    let code = "REMOTE\nCODE\u{202e}";
+    let message = "line one\u{1b}[31m\u{0085}\u{202e}\rforged\nline two";
+    let host = SearchHost {
+        response: Err(CommandError::remote(RemoteError::new(code, message))),
+    };
+    let mut human_stdout = Vec::new();
+    let mut human_stderr = Vec::new();
+    let mut plain_stdout = Vec::new();
+    let mut plain_stderr = Vec::new();
+    let mut json_stdout = Vec::new();
+    let mut json_stderr = Vec::new();
+
+    let human = run_with_output(
+        ["skilld", "search", "grill"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut human_stdout,
+        &mut human_stderr,
+    );
+    let plain = run_with_output(
+        ["skilld", "search", "grill", "--plain"],
+        &host,
+        PLAIN,
+        &mut plain_stdout,
+        &mut plain_stderr,
+    );
+    let json = run_with_output(
+        ["skilld", "search", "grill", "--json"],
+        &host,
+        PLAIN,
+        &mut json_stdout,
+        &mut json_stderr,
+    );
+
+    assert_eq!(human.exit_code, 1);
+    assert!(human_stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(human_stderr).unwrap(),
+        "✗ line one [31m   forged line two (REMOTE CODE )\n"
+    );
+    assert_eq!(plain.exit_code, 1);
+    assert!(plain_stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(plain_stderr).unwrap(),
+        "REMOTE\\nCODE\\u{202E}: line one\\u{001B}[31m\\u{0085}\\u{202E}\\rforged\\nline two\n"
+    );
+    assert_eq!(json.exit_code, 1);
+    assert!(json_stdout.is_empty());
+    let json_error = serde_json::from_slice::<serde_json::Value>(&json_stderr).unwrap();
+    assert_eq!(json_error["error"]["code"], code);
+    assert_eq!(json_error["error"]["message"], message);
+}
+
+#[test]
 fn stdout_failures_report_an_operation_error() {
     let mut stdout = WriteErrorWriter;
     let mut stderr = Vec::new();
@@ -425,7 +635,7 @@ fn stdout_failures_report_an_operation_error() {
         &SearchHost {
             response: Ok(response()),
         },
-        OutputContext::Plain,
+        PLAIN,
         &mut stdout,
         &mut stderr,
     );

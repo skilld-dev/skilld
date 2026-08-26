@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/skilld?color=yellow)](https://npm.chart.dev/skilld)
 [![license](https://img.shields.io/npm/l/skilld?color=yellow)](https://github.com/skilld-dev/skilld/blob/main/LICENSE)
 
-Search, install, and keep Agent Skills current.
+Search, run, install, and keep Agent Skills current.
 
 skilld v3 has two products:
 
@@ -22,7 +22,13 @@ npm install --global skilld
 The npm package selects a native executable for the current system.
 It has no JavaScript CLI engine or JavaScript fallback.
 
-Install the skilld-maintained Skill for your Agent:
+Ask your Agent to run the skilld-maintained Skill for the current session:
+
+```sh
+skilld run skilld
+```
+
+Install it only when you want your Agent to keep it across sessions:
 
 ```sh
 skilld install skilld --global
@@ -34,11 +40,51 @@ Use `--agent` when you want an explicit Agent target:
 skilld install skilld --global --agent codex
 ```
 
+## Run a Skill without installing it
+
+`skilld run` is the default way to use a Skill.
+It prints `SKILL.md` to stdout.
+Ask your Agent to run the command and follow the printed instructions.
+If you run it yourself, pass the output to your Agent.
+
+```sh
+npx skilld run skilld:skilld-dev/skills/vue
+```
+
+A remote run writes no Skill files.
+It creates no lockfile entry, Agent target, project file, or Skill cache.
+The command retains no Skill files after it exits.
+
+skilld names the supporting files a Skill carries and prints none of them.
+Read one when the instructions call for it:
+
+```sh
+npx skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
+```
+
+Use the revision and file-read command from the initial output.
+skilld never prints executable or binary files.
+A Skill that must run its own script needs an install.
+
+Install the Skill when you want it in every session:
+
+```sh
+skilld install skilld:skilld-dev/skills/vue
+```
+
+An install writes files. Ask the user first.
+
 ## Use the skilld CLI
 
 ```sh
 # Find a Skill
 skilld search vue
+
+# Run a Skill for this session only
+skilld run skilld:skilld-dev/skills/vue
+
+# Read one supporting file that Skill carries
+skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
 
 # Install a Skill in the current project
 skilld install skilld:skilld-dev/skills/vue
@@ -84,6 +130,7 @@ The API does not expose private storage addresses.
 ### Direct mode
 
 `--direct` fetches a public GitHub Repository without the skilld.dev API.
+Explicit GitHub selectors use hosted Artifact delivery unless you add `--direct`.
 
 ```sh
 skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex
@@ -94,6 +141,9 @@ The user reviews the Skill before use.
 
 Direct mode never handles private Repositories.
 It never falls back to skilld.dev.
+
+Generated commands use POSIX shell quoting on Unix.
+They use PowerShell quoting on Windows.
 
 ## Source status
 

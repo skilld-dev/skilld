@@ -9,6 +9,7 @@ Every public export, command, error, route, and document uses these terms.
 | Term | Export or owner | Stability | Consumers | Customer word |
 | --- | --- | --- | --- | --- |
 | Skill | Agent Skills specification | external standard | Agent, skilld CLI, Harness | Skill |
+| transient Skill | `skilld run` | published command | Agent, developer | transient Skill |
 | skilld-maintained Skill | `skills/*` | published asset | Agent, Harness | skilld-maintained Skill |
 | skilld CLI | `skilld` | published CLI | developer, CI | skilld CLI |
 | Harness | `skilld-harness` | published package | application, CI | Harness |
@@ -25,6 +26,8 @@ Every public export, command, error, route, and document uses these terms.
 | Identifier | Term |
 | --- | --- |
 | `skilld search` | Skill search |
+| `skilld run` | transient Skill load |
+| `skilld run --file` | supporting file read |
 | `skilld install` | Skill install |
 | `skilld list` | installed Skills |
 | `skilld view` | Skill details |
@@ -72,7 +75,10 @@ flowchart LR
 
 Collisions
 
-None recorded.
+`Skill run` and `transient Skill` sound alike and mean different things.
+A Skill run is one Harness execution.
+A transient Skill is one Skill that `skilld run` loads for a session.
+The Rust type for the second is `TransientSkill`, never `SkillRun`.
 
 ## Terms
 
@@ -95,6 +101,16 @@ None recorded.
 **Never:** built-in prompt, hidden prompt, system prompt.
 
 **Casing:** `skilld-maintained Skill` in prose.
+
+### transient Skill
+
+**Is:** a Skill that `skilld run` loads for the current Agent session.
+
+**Use for:** any Skill used without an install. A remote transient Skill never reaches disk.
+
+**Never:** ephemeral skill, temporary install, one-off install, Skill run.
+
+**Casing:** `transient Skill` in prose, `TransientSkill` in Rust.
 
 ### skilld CLI
 

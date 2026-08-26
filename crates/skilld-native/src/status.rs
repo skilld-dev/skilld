@@ -188,6 +188,7 @@ where
     match subcommand.as_deref() {
         Some("search") => Some("Searching"),
         Some("install") => Some("Installing"),
+        Some("run") => Some("Loading"),
         Some("view") => Some("Loading"),
         Some("verify") => Some("Verifying"),
         Some("update") => Some("Updating"),
@@ -259,6 +260,7 @@ impl skilld_command::OutdatedProgress for OutdatedProgressLine {
 #[cfg(test)]
 mod tests {
     use super::{GatedStderr, OutputContext, StatusLine, frame_line, status_label};
+    use skilld_command::CommandPlatform;
     use std::io::Write;
     use std::sync::Mutex;
     use std::thread;
@@ -359,6 +361,8 @@ mod tests {
         assert_eq!(status_label(args), Some("Searching"));
         let args = ["skilld", "install", "skilld:owner/repo/skill"];
         assert_eq!(status_label(args), Some("Installing"));
+        let args = ["skilld", "run", "skilld:owner/repo/skill"];
+        assert_eq!(status_label(args), Some("Loading"));
         let args = ["skilld", "list"];
         assert_eq!(status_label(args), None);
         let args = ["skilld"];
@@ -368,7 +372,12 @@ mod tests {
     #[test]
     fn plain_contexts_get_no_status_line() {
         assert!(matches!(
-            StatusLine::for_terminal("Searching", OutputContext::Plain),
+            StatusLine::for_terminal(
+                "Searching",
+                OutputContext::Plain {
+                    platform: CommandPlatform::Unix,
+                },
+            ),
             line if line.is_disabled()
         ));
         assert!(matches!(
@@ -376,7 +385,8 @@ mod tests {
                 "Searching",
                 OutputContext::HumanTerminal {
                     width: 80,
-                    color: true
+                    color: true,
+                    platform: CommandPlatform::Unix,
                 }
             ),
             line if !line.is_disabled()

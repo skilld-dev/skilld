@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use skilld_core::{
-    AgentTargetId, InstallMode, LockDocument, LockedSkill, LockedSource, LockedTarget, SkillName,
-    SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, LockDocument, LockedSkill, LockedSource, LockedTarget,
+    RemoteSelector, SkillName, SourceRef, SourceSelector, SourceStatus,
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
@@ -141,6 +141,56 @@ impl TransactionGate for AllowTransaction {}
 #[derive(Clone, Debug)]
 pub struct LocalStore {
     root: PathBuf,
+}
+
+fn normalize_locked_source(source: &mut LockedSource) -> Result<(), StoreError> {
+    let LockedSource::Remote {
+        source,
+        commit_sha,
+        skill_path,
+    } = source
+    else {
+        return Ok(());
+    };
+    let selector = RemoteSelector::parse(source).map_err(|error| {
+        StoreError::InvalidLockfile(format!("the remote Skill source is invalid: {error}"))
+    })?;
+    let commit = CommitSha::parse(commit_sha.clone()).map_err(|error| {
+        StoreError::InvalidLockfile(format!("the remote Skill commit is invalid: {error}"))
+    })?;
+    if let Some(SourceRef::Commit { value }) = &selector.source().r#ref
+        && value != commit.as_str()
+    {
+        return Err(StoreError::InvalidLockfile(
+            "the remote Skill source commit does not match its locked commit".to_owned(),
+        ));
+    }
+    let exact = RemoteSelector::parse(&format!(
+        "github:{}/{}/{}#commit:{}",
+        selector.source().owner,
+        selector.source().repository,
+        skill_path,
+        commit.as_str(),
+    ))
+    .map_err(|error| {
+        StoreError::InvalidLockfile(format!("the remote Skill path is invalid: {error}"))
+    })?;
+    let SourceSelector::Path { path } = &exact.source().selector else {
+        return Err(StoreError::InvalidLockfile(
+            "the remote Skill path is invalid".to_owned(),
+        ));
+    };
+    if let SourceSelector::Path { path: source_path } = &selector.source().selector
+        && source_path != path
+    {
+        return Err(StoreError::InvalidLockfile(
+            "the remote Skill source path does not match its locked path".to_owned(),
+        ));
+    }
+    *source = selector.canonical();
+    *commit_sha = commit.as_str().to_owned();
+    skill_path.clone_from(path);
+    Ok(())
 }
 
 impl LocalStore {
@@ -794,7 +844,7 @@ impl LocalStore {
             ));
         }
         let bytes = fs::read(&path).map_err(fs_error)?;
-        let document: LockDocument = serde_json::from_slice(&bytes).map_err(|_| {
+        let mut document: LockDocument = serde_json::from_slice(&bytes).map_err(|_| {
             StoreError::InvalidLockfile("the Skill lockfile is not valid JSON".to_owned())
         })?;
         if document.version != 1 {
@@ -803,9 +853,10 @@ impl LocalStore {
                 document.version
             )));
         }
-        for name in document.skills.keys() {
+        for (name, skill) in &mut document.skills {
             SkillName::parse(name.clone())
                 .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+            normalize_locked_source(&mut skill.source)?;
         }
         Ok(document)
     }
@@ -1240,7 +1291,7 @@ fn hash_skill_tree(root: &Path) -> Result<String, StoreError> {
     Ok(hex(&hasher.finalize()))
 }
 
-fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(root).map_err(fs_error)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(StoreError::InvalidSource(
@@ -1259,7 +1310,7 @@ fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
     validate_skill_files(root)?;
     let directory_name = SkillName::from_source(root)
         .map_err(|error| StoreError::InvalidSource(error.to_string()))?;

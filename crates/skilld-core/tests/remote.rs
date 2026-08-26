@@ -4,12 +4,39 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use skilld_core::{
     ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
-    RepositoryVisibility, ResolvedSource, SignatureAlgorithm, SourceProvider, TrustedKey,
-    TrustedKeyStatus, TrustedRoot, TrustedRootPin, verify_artifact, verify_trusted_root,
+    PreparedFile, RemoteSelector, RepositoryVisibility, ResolvedSource, SignatureAlgorithm,
+    SourceProvider, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin,
+    prepare_unverified_files, verify_artifact, verify_trusted_root,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
 const ATTESTATION_DOMAIN: &[u8] = b"skilld-attestation-v1\0";
+
+#[test]
+fn public_remote_selectors_reject_control_characters_in_branch_and_tag_refs() {
+    for selector in [
+        "github:skilld-dev/skills/skills/example#branch:main\nforged",
+        "github:skilld-dev/skills/skills/example#tag:v1\tforged",
+        "github:skilld-dev/skills/skills/example#branch:main\u{0085}forged",
+        "github:skilld-dev/skills/skills/example#tag:v1\n",
+    ] {
+        let error = RemoteSelector::parse(selector).unwrap_err();
+
+        assert_eq!(error.code, "INVALID_SOURCE");
+    }
+}
+
+#[test]
+fn public_remote_selectors_reject_bidi_formatting_characters() {
+    for selector in [
+        "github:skilld-dev/skills/skills/\u{202e}example",
+        "github:skilld-dev/skills/skills/example#branch:main\u{2067}forged",
+    ] {
+        let error = RemoteSelector::parse(selector).unwrap_err();
+
+        assert_eq!(error.code, "INVALID_SOURCE");
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +164,15 @@ fn attestation(
     files: Vec<ArtifactFile>,
     signing_key: &SigningKey,
 ) -> ArtifactAttestation {
+    attestation_at_path(archive, files, signing_key, "skills/example")
+}
+
+fn attestation_at_path(
+    archive: &[u8],
+    files: Vec<ArtifactFile>,
+    signing_key: &SigningKey,
+    skill_path: &str,
+) -> ArtifactAttestation {
     let content_sha256 = hex(&Sha256::digest(archive));
     let artifact_id = format!("sha256:{content_sha256}");
     let source = ResolvedSource {
@@ -147,7 +183,7 @@ fn attestation(
         visibility: RepositoryVisibility::Public,
         commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         tree_sha: "89abcdef0123456789abcdef0123456789abcdef".to_owned(),
-        skill_path: "skills/example".to_owned(),
+        skill_path: skill_path.to_owned(),
     };
     let checks = vec![CheckResult {
         name: "path-policy".to_owned(),
@@ -222,6 +258,119 @@ fn verifies_exact_statements_root_signatures_and_ustar_files() {
 
     assert_eq!(verified.name.as_str(), "example");
     assert_eq!(verified.files[0].bytes, skill);
+}
+
+#[test]
+fn rejects_a_hash_in_the_attested_skill_path_but_allows_it_in_supporting_files() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let supporting = b"# Fragment\n";
+    let archive = archive(&[
+        ("SKILL.md", 0o644, skill, b'0'),
+        ("references/topic#part.md", 0o644, supporting, b'0'),
+    ]);
+    let files = vec![
+        file("SKILL.md", 0o644, skill),
+        file("references/topic#part.md", 0o644, supporting),
+    ];
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    let valid = verify_artifact(
+        attestation(&archive, files.clone(), &signing_key),
+        &root,
+        &archive,
+    )
+    .unwrap();
+    let error = verify_artifact(
+        attestation_at_path(&archive, files, &signing_key, "skills/example#archive"),
+        &root,
+        &archive,
+    )
+    .unwrap_err();
+
+    assert_eq!(valid.files[1].path, "references/topic#part.md");
+    assert_eq!(error.code, "INVALID_SOURCE");
+}
+
+#[test]
+fn unverified_files_reject_c1_control_characters_in_paths() {
+    let files = vec![
+        PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes: b"---\nname: example\n---\n".to_vec(),
+        },
+        PreparedFile {
+            path: "references/api\u{0085}forged.md".to_owned(),
+            mode: 0o644,
+            bytes: b"# API\n".to_vec(),
+        },
+    ];
+
+    let error = prepare_unverified_files(files).unwrap_err();
+
+    assert_eq!(error.code, "INVALID_PATH");
+}
+
+#[test]
+fn unverified_files_reject_bidi_formatting_characters_in_paths() {
+    let files = vec![
+        PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes: b"---\nname: example\n---\n".to_vec(),
+        },
+        PreparedFile {
+            path: "references/api\u{202e}forged.md".to_owned(),
+            mode: 0o644,
+            bytes: b"# API\n".to_vec(),
+        },
+    ];
+
+    let error = prepare_unverified_files(files).unwrap_err();
+
+    assert_eq!(error.code, "INVALID_PATH");
+}
+
+#[test]
+fn verified_artifacts_reject_bidi_formatting_in_source_and_file_paths() {
+    let skill = b"---\nname: example\n---\n";
+    let supporting = b"# API\n";
+    let valid_archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let bidi_archive = archive(&[
+        ("SKILL.md", 0o644, skill, b'0'),
+        ("references/api\u{202e}forged.md", 0o644, supporting, b'0'),
+    ]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    let source_error = verify_artifact(
+        attestation_at_path(
+            &valid_archive,
+            vec![file("SKILL.md", 0o644, skill)],
+            &signing_key,
+            "skills/\u{202e}example",
+        ),
+        &root,
+        &valid_archive,
+    )
+    .unwrap_err();
+    let file_error = verify_artifact(
+        attestation(
+            &bidi_archive,
+            vec![
+                file("SKILL.md", 0o644, skill),
+                file("references/api\u{202e}forged.md", 0o644, supporting),
+            ],
+            &signing_key,
+        ),
+        &root,
+        &bidi_archive,
+    )
+    .unwrap_err();
+
+    assert_eq!(source_error.code, "INVALID_PATH");
+    assert_eq!(file_error.code, "INVALID_PATH");
 }
 
 #[test]

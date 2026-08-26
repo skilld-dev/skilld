@@ -4,6 +4,7 @@ mod outdated;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
 mod output;
 mod remote;
+mod run;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -19,7 +20,7 @@ pub use local_store::{
     AllowTransaction, LocalStore, PreparedStoreUpdate, ResolvedTarget, SkillView, StoreError,
     TargetInstall, TransactionGate,
 };
-pub use output::OutputContext;
+pub use output::{CommandPlatform, OutputContext};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill,
@@ -27,18 +28,22 @@ pub use remote::{
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
     SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
+pub use run::{
+    FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
+};
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    NotTrackedReason, SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan,
-    UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
-    classify_update_comparison, select_target_ids,
+    NotTrackedReason, RemoteSelector, SourceRef, UpdateFailure, UpdateLatestCommit,
+    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter,
+    VERSION, classify_update_comparison, select_target_ids,
 };
+use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
-    OutputMode, SearchItem, SearchOutcome, render_error, render_search, render_update_check,
-    resolve_mode,
+    OutputMode, SearchItem, SearchOutcome, render_error, render_run, render_search,
+    render_update_check, resolve_mode, screen_message, shell_command,
 };
 
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
@@ -47,7 +52,7 @@ const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITOR
 #[command(
     name = "skilld",
     version = VERSION,
-    about = "Search, install, and keep Skills current",
+    about = "Search, run, install, and keep Skills current",
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -67,7 +72,7 @@ enum Command {
     Search { query: Vec<String> },
     /// Install a Skill, or restore the Skills recorded in your lockfile.
     #[command(
-        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Public GitHub Repository paths. Each one requires --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
         after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
@@ -93,7 +98,35 @@ enum Command {
         mode: Option<String>,
         #[arg(
             long,
-            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct install records the unverified source status."
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive an explicit github: source or a GitHub tree URL.\nWithout --direct, these selectors use hosted Artifact delivery.\nA direct install records the unverified source status."
+        )]
+        direct: bool,
+    },
+    /// Load a Skill for this session without installing it.
+    #[command(
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
+        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+    )]
+    Run {
+        /// The Skill source to load.
+        #[arg(value_name = "SOURCE")]
+        source: String,
+        #[arg(
+            long = "file",
+            value_name = "PATH",
+            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nRemote reads require --revision. Local and bundled reads do not.\nskilld never prints executable or binary files. Install the Skill to use one."
+        )]
+        files: Vec<String>,
+        #[arg(
+            long,
+            value_name = "COMMIT",
+            requires = "files",
+            long_help = "Read supporting files from one exact remote Git commit.\nUse the revision that an earlier skilld run returned."
+        )]
+        revision: Option<String>,
+        #[arg(
+            long,
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct run carries the unverified source status."
         )]
         direct: bool,
     },
@@ -183,6 +216,17 @@ pub trait Host {
         self.install(source, request.scope).map(|name| vec![name])
     }
 
+    fn run_skill(
+        &self,
+        _source: InstallSource,
+        _files: &[String],
+        _revision: Option<&CommitSha>,
+    ) -> Result<RunOutcome, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill runs are unavailable on this host",
+        ))
+    }
+
     fn view(&self, _name: &str, _scope: InstallScope) -> Result<SkillView, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill details are unavailable on this host",
@@ -226,7 +270,7 @@ pub trait Host {
         ))
     }
 
-    fn outdated(&self, _all: bool) -> Result<Vec<Line>, CommandError> {
+    fn outdated(&self, _all: bool, _platform: CommandPlatform) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "Outdated Skill reports are unavailable on this host",
         ))
@@ -315,17 +359,37 @@ impl CommandError {
         Self::usage("INVALID_SOURCE", message)
     }
 
-    fn direct_local_source() -> Self {
+    fn direct_local_install_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
             "--direct cannot install a local Skill. Remove --direct, then run the same command again.",
         )
     }
 
-    fn direct_bundled_source() -> Self {
+    fn direct_bundled_install_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
             "--direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead",
+        )
+    }
+
+    fn direct_local_run_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot run a local Skill. Remove --direct, then run the same command again.",
+        )
+    }
+
+    fn direct_bundled_run_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot run the skilld-maintained Skill. Run skilld run skilld without --direct.",
+        )
+    }
+
+    fn remote_file_revision() -> Self {
+        Self::input(
+            "Remote --file reads require --revision. Run the Skill without --file first. Then repeat this run with the returned revision.",
         )
     }
 
@@ -402,6 +466,7 @@ enum CommandOutput {
     Screen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
+    Run(RunOutcome),
 }
 
 pub fn run<I, T, H, O, E>(args: I, host: &H, stdout: &mut O, stderr: &mut E) -> CommandResult
@@ -412,7 +477,15 @@ where
     O: Write,
     E: Write,
 {
-    run_with_output(args, host, OutputContext::Plain, stdout, stderr)
+    run_with_output(
+        args,
+        host,
+        OutputContext::Plain {
+            platform: CommandPlatform::current(),
+        },
+        stdout,
+        stderr,
+    )
 }
 
 pub fn run_with_output<I, T, H, O, E>(
@@ -432,7 +505,9 @@ where
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     let (requested_json, requested_plain) = requested_output(&args);
     let requested_mode = if requested_json && requested_plain {
-        OutputMode::Plain
+        OutputMode::Plain {
+            platform: context.platform(),
+        }
     } else {
         resolve_mode(requested_json, requested_plain, context)
     };
@@ -464,8 +539,18 @@ where
                         requested_mode,
                     )
                 }
+            } else if display || matches!(requested_mode, OutputMode::Human { .. }) {
+                terminal_safe_clap_text(&args, error.kind()).into_bytes()
             } else {
-                error.to_string().into_bytes()
+                let message = error
+                    .to_string()
+                    .trim()
+                    .trim_start_matches("error: ")
+                    .to_owned();
+                render_error(
+                    &CommandError::usage("INVALID_ARGUMENT", message),
+                    requested_mode,
+                )
             };
             if target.write_all(&rendered).is_err() {
                 return CommandResult {
@@ -487,11 +572,12 @@ where
         return CommandResult { exit_code: 2 };
     }
     let supports_json = matches!(&cli.command, Command::Search { .. })
+        || matches!(&cli.command, Command::Run { .. })
         || matches!(&cli.command, Command::Update { check: true, .. });
     if mode == OutputMode::JsonV1 && !supports_json {
         let error = CommandError::usage(
             "UNSUPPORTED_OUTPUT",
-            "JSON output is available for Skill search and update checks",
+            "JSON output is available for Skill search, Skill runs and update checks",
         );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
@@ -499,15 +585,28 @@ where
         return CommandResult { exit_code: 2 };
     }
 
-    match dispatch(cli.command, host) {
+    match dispatch(cli.command, host, context.platform()) {
         Ok(CommandOutput::Screen(screen)) => {
             let bytes = match mode {
                 OutputMode::Human { color, .. } => screen.render_human(color),
-                OutputMode::Plain | OutputMode::JsonV1 => screen.render_plain(),
+                OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
+            Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
+            Err(error) => {
+                if stderr.write_all(&render_error(&error, mode)).is_err() {
+                    return CommandResult {
+                        exit_code: error.exit_code(),
+                    };
+                }
+                CommandResult {
+                    exit_code: error.exit_code(),
+                }
+            }
+        },
+        Ok(CommandOutput::Run(outcome)) => match render_run(&outcome, mode) {
             Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
             Err(error) => {
                 if stderr.write_all(&render_error(&error, mode)).is_err() {
@@ -555,6 +654,42 @@ where
     }
 }
 
+fn terminal_safe_clap_text(args: &[OsString], expected_kind: ErrorKind) -> String {
+    let safe_args = args.iter().map(terminal_safe_argument);
+    let text = match Cli::try_parse_from(safe_args) {
+        Err(error) if error.kind() == expected_kind => error.to_string(),
+        _ => "error: invalid command arguments\n\nFor more information, try '--help'.\n".to_owned(),
+    };
+    let mut safe = String::new();
+    for character in text.chars() {
+        match character {
+            '\n' | '\t' => safe.push(character),
+            '\r' => safe.push_str("\\r"),
+            character if is_unsafe_terminal(character) => {
+                safe.push_str(&format!("\\u{{{:04X}}}", u32::from(character)));
+            }
+            character => safe.push(character),
+        }
+    }
+    safe
+}
+
+fn terminal_safe_argument(argument: &OsString) -> OsString {
+    let mut safe = String::new();
+    for character in argument.to_string_lossy().chars() {
+        match character {
+            '\n' => safe.push_str("\\n"),
+            '\r' => safe.push_str("\\r"),
+            '\t' => safe.push_str("\\t"),
+            character if is_unsafe_terminal(character) => {
+                safe.push_str(&format!("\\u{{{:04X}}}", u32::from(character)));
+            }
+            character => safe.push(character),
+        }
+    }
+    OsString::from(safe)
+}
+
 fn requested_output(args: &[OsString]) -> (bool, bool) {
     let mut json = false;
     let mut plain = false;
@@ -573,7 +708,7 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
-        "search", "install", "list", "view", "remove", "update", "verify", "auth", "config",
+        "search", "install", "run", "list", "view", "remove", "update", "verify", "auth", "config",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -640,7 +775,11 @@ pub fn run_stdio_probe<R: Read, O: Write, E: Write>(
     }
 }
 
-fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, CommandError> {
+fn dispatch<H: Host>(
+    command: Command,
+    host: &H,
+    platform: CommandPlatform,
+) -> Result<CommandOutput, CommandError> {
     match command {
         Command::Install {
             source,
@@ -659,10 +798,10 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                         InstallOperation::Install(InstallSource::DirectRemote(source))
                     }
                     (true, InstallSource::Local(_)) => {
-                        return Err(CommandError::direct_local_source());
+                        return Err(CommandError::direct_local_install_source());
                     }
                     (true, InstallSource::BundledSkilld) => {
-                        return Err(CommandError::direct_bundled_source());
+                        return Err(CommandError::direct_bundled_install_source());
                     }
                     (false, source) => InstallOperation::Install(source),
                 },
@@ -699,6 +838,53 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 lines.push(Line::hint("Review the unverified Skill before use."));
             }
             Ok(CommandOutput::Screen(Screen::new(lines)))
+        }
+        Command::Run {
+            source,
+            files,
+            revision,
+            direct,
+        } => {
+            run::reject_duplicate_files(&files)?;
+            let revision = revision.map(CommitSha::parse).transpose().map_err(|_| {
+                CommandError::input("--revision must use 40 lowercase hexadecimal characters")
+            })?;
+            let source = match (direct, InstallSource::parse(&source)) {
+                (true, InstallSource::Remote(source) | InstallSource::DirectRemote(source)) => {
+                    InstallSource::DirectRemote(source)
+                }
+                (true, InstallSource::Local(_)) => {
+                    return Err(CommandError::direct_local_run_source());
+                }
+                (true, InstallSource::BundledSkilld) => {
+                    return Err(CommandError::direct_bundled_run_source());
+                }
+                (false, source) => source,
+            };
+            if !files.is_empty()
+                && revision.is_none()
+                && matches!(
+                    source,
+                    InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+                )
+            {
+                return Err(CommandError::remote_file_revision());
+            }
+            if revision.is_some()
+                && !matches!(
+                    source,
+                    InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+                )
+            {
+                return Err(CommandError::input(
+                    "--revision requires a remote Skill source",
+                ));
+            }
+            Ok(CommandOutput::Run(host.run_skill(
+                source,
+                &files,
+                revision.as_ref(),
+            )?))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
@@ -804,7 +990,7 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
             .verify(skill.as_deref())
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
         Command::Outdated { all } => host
-            .outdated(all)
+            .outdated(all, platform)
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
     }
 }
@@ -813,10 +999,10 @@ fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     let source = match view.skill.source {
         LockedSource::Local { path } => Line::field("Source", format!("local {path}")),
         LockedSource::BundledSkilld => Line::field("Source", "skilld-maintained Skill"),
-        LockedSource::Remote { source, .. } => match github_url(&source) {
-            Some(url) => Line::linked_field("Source", source, url),
-            None => Line::field("Source", source),
-        },
+        LockedSource::Remote { source, .. } => {
+            let selector = RemoteSelector::parse(&source).map_err(CommandError::remote)?;
+            Line::linked_field("Source", selector.canonical(), github_url(&selector)?)
+        }
     };
     let targets = if view.skill.targets.is_empty() {
         "none".to_owned()
@@ -837,15 +1023,15 @@ fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     ])
 }
 
-/// A GitHub repository URL for a remote Skill source, when the source names
-/// one.
-fn github_url(source: &str) -> Option<String> {
-    let body = source.split_once(':')?.1;
-    let mut segments = body.split('/');
-    let owner = segments.next()?;
-    let repository = segments.next()?;
-    (!owner.is_empty() && !repository.is_empty())
-        .then(|| format!("https://github.com/{owner}/{repository}"))
+/// Build a GitHub repository URL from a parsed remote selector.
+fn github_url(selector: &RemoteSelector) -> Result<String, CommandError> {
+    let mut url = url::Url::parse("https://github.com/")
+        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?;
+    url.path_segments_mut()
+        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?
+        .push(&selector.source().owner)
+        .push(&selector.source().repository);
+    Ok(url.into())
 }
 
 fn scope(global: bool) -> InstallScope {
@@ -891,6 +1077,7 @@ impl TargetRoots {
 }
 
 pub trait BundledSkillProvider: Send + Sync {
+    fn skilld_run_files(&self) -> Result<Vec<skilld_core::PreparedFile>, CommandError>;
     fn skilld_source(&self) -> Result<PathBuf, CommandError>;
 }
 
@@ -906,6 +1093,10 @@ struct DirectoryBundledSkillProvider {
 }
 
 impl BundledSkillProvider for DirectoryBundledSkillProvider {
+    fn skilld_run_files(&self) -> Result<Vec<skilld_core::PreparedFile>, CommandError> {
+        run::read_local(&self.path).map(|(_, files)| files)
+    }
+
     fn skilld_source(&self) -> Result<PathBuf, CommandError> {
         Ok(self.path.clone())
     }
@@ -1128,6 +1319,161 @@ impl LocalHost {
         Ok(name.to_string())
     }
 
+    fn run_remote(
+        &self,
+        source: &str,
+        direct: bool,
+        wanted: &[String],
+        expected_revision: Option<&CommitSha>,
+    ) -> Result<RunOutcome, CommandError> {
+        let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
+        if let (Some(revision), Some(SourceRef::Commit { value })) =
+            (expected_revision, &selector.source().r#ref)
+            && value != revision.as_str()
+        {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the source commit does not match --revision",
+            ));
+        }
+        let provider = self.remote_provider()?;
+        let prepared = match expected_revision {
+            Some(revision) => provider.prepare_exact(&selector, revision, direct),
+            None => provider.prepare(&selector, direct),
+        }
+        .map_err(CommandError::remote)?;
+        let LockedSource::Remote {
+            source: locked_source,
+            commit_sha,
+            skill_path,
+        } = &prepared.locked_source
+        else {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has no remote revision",
+            ));
+        };
+        let revision = CommitSha::parse(commit_sha.clone()).map_err(|_| {
+            CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has an invalid remote revision",
+            )
+        })?;
+        if skill_path.contains('#') {
+            return Err(CommandError::input(
+                "the attested Skill source path cannot contain #",
+            ));
+        }
+        if expected_revision.is_some_and(|expected| expected != &revision) {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill changed its exact revision",
+            ));
+        }
+        let locked_selector =
+            skilld_core::RemoteSelector::parse(locked_source).map_err(CommandError::remote)?;
+        let exact_source = skilld_core::RemoteSelector::parse(&format!(
+            "github:{}/{}/{}#commit:{}",
+            locked_selector.source().owner,
+            locked_selector.source().repository,
+            skill_path,
+            revision.as_str(),
+        ))
+        .map_err(CommandError::remote)?
+        .canonical();
+        let source_status = prepared.source_status.as_str();
+        let (name, _, files) =
+            skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
+        let name = name.as_str().to_owned();
+        let origin = SkillOrigin::Remote {
+            source: selector.canonical(),
+            exact_source,
+            direct,
+        };
+        if !wanted.is_empty() {
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status,
+                revision: Some(revision.as_str().to_owned()),
+            });
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
+            name,
+            origin,
+            source_status,
+            revision: Some(revision.as_str().to_owned()),
+        })))
+    }
+
+    fn run_directory(
+        &self,
+        source: InstallSource,
+        wanted: &[String],
+    ) -> Result<RunOutcome, CommandError> {
+        let (path, _) = self.resolve_source(source)?;
+        // The output names this directory to the Agent, so give it the real
+        // path rather than the one the user typed.
+        let path = path.canonicalize().unwrap_or(path);
+        let (name, files) = run::read_local(&path)?;
+        let origin = SkillOrigin::Local { root: path };
+        if !wanted.is_empty() {
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status: "local",
+                revision: None,
+            });
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
+            name,
+            origin,
+            source_status: "local",
+            revision: None,
+        })))
+    }
+
+    fn run_bundled(&self, wanted: &[String]) -> Result<RunOutcome, CommandError> {
+        let provider = self.bundled_skill.as_ref().ok_or_else(|| {
+            CommandError::service(
+                "the bundled skilld-maintained Skill is unavailable in this build",
+            )
+        })?;
+        let (name, _, files) = skilld_core::prepare_unverified_files(provider.skilld_run_files()?)
+            .map_err(CommandError::remote)?;
+        if name.as_str() != "skilld" {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the bundled Skill must declare the name skilld",
+            ));
+        }
+        let name = name.as_str().to_owned();
+        let origin = SkillOrigin::Bundled;
+        if !wanted.is_empty() {
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status: "local",
+                revision: None,
+            });
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
+            name,
+            origin,
+            source_status: "local",
+            revision: None,
+        })))
+    }
+
     fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
         let (targets, known) = if request.targets.is_empty() {
             (None, self.known_targets(request.scope)?)
@@ -1296,6 +1642,33 @@ impl Host for LocalHost {
                     .map_err(CommandError::store)?;
                 Ok(vec![name.to_string()])
             }
+        }
+    }
+
+    fn run_skill(
+        &self,
+        source: InstallSource,
+        files: &[String],
+        revision: Option<&CommitSha>,
+    ) -> Result<RunOutcome, CommandError> {
+        run::reject_duplicate_files(files)?;
+        if !files.is_empty()
+            && revision.is_none()
+            && matches!(
+                source,
+                InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+            )
+        {
+            return Err(CommandError::remote_file_revision());
+        }
+        match source {
+            InstallSource::Remote(source) => self.run_remote(&source, false, files, revision),
+            InstallSource::DirectRemote(source) => self.run_remote(&source, true, files, revision),
+            InstallSource::BundledSkilld if revision.is_none() => self.run_bundled(files),
+            source if revision.is_none() => self.run_directory(source, files),
+            _ => Err(CommandError::input(
+                "--revision requires a remote Skill source",
+            )),
         }
     }
 
@@ -1762,7 +2135,7 @@ impl Host for LocalHost {
         Ok(UpdatePlanV1::new(plan))
     }
 
-    fn outdated(&self, all: bool) -> Result<Vec<Line>, CommandError> {
+    fn outdated(&self, all: bool, platform: CommandPlatform) -> Result<Vec<Line>, CommandError> {
         let scopes = if all {
             vec![InstallScope::Project, InstallScope::Global]
         } else {
@@ -1781,11 +2154,12 @@ impl Host for LocalHost {
             let names = match store.list(&known) {
                 Ok(names) => names,
                 Err(error) => {
+                    let message = screen_message(&CommandError::store(error).message);
                     // Without a readable lockfile, managed copies cannot be told from unmanaged ones.
                     lines.push(Line::error(format!(
                         "Skill store unavailable in {} scope: {}",
                         scope.as_str(),
-                        CommandError::store(error).message
+                        message
                     )));
                     if all {
                         // The ancestor scan must not report Skills this scope cannot verify.
@@ -1800,9 +2174,9 @@ impl Host for LocalHost {
                 let view = match store.view(&skill_name, &known) {
                     Ok(view) => view,
                     Err(error) => {
+                        let message = screen_message(&CommandError::store(error).message);
                         lines.push(Line::error(format!(
-                            "Skill {name} details unavailable: {}",
-                            CommandError::store(error).message
+                            "Skill {name} details unavailable: {message}"
                         )));
                         continue;
                     }
@@ -1854,7 +2228,7 @@ impl Host for LocalHost {
         }
         for (view, scope) in &views {
             progress.checking(&view.name);
-            lines.extend(self.report_outdated_view(view, *scope));
+            lines.extend(self.report_outdated_view(view, *scope, platform));
         }
         if all {
             #[cfg(not(target_os = "wasi"))]
@@ -1872,9 +2246,13 @@ impl Host for LocalHost {
                         skill,
                         Some(&candidate),
                         &self.project_root,
+                        platform,
                     )),
                     Ok(None) => no_match.push(skill),
-                    Err(error) => failures.entry(error.message).or_default().push(skill),
+                    Err(error) => failures
+                        .entry(screen_message(&error.message))
+                        .or_default()
+                        .push(skill),
                 }
             }
             lines.extend(outdated::render_no_match(&no_match));
@@ -2296,13 +2674,13 @@ fn update_apply_failure(name: &str, outcome: RemoteComparisonOutcome) -> Command
 }
 
 impl LocalHost {
-    fn report_outdated_view(&self, view: &SkillView, scope: InstallScope) -> Vec<Line> {
+    fn report_outdated_view(
+        &self,
+        view: &SkillView,
+        scope: InstallScope,
+        platform: CommandPlatform,
+    ) -> Vec<Line> {
         let name = &view.name;
-        let global = if scope == InstallScope::Global {
-            " --global"
-        } else {
-            ""
-        };
         match (&view.skill.source, &view.skill.source_status) {
             (
                 LockedSource::Remote {
@@ -2328,7 +2706,12 @@ impl LocalHost {
                         )]
                     }
                     Ok(RemoteSourceState::Stale { .. }) => {
-                        let update = format!("skilld update {name}{global}");
+                        let mut argv =
+                            vec!["skilld".to_owned(), "update".to_owned(), name.to_owned()];
+                        if scope == InstallScope::Global {
+                            argv.push("--global".to_owned());
+                        }
+                        let update = shell_command(&argv, platform);
                         vec![Line::record(
                             Marker::Warn,
                             format!("Outdated Skill {name}. Run {update}."),
@@ -2338,15 +2721,13 @@ impl LocalHost {
                         )]
                     }
                     Err(error) => {
+                        let message = screen_message(&error.message);
                         vec![Line::record(
                             Marker::Error,
-                            format!(
-                                "Source state unavailable for Skill {name}: {}.",
-                                error.message
-                            ),
+                            format!("Source state unavailable for Skill {name}: {message}."),
                             name,
                             Some("source unavailable".to_owned()),
-                            vec![Detail::plain("error", error.message.clone())],
+                            vec![Detail::plain("error", message)],
                         )]
                     }
                 }
@@ -2358,8 +2739,13 @@ impl LocalHost {
                     .iter()
                     .map(|locked| locked.agent)
                     .collect::<Vec<_>>();
-                let agent_flags = outdated::agent_flags(&agents);
-                let install = format!("skilld install {source} --direct{global}{agent_flags}");
+                let install = outdated::install_command(
+                    source,
+                    true,
+                    scope == InstallScope::Global,
+                    &agents,
+                    platform,
+                );
                 vec![Line::record(
                     Marker::Warn,
                     format!("Unverified Skill {name}. Run {install} to update it."),
@@ -2680,8 +3066,8 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "list", "view", "remove", "update", "verify", "outdated",
-                "auth", "config"
+                "search", "install", "run", "list", "view", "remove", "update", "verify",
+                "outdated", "auth", "config"
             ]
         );
     }

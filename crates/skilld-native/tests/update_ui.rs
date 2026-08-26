@@ -134,11 +134,11 @@ fn view_reflows_at_narrow_width_and_keeps_the_cursor_in_the_viewport() {
 }
 
 #[test]
-fn view_preserves_unicode_width_and_removes_terminal_controls() {
+fn view_preserves_unicode_width_and_removes_terminal_formatting() {
     let model = update(
         Model::new(40, 12),
         Message::CandidatesLoaded(Ok(vec![candidate(
-            "技能🙂 cafe\u{301}\u{1b}[31m",
+            "技能🙂 cafe\u{301}\u{1b}[31m\u{202e}forged",
             "skilld-dev/skills",
             3,
         )])),
@@ -149,6 +149,7 @@ fn view_preserves_unicode_width_and_removes_terminal_controls() {
 
     assert!(plain.contains("技能🙂 cafe\u{301}"), "{plain:?}");
     assert!(!plain.contains('\u{1b}'));
+    assert!(!plain.contains('\u{202e}'));
     assert_eq!(plain, colored);
     assert!(plain.lines().all(|line| UnicodeWidthStr::width(line) <= 40));
 }

@@ -8,6 +8,7 @@ use skilld_ui::{Detail, Line, Marker};
 
 use crate::ResolvedTarget;
 use crate::local_store::normalize_path;
+use crate::output::{CommandPlatform, shell_command};
 
 pub trait OutdatedProgress: Send + Sync {
     fn found(&self, _line: &str) {}
@@ -188,18 +189,19 @@ pub(crate) fn render_unmanaged(
     skill: &UnmanagedSkill,
     candidate: Option<&SkillCandidate>,
     display_base: &Path,
+    platform: CommandPlatform,
 ) -> Vec<Line> {
     let agents = agent_list(skill);
     let Some(candidate) = candidate else {
         return vec![];
     };
-    let global = if skill.scope == InstallScope::Global {
-        " --global"
-    } else {
-        ""
-    };
-    let agent_flags = agent_flags(&skill.agents);
-    let install = format!("skilld install {}{global}{agent_flags}", candidate.selector);
+    let install = install_command(
+        &candidate.selector,
+        false,
+        skill.scope == InstallScope::Global,
+        &skill.agents,
+        platform,
+    );
     let plain = format!(
         "Unmanaged Skill {} ({agents}). Candidate source {}, {} stars.\nDelete {}, then run {install}.",
         skill.name,
@@ -224,16 +226,25 @@ pub(crate) fn render_unmanaged(
     )]
 }
 
-pub(crate) fn agent_flags(agents: &[AgentTargetId]) -> String {
-    if agents.is_empty() {
-        return String::new();
+pub(crate) fn install_command(
+    source: &str,
+    direct: bool,
+    global: bool,
+    agents: &[AgentTargetId],
+    platform: CommandPlatform,
+) -> String {
+    let mut argv = vec!["skilld".to_owned(), "install".to_owned(), source.to_owned()];
+    if direct {
+        argv.push("--direct".to_owned());
     }
-    let flags = agents
-        .iter()
-        .map(|agent| format!("--agent {}", agent.as_str()))
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!(" {flags}")
+    if global {
+        argv.push("--global".to_owned());
+    }
+    for agent in agents {
+        argv.push("--agent".to_owned());
+        argv.push(agent.as_str().to_owned());
+    }
+    shell_command(&argv, platform)
 }
 
 fn agent_list(skill: &UnmanagedSkill) -> String {

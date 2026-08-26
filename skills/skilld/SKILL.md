@@ -1,11 +1,13 @@
 ---
 name: skilld
-description: Search, view, install, update, verify, and remove Skills with skilld CLI, including private repository access.
+description: Search, run, view, install, update, verify, and remove Skills with skilld CLI, including private repository access.
 ---
 
 # Use skilld CLI
 
-Use skilld CLI to search for and install Skills.
+Use skilld CLI to search for, run, and install Skills.
+
+Run a Skill first. Install a Skill only when the user asks to keep it.
 
 ## Search for a Skill
 
@@ -16,7 +18,7 @@ skilld search <query> --json
 ```
 
 Read `data.items` before choosing a Skill.
-Use each item's `selector` for install.
+Use each item's `selector` for a Skill run.
 Refine the query when several Skills cover different tasks.
 
 Always use `--json` when an Agent runs Skill search.
@@ -25,7 +27,47 @@ If search fails, read the tagged JSON error from stderr.
 Use `--plain` only when another command needs stable text.
 Never parse formatted terminal output.
 
+## Run a Skill
+
+Run the selector returned by search:
+
+```sh
+skilld run <selector> --json
+```
+
+The command prints SKILL.md and writes no Skill files.
+It retains no remote Skill files after the command exits.
+Read the printed SKILL.md, then follow it for the current task.
+Prefer `skilld run` for a one-off task.
+
+Read `data.files` for each supporting file's path, kind, and size.
+The initial load prints no supporting file content.
+Read one only when the instructions name it:
+
+```sh
+skilld run <selector> --revision <data.revision> --file <path> --json
+```
+
+Run the exact `data.files[].readArgv` array when possible.
+It contains the source, exact revision, file path, and `--json`.
+Repeat `--file` to read several files in one command.
+
+Check `data.files[].readable` before you ask for a file.
+A file with `readable: false` never prints.
+Its `kind` is `executable` or `binary`.
+Tell the user the Skill needs an install to use that file.
+
+Report which Skill you ran and that skilld wrote no Skill files.
+Read `data.sourceStatus`, `data.origin`, and `data.revision`.
+A `verified` status covers where the Skill came from.
+It does not cover what the instructions ask you to do.
+If the status is `unverified`, tell the user before you follow the Skill.
+
 ## Install a Skill
+
+Install a Skill when the user wants it in every session.
+Install a Skill when it must run its own script.
+Ask the user before you install. An install writes files they did not request.
 
 Install the selector returned by search into the detected Agent target:
 

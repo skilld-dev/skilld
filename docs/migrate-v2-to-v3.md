@@ -68,9 +68,15 @@ skilld auth status
 
 You only need an account for private repository access.
 
-## 4. Install the global skilld Skill
+## 4. Run the skilld Skill
 
-Install search and install guidance for your Agent:
+Ask your Agent to load search, run, and install guidance for the current session:
+
+```sh
+skilld run skilld
+```
+
+Install it globally only when you want your Agent to keep it across sessions:
 
 ```sh
 skilld install skilld --global --agent codex
@@ -84,14 +90,25 @@ You may omit `--agent` after configuring or detecting a target.
 v3 stores canonical project Skills under `.skills/<name>`.
 It writes project state to `.skills/skilld-lock.yaml`.
 
-Search first, then install the returned selector:
+Search first, then run the returned selector:
 
 ```sh
 skilld search vue
-skilld install skilld:skilld-dev/skills/vue
+skilld run skilld:skilld-dev/skills/vue
 ```
 
 Use the exact selector printed by your search result.
+
+`skilld run` loads a transient Skill for the current Agent session.
+It writes no project files or lockfile state.
+
+Install the Skill only when you want to keep it:
+
+```sh
+skilld install skilld:skilld-dev/skills/vue
+```
+
+An install writes project files and records lockfile state.
 
 An existing v2 Skill in an Agent target is unmanaged v3 state.
 v3 returns `TARGET_CONFLICT` instead of replacing it.
@@ -110,7 +127,7 @@ It cannot restore a v2 lockfile.
 
 | v2 command | v3 replacement |
 | --- | --- |
-| `skilld add <source>` | Run `skilld search`, then `skilld install <selector>` |
+| `skilld add <source>` | Run `skilld search`, then `skilld run <selector>` to use it once, or `skilld install <selector>` to keep it |
 | `skilld update [name]` | `skilld update [name]` |
 | `skilld info` | `skilld list`, then `skilld view <name>` |
 | `skilld login` | `skilld auth login` |
@@ -138,10 +155,12 @@ Harness enforces output limits, structure checks, and atomic promotion.
 An Agent run does not claim that Harness checks passed.
 CI should remain strict and use Harness.
 
-The `skilld install --direct` flag serves another purpose.
-It reads a public GitHub repository without skilld.dev Artifact delivery.
-The installed Skill receives the `unverified` source status.
-It never handles private repositories.
+`skilld install --direct` and `skilld run --direct` serve another purpose.
+They read a public GitHub repository without skilld.dev Artifact delivery.
+Explicit GitHub selectors use Artifact delivery unless you add `--direct`.
+A direct install records the `unverified` source status.
+A direct run reports the same status but writes no files.
+Direct mode never handles private repositories.
 
 ## Release requirements
 

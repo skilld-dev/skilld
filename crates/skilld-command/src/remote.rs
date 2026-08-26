@@ -16,6 +16,7 @@ use skilld_core::{
     parse_search_response, prepare_unverified_files, verify_artifact, verify_attestation,
     verify_trusted_root,
 };
+use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
 
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
@@ -1090,6 +1091,15 @@ impl SkilldRemote {
         if !valid_sha(&commit.sha) || !valid_sha(&commit.commit.tree.sha) {
             return Err(invalid_github());
         }
+        if matches!(
+            &source.r#ref,
+            Some(SourceRef::Commit { value }) if value != &commit.sha
+        ) {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "GitHub resolved a different commit than requested",
+            ));
+        }
         Ok((repository_url, skill_path.clone(), commit))
     }
 
@@ -1494,6 +1504,14 @@ impl RemoteProvider for SkilldRemote {
         expected_commit: &CommitSha,
         direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
+        if let Some(SourceRef::Commit { value }) = &selector.source().r#ref
+            && value != expected_commit.as_str()
+        {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "the source commit does not match the expected commit",
+            ));
+        }
         let mut source = selector.source().clone();
         source.r#ref = Some(SourceRef::Commit {
             value: expected_commit.as_str().to_owned(),
@@ -1919,11 +1937,6 @@ fn sanitize_line(value: &str, maximum: usize, fallback: &str) -> String {
         &sanitized
     };
     value.chars().take(maximum).collect()
-}
-
-fn is_unsafe_terminal(character: char) -> bool {
-    let code = u32::from(character);
-    character.is_control() || matches!(code, 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069)
 }
 
 fn valid_timestamp(value: &str) -> bool {
