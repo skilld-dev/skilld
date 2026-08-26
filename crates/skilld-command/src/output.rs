@@ -251,12 +251,10 @@ fn render_human(outcome: &SearchOutcome, terminal_width: u16, color: bool) -> St
                 output.push('\n');
             }
         }
-        let install = format!("skilld install {}", sanitize(&item.selector));
-        for line in wrap(&install, columns.saturating_sub(2)) {
-            output.push_str("  ");
-            output.push_str(&skilld_ui::paint_command(&line, color));
-            output.push('\n');
-        }
+        let run = shell_command(&["skilld".to_owned(), "run".to_owned(), item.selector.clone()]);
+        output.push_str("  ");
+        output.push_str(&skilld_ui::paint_command(&run, color));
+        output.push('\n');
     }
     output
 }
@@ -329,33 +327,51 @@ struct JsonError<'a> {
 }
 
 /// Render one transient Skill load, or the supporting files an Agent asked for.
-///
-/// The SKILL.md text passes through byte for byte in every mode. Wrapping it
-/// would break fenced code and indented lists, and an Agent reads this output.
 pub(crate) fn render_run(outcome: &RunOutcome, mode: OutputMode) -> Result<Vec<u8>, CommandError> {
     match (outcome, mode) {
-        (RunOutcome::Load(skill), OutputMode::JsonV1) => render_json(&load_json(skill)),
-        (RunOutcome::Files(files), OutputMode::JsonV1) => render_json(&files_json(files)),
+        (RunOutcome::Load(skill), OutputMode::JsonV1) => render_json_success(
+            "run",
+            load_json(skill),
+            "Skill run output could not be encoded",
+        ),
+        (
+            RunOutcome::Files {
+                skill,
+                origin,
+                source_status,
+                revision,
+                files,
+            },
+            OutputMode::JsonV1,
+        ) => render_json_success(
+            "run",
+            files_json(skill, origin, source_status, revision.as_deref(), files),
+            "Skill run output could not be encoded",
+        ),
         (RunOutcome::Load(skill), _) => Ok(render_load(skill, colored(mode)).into_bytes()),
-        (RunOutcome::Files(files), _) => Ok(render_files(files, colored(mode)).into_bytes()),
+        (
+            RunOutcome::Files {
+                skill,
+                origin,
+                source_status,
+                revision,
+                files,
+            },
+            _,
+        ) => Ok(render_files(
+            skill,
+            origin,
+            source_status,
+            revision.as_deref(),
+            files,
+            colored(mode),
+        )
+        .into_bytes()),
     }
 }
 
 const fn colored(mode: OutputMode) -> bool {
     matches!(mode, OutputMode::Human { color: true, .. })
-}
-
-/// Strip control characters from unverified Skill text before printing it.
-///
-/// Newlines survive so the document keeps its shape. Every other control
-/// character becomes a space, so a remote Skill cannot move the cursor or
-/// forge skilld's own marker lines. JSON mode escapes these bytes already and
-/// receives the raw text.
-fn sanitize_printed(text: &str) -> String {
-    text.split('\n')
-        .map(sanitize)
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn render_load(skill: &TransientSkill, color: bool) -> String {
@@ -365,7 +381,7 @@ fn render_load(skill: &TransientSkill, color: bool) -> String {
         paint(
             &format!(
                 "skilld loaded the transient Skill {} for this session.",
-                skill.name
+                sanitize(&skill.name)
             ),
             Role::Emphasis,
             color
@@ -374,22 +390,27 @@ fn render_load(skill: &TransientSkill, color: bool) -> String {
 
     match &skill.origin {
         SkillOrigin::Remote { source, .. } => {
-            out.push_str("skilld wrote nothing. This Skill leaves when this process ends.\n");
+            out.push_str("skilld retained no Skill files.\n");
+            out.push_str("It created no lockfile entry, Agent target, or project file.\n");
             out.push_str(&field("Source", source, color));
         }
         SkillOrigin::Local { root } => {
-            out.push_str("This Skill already sits on your disk. skilld wrote nothing.\n");
+            out.push_str("This Skill already sits on disk. skilld wrote no Skill files.\n");
             out.push_str(&field("Source", &root.display().to_string(), color));
         }
     }
+    if let Some(revision) = &skill.revision {
+        out.push_str(&field("Revision", revision, color));
+    }
     out.push_str(&field("Source status", skill.source_status, color));
-    out.push_str(&source_status_caution(skill.source_status));
+    out.push_str(source_status_caution(skill.source_status));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
     out.push('\n');
-    out.push_str(&sanitize_printed(&skill.instructions));
-    if !skill.instructions.ends_with('\n') {
+    let instructions = safe_terminal_text(&skill.instructions);
+    out.push_str(&instructions);
+    if !instructions.ends_with('\n') {
         out.push('\n');
     }
     out.push_str(&paint("--- end of SKILL.md ---", Role::Dim, color));
@@ -411,7 +432,7 @@ fn render_inventory(skill: &TransientSkill, color: bool) -> String {
     if let SkillOrigin::Local { root } = &skill.origin {
         out.push_str(&format!(
             "Read one from {}, or use --file to print it here.\n",
-            root.display()
+            sanitize(&root.display().to_string())
         ));
     } else {
         out.push_str("Use --file to read the ones you need.\n");
@@ -426,40 +447,65 @@ fn render_inventory(skill: &TransientSkill, color: bool) -> String {
     for file in &skill.files {
         out.push_str(&format!(
             "  {}  {} bytes  {}\n",
-            file.path,
+            sanitize(&file.path),
             grouped_number(file.size),
             file.kind.as_str()
         ));
-        if let Some(summary) = &file.summary {
-            out.push_str(&format!("    {summary}\n"));
-        }
         if file.kind.is_readable() {
             out.push_str(&format!(
                 "    {}\n",
-                paint(&pull_command(&skill.origin, &file.path), Role::Brand, color)
+                paint(
+                    &shell_command(&read_argv(
+                        &skill.origin,
+                        skill.revision.as_deref(),
+                        &file.path,
+                        false,
+                    )),
+                    Role::Brand,
+                    color,
+                )
             ));
         } else {
-            out.push_str("    skilld will not print this file. Install the Skill to use it.\n");
+            out.push_str(&format!(
+                "    skilld will not print this {} file. Install the Skill to use it.\n",
+                file.kind.as_str()
+            ));
         }
     }
     out.push('\n');
     out
 }
 
-fn render_files(files: &[PulledFile], color: bool) -> String {
+fn render_files(
+    skill: &str,
+    origin: &SkillOrigin,
+    source_status: &str,
+    revision: Option<&str>,
+    files: &[PulledFile],
+    color: bool,
+) -> String {
     let mut out = String::new();
+    out.push_str(&format!(
+        "{}\n",
+        paint(
+            &format!(
+                "skilld read supporting files from the transient Skill {}.",
+                sanitize(skill)
+            ),
+            Role::Emphasis,
+            color,
+        )
+    ));
+    out.push_str(&origin_field(origin, color));
+    if let Some(revision) = revision {
+        out.push_str(&field("Revision", revision, color));
+    }
+    out.push_str(&field("Source status", source_status, color));
+    out.push_str(source_status_caution(source_status));
+    out.push('\n');
     for file in files {
-        out.push_str(&format!(
-            "{}\n",
-            paint(
-                &format!(
-                    "skilld read {} from the transient Skill {}.",
-                    file.path, file.skill
-                ),
-                Role::Emphasis,
-                color
-            )
-        ));
+        let path = sanitize(&file.path);
+        out.push_str(&field("File", &path, color));
         out.push_str(&field(
             "Size",
             &format!("{} bytes", grouped_number(file.size)),
@@ -469,17 +515,14 @@ fn render_files(files: &[PulledFile], color: bool) -> String {
         match &file.content {
             FileContent::Text(text) => {
                 out.push('\n');
-                out.push_str(&paint(&format!("--- {} ---", file.path), Role::Dim, color));
+                out.push_str(&paint(&format!("--- {path} ---"), Role::Dim, color));
                 out.push('\n');
-                out.push_str(&sanitize_printed(text));
+                let text = safe_terminal_text(text);
+                out.push_str(&text);
                 if !text.ends_with('\n') {
                     out.push('\n');
                 }
-                out.push_str(&paint(
-                    &format!("--- end of {} ---", file.path),
-                    Role::Dim,
-                    color,
-                ));
+                out.push_str(&paint(&format!("--- end of {path} ---"), Role::Dim, color));
                 out.push('\n');
             }
             FileContent::Withheld { reason } => {
@@ -494,26 +537,18 @@ fn render_files(files: &[PulledFile], color: bool) -> String {
     out
 }
 
-/// The install path, spelled out.
-///
-/// An Agent that needs a file on disk needs an install, and this is the only
-/// place it is told how. Naming the effect and the owner of the decision keeps
-/// the Agent from writing files the user never asked for.
 fn render_install_guidance(origin: &SkillOrigin, color: bool) -> String {
     let mut out = String::new();
     out.push_str(&paint("To keep this Skill:", Role::Emphasis, color));
     out.push('\n');
-    match origin {
-        SkillOrigin::Remote { source, direct } => {
-            let flag = if *direct { " --direct" } else { "" };
-            out.push_str(&format!("  skilld install {source}{flag}\n"));
-            out.push_str(&format!("  skilld install {source}{flag} --global\n"));
-        }
-        SkillOrigin::Local { root } => {
-            out.push_str(&format!("  skilld install {}\n", root.display()));
-            out.push_str(&format!("  skilld install {} --global\n", root.display()));
-        }
-    }
+    out.push_str(&format!(
+        "  {}\n",
+        shell_command(&install_argv(origin, false))
+    ));
+    out.push_str(&format!(
+        "  {}\n",
+        shell_command(&install_argv(origin, true))
+    ));
     out.push_str("The first writes the Skill into this project and records it in the lockfile.\n");
     out.push_str("The second keeps it for every project.\n");
     out.push_str(
@@ -526,105 +561,263 @@ fn render_install_guidance(origin: &SkillOrigin, color: bool) -> String {
     out
 }
 
-fn pull_command(origin: &SkillOrigin, path: &str) -> String {
-    match origin {
-        SkillOrigin::Remote { source, direct } => {
-            let flag = if *direct { " --direct" } else { "" };
-            format!("skilld run {source}{flag} --file {path}")
-        }
-        SkillOrigin::Local { root } => {
-            format!("skilld run {} --file {path}", root.display())
-        }
+fn read_argv(origin: &SkillOrigin, revision: Option<&str>, path: &str, json: bool) -> Vec<String> {
+    let mut argv = vec![
+        "skilld".to_owned(),
+        "run".to_owned(),
+        source_argument(origin),
+    ];
+    if matches!(origin, SkillOrigin::Remote { direct: true, .. }) {
+        argv.push("--direct".to_owned());
     }
+    if let Some(revision) = revision {
+        argv.push("--revision".to_owned());
+        argv.push(revision.to_owned());
+    }
+    argv.push(format!("--file={path}"));
+    if json {
+        argv.push("--json".to_owned());
+    }
+    argv
+}
+
+fn install_argv(origin: &SkillOrigin, global: bool) -> Vec<String> {
+    let mut argv = vec![
+        "skilld".to_owned(),
+        "install".to_owned(),
+        install_source_argument(origin),
+    ];
+    if matches!(origin, SkillOrigin::Remote { direct: true, .. }) {
+        argv.push("--direct".to_owned());
+    }
+    if global {
+        argv.push("--global".to_owned());
+    }
+    argv
+}
+
+fn source_argument(origin: &SkillOrigin) -> String {
+    match origin {
+        SkillOrigin::Remote { source, .. } => source.clone(),
+        SkillOrigin::Local { root } => root.display().to_string(),
+    }
+}
+
+fn install_source_argument(origin: &SkillOrigin) -> String {
+    match origin {
+        SkillOrigin::Remote { exact_source, .. } => exact_source.clone(),
+        SkillOrigin::Local { root } => root.display().to_string(),
+    }
+}
+
+fn shell_command(argv: &[String]) -> String {
+    argv.iter()
+        .map(|argument| shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(argument: &str) -> String {
+    if argument.chars().any(char::is_control) {
+        let mut quoted = String::from("$'");
+        for character in argument.chars() {
+            match character {
+                '\'' => quoted.push_str("\\'"),
+                '\\' => quoted.push_str("\\\\"),
+                character if character.is_control() => {
+                    let value = u32::from(character);
+                    if value <= 0xffff {
+                        quoted.push_str(&format!("\\u{value:04X}"));
+                    } else {
+                        quoted.push_str(&format!("\\U{value:08X}"));
+                    }
+                }
+                character => quoted.push(character),
+            }
+        }
+        quoted.push('\'');
+        return quoted;
+    }
+    let portable = !argument.is_empty()
+        && argument
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte));
+    if portable {
+        return argument.to_owned();
+    }
+    format!("'{}'", argument.replace('\'', "'\\''"))
 }
 
 /// State what the status covers, on every status.
 ///
 /// A verified Artifact proves where the bytes came from. It says nothing about
 /// what the instructions ask an Agent to do, and the output must not imply it.
-fn source_status_caution(status: &str) -> String {
+fn source_status_caution(status: &str) -> &'static str {
     match status {
         "verified" => {
             "skilld checked where this Skill came from, not what it asks you to do.\nRead it before you follow it.\n"
-                .to_owned()
         }
-        "unverified" => {
-            "skilld did not check this source. Read this Skill before you follow it.\n".to_owned()
-        }
-        _ => "Read this Skill before you follow it.\n".to_owned(),
+        "unverified" => "skilld did not check this source. Read this Skill before you follow it.\n",
+        _ => "Read this Skill before you follow it.\n",
     }
 }
 
 fn field(label: &str, value: &str, color: bool) -> String {
-    format!("{}: {value}\n", paint(label, Role::Dim, color))
+    format!("{}: {}\n", paint(label, Role::Dim, color), sanitize(value))
 }
 
-fn render_json(data: &serde_json::Value) -> Result<Vec<u8>, CommandError> {
-    let document = serde_json::json!({
-        "schemaVersion": JSON_SCHEMA_VERSION,
-        "_tag": "Success",
-        "command": "run",
-        "data": data,
-    });
-    serde_json::to_vec_pretty(&document)
-        .map(|mut bytes| {
-            bytes.push(b'\n');
-            bytes
-        })
-        .map_err(|error| CommandError::service(format!("cannot render the run output: {error}")))
-}
-
-fn origin_json(origin: &SkillOrigin) -> serde_json::Value {
+fn origin_field(origin: &SkillOrigin, color: bool) -> String {
     match origin {
-        SkillOrigin::Remote { source, direct } => serde_json::json!({
-            "_tag": "remote",
-            "source": source,
-            "direct": direct,
-        }),
-        SkillOrigin::Local { root } => serde_json::json!({
-            "_tag": "local",
-            "root": root.display().to_string(),
-        }),
+        SkillOrigin::Remote { source, .. } => field("Source", source, color),
+        SkillOrigin::Local { root } => field("Source", &root.display().to_string(), color),
     }
 }
 
-fn load_json(skill: &TransientSkill) -> serde_json::Value {
-    serde_json::json!({
-        "_tag": "load",
-        "name": skill.name,
-        "origin": origin_json(&skill.origin),
-        "sourceStatus": skill.source_status,
-        "wroteToDisk": false,
-        "instructions": skill.instructions,
-        "files": skill.files.iter().map(|file| serde_json::json!({
-            "path": file.path,
-            "kind": file.kind.as_str(),
-            "size": file.size,
-            "summary": file.summary,
-            "readable": file.kind.is_readable(),
-            "pull": pull_command(&skill.origin, &file.path),
-        })).collect::<Vec<_>>(),
-    })
+fn safe_terminal_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\t'))
+        .collect()
 }
 
-fn files_json(files: &[PulledFile]) -> serde_json::Value {
-    serde_json::json!({
-        "_tag": "files",
-        "files": files.iter().map(|file| serde_json::json!({
-            "skill": file.skill,
-            "path": file.path,
-            "kind": file.kind.as_str(),
-            "size": file.size,
-            "content": match &file.content {
-                FileContent::Text(text) => serde_json::json!({
-                    "_tag": "text",
-                    "value": text,
-                }),
-                FileContent::Withheld { reason } => serde_json::json!({
-                    "_tag": "withheld",
-                    "reason": reason,
-                }),
-            },
-        })).collect::<Vec<_>>(),
-    })
+#[derive(Serialize)]
+#[serde(tag = "_tag", rename_all = "lowercase")]
+enum JsonOrigin {
+    Remote { source: String, direct: bool },
+    Local { root: String },
+}
+
+fn origin_json(origin: &SkillOrigin) -> JsonOrigin {
+    match origin {
+        SkillOrigin::Remote { source, direct, .. } => JsonOrigin::Remote {
+            source: source.clone(),
+            direct: *direct,
+        },
+        SkillOrigin::Local { root } => JsonOrigin::Local {
+            root: root.display().to_string(),
+        },
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonSupportingFile {
+    path: String,
+    kind: &'static str,
+    size: u64,
+    readable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    read_argv: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct JsonInstallArgv {
+    project: Vec<String>,
+    global: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "_tag",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+enum JsonRunData {
+    Load {
+        name: String,
+        origin: JsonOrigin,
+        source_status: &'static str,
+        source_caution: &'static str,
+        revision: Option<String>,
+        wrote_skill_files: bool,
+        instructions: String,
+        files: Vec<JsonSupportingFile>,
+        install_argv: JsonInstallArgv,
+    },
+    Files {
+        name: String,
+        origin: JsonOrigin,
+        source_status: &'static str,
+        source_caution: &'static str,
+        revision: Option<String>,
+        wrote_skill_files: bool,
+        files: Vec<JsonPulledFile>,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonPulledFile {
+    path: String,
+    kind: &'static str,
+    size: u64,
+    content: JsonFileContent,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "_tag", rename_all = "lowercase")]
+enum JsonFileContent {
+    Text { value: String },
+    Withheld { reason: &'static str },
+}
+
+fn load_json(skill: &TransientSkill) -> JsonRunData {
+    JsonRunData::Load {
+        name: skill.name.clone(),
+        origin: origin_json(&skill.origin),
+        source_status: skill.source_status,
+        source_caution: source_status_caution(skill.source_status).trim_end(),
+        revision: skill.revision.clone(),
+        wrote_skill_files: false,
+        instructions: skill.instructions.clone(),
+        files: skill
+            .files
+            .iter()
+            .map(|file| JsonSupportingFile {
+                path: file.path.clone(),
+                kind: file.kind.as_str(),
+                size: file.size,
+                readable: file.kind.is_readable(),
+                read_argv: file
+                    .kind
+                    .is_readable()
+                    .then(|| read_argv(&skill.origin, skill.revision.as_deref(), &file.path, true)),
+            })
+            .collect(),
+        install_argv: JsonInstallArgv {
+            project: install_argv(&skill.origin, false),
+            global: install_argv(&skill.origin, true),
+        },
+    }
+}
+
+fn files_json(
+    skill: &str,
+    origin: &SkillOrigin,
+    source_status: &'static str,
+    revision: Option<&str>,
+    files: &[PulledFile],
+) -> JsonRunData {
+    JsonRunData::Files {
+        name: skill.to_owned(),
+        origin: origin_json(origin),
+        source_status,
+        source_caution: source_status_caution(source_status).trim_end(),
+        revision: revision.map(str::to_owned),
+        wrote_skill_files: false,
+        files: files
+            .iter()
+            .map(|file| JsonPulledFile {
+                path: file.path.clone(),
+                kind: file.kind.as_str(),
+                size: file.size,
+                content: match &file.content {
+                    FileContent::Text(text) => JsonFileContent::Text {
+                        value: text.clone(),
+                    },
+                    FileContent::Withheld { reason } => JsonFileContent::Withheld { reason },
+                },
+            })
+            .collect(),
+    }
 }

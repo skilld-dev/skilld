@@ -103,8 +103,8 @@ enum Command {
     },
     /// Load a Skill for this session without installing it.
     #[command(
-        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run writes nothing: no lockfile entry, no Agent target, no project\nfile, and no cache. The Skill leaves with the process.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Use skilld install to put them on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
-        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run skilld:skilld-dev/skills/find-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Use skilld install to put them on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
+        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
     )]
     Run {
         /// The Skill source to load.
@@ -113,9 +113,16 @@ enum Command {
         #[arg(
             long = "file",
             value_name = "PATH",
-            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nskilld never prints an executable file. Install the Skill to run one."
+            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nskilld never prints executable or binary files. Install the Skill to use one."
         )]
         files: Vec<String>,
+        #[arg(
+            long,
+            value_name = "COMMIT",
+            requires = "files",
+            long_help = "Read supporting files from one exact remote Git commit.\nUse the revision that an earlier skilld run returned."
+        )]
+        revision: Option<String>,
         #[arg(
             long,
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct run carries the unverified source status."
@@ -212,6 +219,7 @@ pub trait Host {
         &self,
         _source: InstallSource,
         _files: &[String],
+        _revision: Option<&CommitSha>,
     ) -> Result<RunOutcome, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill runs are unavailable on this host",
@@ -623,7 +631,7 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
-        "search", "install", "list", "view", "remove", "update", "verify", "auth", "config",
+        "search", "install", "run", "list", "view", "remove", "update", "verify", "auth", "config",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -753,8 +761,13 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
         Command::Run {
             source,
             files,
+            revision,
             direct,
         } => {
+            run::reject_duplicate_files(&files)?;
+            let revision = revision.map(CommitSha::parse).transpose().map_err(|_| {
+                CommandError::input("--revision must use 40 lowercase hexadecimal characters")
+            })?;
             let source = match (direct, InstallSource::parse(&source)) {
                 (true, InstallSource::Remote(source) | InstallSource::DirectRemote(source)) => {
                     InstallSource::DirectRemote(source)
@@ -765,7 +778,21 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 }
                 (false, source) => source,
             };
-            Ok(CommandOutput::Run(host.run_skill(source, &files)?))
+            if revision.is_some()
+                && !matches!(
+                    source,
+                    InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+                )
+            {
+                return Err(CommandError::input(
+                    "--revision requires a remote Skill source",
+                ));
+            }
+            Ok(CommandOutput::Run(host.run_skill(
+                source,
+                &files,
+                revision.as_ref(),
+            )?))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
@@ -1200,29 +1227,74 @@ impl LocalHost {
         source: &str,
         direct: bool,
         wanted: &[String],
+        expected_revision: Option<&CommitSha>,
     ) -> Result<RunOutcome, CommandError> {
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
-        let prepared = self
-            .remote_provider()?
-            .prepare(&selector, direct)
-            .map_err(CommandError::remote)?;
-        // The digest is dropped on purpose. Nothing is stored, so nothing needs
-        // a cache key, and a key invites a cache back.
+        let provider = self.remote_provider()?;
+        let prepared = match expected_revision {
+            Some(revision) => provider.prepare_exact(&selector, revision, direct),
+            None => provider.prepare(&selector, direct),
+        }
+        .map_err(CommandError::remote)?;
+        let LockedSource::Remote {
+            source: locked_source,
+            commit_sha,
+            skill_path,
+        } = &prepared.locked_source
+        else {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has no remote revision",
+            ));
+        };
+        let revision = CommitSha::parse(commit_sha.clone()).map_err(|_| {
+            CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has an invalid remote revision",
+            )
+        })?;
+        if expected_revision.is_some_and(|expected| expected != &revision) {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the prepared Skill changed its exact revision",
+            ));
+        }
+        let locked_selector =
+            skilld_core::RemoteSelector::parse(locked_source).map_err(CommandError::remote)?;
+        let exact_source = skilld_core::RemoteSelector::parse(&format!(
+            "github:{}/{}/{}#commit:{}",
+            locked_selector.source().owner,
+            locked_selector.source().repository,
+            skill_path,
+            revision.as_str(),
+        ))
+        .map_err(CommandError::remote)?
+        .canonical();
+        let source_status = prepared.source_status.as_str();
         let (name, _, files) =
             skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
         let name = name.as_str().to_owned();
+        let origin = SkillOrigin::Remote {
+            source: selector.canonical(),
+            exact_source,
+            direct,
+        };
         if !wanted.is_empty() {
-            return run::pull_files(&name, &files, wanted).map(RunOutcome::Files);
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status,
+                revision: Some(revision.as_str().to_owned()),
+            });
         }
         Ok(RunOutcome::Load(Box::new(TransientSkill {
             instructions: run::read_instructions(&files)?,
             files: run::supporting_files(&files),
             name,
-            origin: SkillOrigin::Remote {
-                source: selector.canonical(),
-                direct,
-            },
-            source_status: prepared.source_status.as_str(),
+            origin,
+            source_status,
+            revision: Some(revision.as_str().to_owned()),
         })))
     }
 
@@ -1236,15 +1308,23 @@ impl LocalHost {
         // path rather than the one the user typed.
         let path = path.canonicalize().unwrap_or(path);
         let (name, files) = run::read_local(&path)?;
+        let origin = SkillOrigin::Local { root: path };
         if !wanted.is_empty() {
-            return run::pull_files(&name, &files, wanted).map(RunOutcome::Files);
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status: "local",
+                revision: None,
+            });
         }
         Ok(RunOutcome::Load(Box::new(TransientSkill {
             instructions: run::read_instructions(&files)?,
             files: run::supporting_files(&files),
             name,
-            origin: SkillOrigin::Local { root: path },
+            origin,
             source_status: "local",
+            revision: None,
         })))
     }
 
@@ -1423,11 +1503,16 @@ impl Host for LocalHost {
         &self,
         source: InstallSource,
         files: &[String],
+        revision: Option<&CommitSha>,
     ) -> Result<RunOutcome, CommandError> {
+        run::reject_duplicate_files(files)?;
         match source {
-            InstallSource::Remote(source) => self.run_remote(&source, false, files),
-            InstallSource::DirectRemote(source) => self.run_remote(&source, true, files),
-            source => self.run_directory(source, files),
+            InstallSource::Remote(source) => self.run_remote(&source, false, files, revision),
+            InstallSource::DirectRemote(source) => self.run_remote(&source, true, files, revision),
+            source if revision.is_none() => self.run_directory(source, files),
+            _ => Err(CommandError::input(
+                "--revision requires a remote Skill source",
+            )),
         }
     }
 

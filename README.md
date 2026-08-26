@@ -43,18 +43,19 @@ It prints SKILL.md so your Agent follows it now.
 npx skilld run skilld:skilld-dev/skills/vue
 ```
 
-A remote run writes nothing.
-There is no lockfile entry, no Agent target, no project file, and no cache.
-The Skill leaves when the process ends.
+A remote run writes no Skill files.
+It creates no lockfile entry, Agent target, project file, or Skill cache.
+The command retains no Skill files after it exits.
 
 skilld names the supporting files a Skill carries and prints none of them.
 Read one when the instructions call for it:
 
 ```sh
-npx skilld run skilld:skilld-dev/skills/vue --file references/api.md
+npx skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
 ```
 
-skilld never prints a file the Skill marks executable.
+Use the revision and file-read command from the initial output.
+skilld never prints executable or binary files.
 A Skill that must run its own script needs an install.
 
 Install the Skill when you want it in every session:

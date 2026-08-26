@@ -1240,7 +1240,7 @@ fn hash_skill_tree(root: &Path) -> Result<String, StoreError> {
     Ok(hex(&hasher.finalize()))
 }
 
-fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(root).map_err(fs_error)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(StoreError::InvalidSource(
@@ -1259,7 +1259,7 @@ fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
     validate_skill_files(root)?;
     let directory_name = SkillName::from_source(root)
         .map_err(|error| StoreError::InvalidSource(error.to_string()))?;

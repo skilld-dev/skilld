@@ -1,15 +1,14 @@
 //! Transient Skill loads.
 //!
-//! `skilld run` hands the calling Agent a Skill now. A remote run writes
-//! nothing: no lockfile entry, no Agent target, no project file, and no cache.
-//! The Skill arrives in memory, the Agent reads what it asks for, and the
-//! process exit takes the rest with it.
+//! `skilld run` hands the calling Agent a Skill now. A remote run retains no
+//! Skill files and creates no lockfile entry, Agent target, or project file.
 //!
-//! Supporting files are named, never poured out. The Agent pulls the ones the
-//! instructions call for. A file skilld cannot hand over as text is a file the
-//! Agent needs on disk, and putting it there is what `skilld install` is for.
+//! The initial load names supporting files without printing their content.
+//! The Agent reads only the files that the instructions name.
 
-use std::fs;
+use std::collections::BTreeSet;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use skilld_core::PreparedFile;
@@ -21,7 +20,7 @@ pub const INSTRUCTIONS_FILE: &str = "SKILL.md";
 
 const MAX_LOCAL_DEPTH: usize = 8;
 const MAX_LOCAL_FILES: usize = 512;
-const SUMMARY_WIDTH: usize = 80;
+const MAX_LOCAL_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Where a transient Skill came from, and what that means for its files.
 ///
@@ -29,8 +28,14 @@ const SUMMARY_WIDTH: usize = 80;
 /// remote Skill never lands, so it has no path to give.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SkillOrigin {
-    Local { root: PathBuf },
-    Remote { source: String, direct: bool },
+    Local {
+        root: PathBuf,
+    },
+    Remote {
+        source: String,
+        exact_source: String,
+        direct: bool,
+    },
 }
 
 /// How skilld can hand one supporting file to an Agent.
@@ -65,8 +70,6 @@ pub struct SupportingFile {
     pub path: String,
     pub kind: FileKind,
     pub size: u64,
-    /// One line describing the file, read from its own content.
-    pub summary: Option<String>,
 }
 
 /// One transient Skill: loaded for this session, recorded nowhere.
@@ -77,13 +80,14 @@ pub struct TransientSkill {
     pub origin: SkillOrigin,
     /// `verified`, `local`, or `unverified`.
     pub source_status: &'static str,
+    /// The exact remote Git commit. Local Skills have no revision.
+    pub revision: Option<String>,
     pub files: Vec<SupportingFile>,
 }
 
 /// One supporting file the Agent asked for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PulledFile {
-    pub skill: String,
     pub path: String,
     pub kind: FileKind,
     pub size: u64,
@@ -103,7 +107,23 @@ pub enum FileContent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunOutcome {
     Load(Box<TransientSkill>),
-    Files(Vec<PulledFile>),
+    Files {
+        skill: String,
+        origin: SkillOrigin,
+        source_status: &'static str,
+        revision: Option<String>,
+        files: Vec<PulledFile>,
+    },
+}
+
+pub(crate) fn reject_duplicate_files(wanted: &[String]) -> Result<(), CommandError> {
+    let mut unique = BTreeSet::new();
+    if wanted.iter().any(|path| !unique.insert(path)) {
+        return Err(CommandError::input(
+            "each --file path must appear only once",
+        ));
+    }
+    Ok(())
 }
 
 /// Read the SKILL.md text out of a file set.
@@ -134,7 +154,6 @@ pub fn supporting_files(files: &[PreparedFile]) -> Vec<SupportingFile> {
                 path: file.path.clone(),
                 kind,
                 size: file.bytes.len() as u64,
-                summary: kind.is_readable().then(|| summarize(&file.bytes)).flatten(),
             }
         })
         .collect()
@@ -168,7 +187,6 @@ pub fn pull_files(
                 })?;
             let kind = classify(file);
             Ok(PulledFile {
-                skill: skill.to_owned(),
                 path: file.path.clone(),
                 kind,
                 size: file.bytes.len() as u64,
@@ -195,42 +213,38 @@ pub fn pull_files(
 ///
 /// A local Skill needs no delivery decision. The user owns these files already.
 pub fn read_local(path: &Path) -> Result<(String, Vec<PreparedFile>), CommandError> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            CommandError::operation("INVALID_SOURCE", "the Skill directory has no usable name")
-        })?
-        .to_owned();
-    let mut files = Vec::new();
-    collect_local(path, Path::new(""), 0, &mut files)?;
-    if !files.iter().any(|file| file.path == INSTRUCTIONS_FILE) {
-        return Err(CommandError::operation(
-            "SOURCE_NOT_FOUND",
-            format!("cannot read {INSTRUCTIONS_FILE} in this directory"),
-        ));
-    }
-    files.sort_by(|left, right| left.path.cmp(&right.path));
+    crate::local_store::validate_skill_files(path).map_err(CommandError::store)?;
+    let mut inventory = Vec::new();
+    let mut total = 0;
+    collect_local_metadata(path, Path::new(""), 0, &mut inventory, &mut total)?;
+    crate::local_store::validate_skill_source(path).map_err(CommandError::store)?;
+    let name = skilld_core::SkillName::from_source(path)
+        .map_err(CommandError::domain)?
+        .to_string();
+    inventory.sort_by(|left, right| left.relative.cmp(&right.relative));
+    let files = inventory
+        .into_iter()
+        .map(read_local_file)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((name, files))
 }
 
-fn collect_local(
+struct LocalFile {
+    path: PathBuf,
+    relative: String,
+    mode: u32,
+    size: u64,
+}
+
+fn collect_local_metadata(
     root: &Path,
     relative: &Path,
     depth: usize,
-    files: &mut Vec<PreparedFile>,
+    files: &mut Vec<LocalFile>,
+    total: &mut u64,
 ) -> Result<(), CommandError> {
     if depth > MAX_LOCAL_DEPTH {
-        return Err(CommandError::operation(
-            "SKILL_TOO_LARGE",
-            format!("the Skill nests deeper than {MAX_LOCAL_DEPTH} directories"),
-        ));
-    }
-    if files.len() >= MAX_LOCAL_FILES {
-        return Err(CommandError::operation(
-            "SKILL_TOO_LARGE",
-            format!("the Skill carries more than {MAX_LOCAL_FILES} files"),
-        ));
+        return Err(too_large("the local Skill exceeds its depth limit"));
     }
     let entries = fs::read_dir(root.join(relative)).map_err(|error| {
         CommandError::operation(
@@ -243,53 +257,90 @@ fn collect_local(
             CommandError::filesystem(format!("cannot read a Skill file: {error}"))
         })?;
         let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
+        let name = name
+            .to_str()
+            .ok_or_else(|| invalid_local("Skill paths must use UTF-8"))?;
         let child = relative.join(name);
-        let kind = entry.file_type().map_err(|error| {
+        let file_type = entry.file_type().map_err(|error| {
             CommandError::filesystem(format!("cannot read a Skill file: {error}"))
         })?;
-        if kind.is_dir() {
-            collect_local(root, &child, depth + 1, files)?;
+        if file_type.is_symlink() {
+            return Err(invalid_local("local Skill sources cannot contain links"));
+        }
+        let metadata = entry.metadata().map_err(|error| {
+            CommandError::filesystem(format!("cannot read a Skill file: {error}"))
+        })?;
+        if metadata.is_dir() {
+            collect_local_metadata(root, &child, depth + 1, files, total)?;
             continue;
         }
-        // Symlinks are skipped on purpose, never followed. Following one could
-        // escape the Skill directory or loop forever.
-        if !kind.is_file() {
-            continue;
-        }
-        let Some(path) = child.to_str() else { continue };
-        if files.len() >= MAX_LOCAL_FILES {
-            return Err(CommandError::operation(
-                "SKILL_TOO_LARGE",
-                format!("the Skill carries more than {MAX_LOCAL_FILES} files"),
+        if !metadata.is_file() {
+            return Err(invalid_local(
+                "local Skill sources can contain only files and directories",
             ));
         }
-        let bytes = fs::read(entry.path()).map_err(|error| {
-            CommandError::filesystem(format!("cannot read a Skill file: {error}"))
-        })?;
-        files.push(PreparedFile {
-            path: path.replace('\\', "/"),
-            mode: local_mode(&entry),
-            bytes,
+        if files.len() >= MAX_LOCAL_FILES {
+            return Err(too_large("the local Skill exceeds its file limit"));
+        }
+        *total = total
+            .checked_add(metadata.len())
+            .ok_or_else(|| too_large("the local Skill exceeds its content limit"))?;
+        if *total > MAX_LOCAL_BYTES {
+            return Err(too_large("the local Skill exceeds its content limit"));
+        }
+        files.push(LocalFile {
+            path: entry.path(),
+            relative: child
+                .to_str()
+                .ok_or_else(|| invalid_local("Skill paths must use UTF-8"))?
+                .replace('\\', "/"),
+            mode: local_mode(&metadata),
+            size: metadata.len(),
         });
     }
     Ok(())
 }
 
-#[cfg(unix)]
-fn local_mode(entry: &fs::DirEntry) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-    entry.metadata().map_or(0o644, |data| {
-        if data.permissions().mode() & 0o111 == 0 {
-            0o644
-        } else {
-            0o755
-        }
+fn read_local_file(file: LocalFile) -> Result<PreparedFile, CommandError> {
+    let input = File::open(&file.path)
+        .map_err(|error| CommandError::filesystem(format!("cannot read a Skill file: {error}")))?;
+    let mut bytes = Vec::new();
+    input
+        .take(file.size.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| CommandError::filesystem(format!("cannot read a Skill file: {error}")))?;
+    if bytes.len() as u64 != file.size {
+        return Err(invalid_local(
+            "a local Skill file changed while skilld read it",
+        ));
+    }
+    Ok(PreparedFile {
+        path: file.relative,
+        mode: file.mode,
+        bytes,
     })
 }
 
+fn invalid_local(message: &'static str) -> CommandError {
+    CommandError::operation("INVALID_SOURCE", message)
+}
+
+fn too_large(message: &'static str) -> CommandError {
+    CommandError::operation("SKILL_TOO_LARGE", message)
+}
+
+#[cfg(unix)]
+fn local_mode(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    if metadata.permissions().mode() & 0o111 == 0 {
+        0o644
+    } else {
+        0o755
+    }
+}
+
 #[cfg(not(unix))]
-fn local_mode(_entry: &fs::DirEntry) -> u32 {
+fn local_mode(_metadata: &fs::Metadata) -> u32 {
     0o644
 }
 
@@ -306,62 +357,4 @@ fn classify(file: &PreparedFile) -> FileKind {
 
 fn decode(bytes: &[u8]) -> Option<String> {
     String::from_utf8(bytes.to_vec()).ok()
-}
-
-/// Read one line describing a file, from the file itself.
-///
-/// The Skill author never writes this line, so it cannot drift from the content
-/// the way a hand-written manifest entry does.
-fn summarize(bytes: &[u8]) -> Option<String> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    frontmatter_description(text)
-        .or_else(|| first_heading(text))
-        .or_else(|| first_prose_line(text))
-        .map(|line| truncate(&sanitize(line), SUMMARY_WIDTH))
-}
-
-fn frontmatter_description(text: &str) -> Option<&str> {
-    let rest = text.strip_prefix("---\n")?;
-    let body = rest.split("\n---").next()?;
-    body.lines()
-        .find_map(|line| line.strip_prefix("description:"))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn first_heading(text: &str) -> Option<&str> {
-    text.lines().find_map(|line| {
-        let trimmed = line.trim_start();
-        trimmed
-            .starts_with('#')
-            .then(|| trimmed.trim_start_matches('#').trim())
-            .filter(|value| !value.is_empty())
-    })
-}
-
-fn first_prose_line(text: &str) -> Option<&str> {
-    text.lines()
-        .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c == '#' || c == '/'))
-        .find(|line| !line.is_empty())
-}
-
-/// Strip anything that could move the cursor or forge a line in our own output.
-fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
-        .trim()
-        .to_owned()
-}
-
-fn truncate(value: &str, width: usize) -> String {
-    if value.chars().count() <= width {
-        return value.to_owned();
-    }
-    let kept = value
-        .chars()
-        .take(width.saturating_sub(1))
-        .collect::<String>();
-    format!("{}…", kept.trim_end())
 }

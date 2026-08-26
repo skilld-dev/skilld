@@ -113,6 +113,7 @@ fn json_help_and_version_return_versioned_documents() {
         &["skilld", "search", "--json", "--help"],
         OutputContext::Plain,
     );
+    let run_help = run(&["skilld", "run", "--json", "--help"], OutputContext::Plain);
     let version = run(&["skilld", "--json", "--version"], OutputContext::Plain);
 
     assert_eq!(root_help.0, 0);
@@ -123,6 +124,9 @@ fn json_help_and_version_return_versioned_documents() {
     let search = serde_json::from_str::<serde_json::Value>(&search_help.1).unwrap();
     assert_eq!(search["command"], "help");
     assert_eq!(search["data"]["path"], "skilld search");
+    let run = serde_json::from_str::<serde_json::Value>(&run_help.1).unwrap();
+    assert_eq!(run["command"], "help");
+    assert_eq!(run["data"]["path"], "skilld run");
     let version = serde_json::from_str::<serde_json::Value>(&version.1).unwrap();
     assert_eq!(version["command"], "version");
     assert_eq!(version["data"]["name"], "skilld");
@@ -237,13 +241,48 @@ fn human_search_is_polished_and_respects_terminal_width() {
     assert!(stdout.contains("1 of 14 Skills"));
     assert!(stdout.contains("227,068 stars"));
     assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
-    assert!(stdout.contains("skilld install"));
+    assert!(stdout.contains("skilld run"));
+    assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
+    assert!(!stdout.contains("skilld install"));
     assert!(
         stdout
             .lines()
+            .filter(|line| !line.trim_start().starts_with("skilld run "))
             .all(|line| UnicodeWidthStr::width(line) <= 40)
     );
     assert!(!stdout.contains('\u{1b}'));
+}
+
+#[test]
+fn human_search_keeps_the_run_command_on_one_line() {
+    let mut response = response();
+    let name = "a-very-long-skill-name".to_owned();
+    response.items[0].name.clone_from(&name);
+    response.items[0].source.selector = SourceSelector::NamedSkill { name };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run_with_output(
+        ["skilld", "search", "grill"],
+        &SearchHost {
+            response: Ok(response),
+        },
+        OutputContext::HumanTerminal {
+            width: 20,
+            color: false,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    let stdout = String::from_utf8(stdout).unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "  skilld run skilld:mattpocock/skills/a-very-long-skill-name")
+    );
 }
 
 #[test]
@@ -300,6 +339,7 @@ fn human_search_uses_display_cells_and_sanitizes_terminal_controls() {
     assert!(
         stdout
             .lines()
+            .filter(|line| !line.trim_start().starts_with("skilld run "))
             .all(|line| UnicodeWidthStr::width(line) <= 20)
     );
 }

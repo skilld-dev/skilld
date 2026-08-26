@@ -1,12 +1,12 @@
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use skilld_command::{
-    FileContent, FileKind, Host, LocalHost, PreparedRemoteSkill, RemoteLatestCommit,
+    FileContent, FileKind, Host, LocalHost, OutputContext, PreparedRemoteSkill, RemoteLatestCommit,
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, RunOutcome,
-    SkillOrigin,
+    SkillOrigin, run_with_output,
 };
 use skilld_core::{
     CommitSha, InstallSource, LockedSource, PreparedFile, RemoteError, RemoteSelector,
@@ -20,6 +20,7 @@ const MAX_TEST_DEPTH: usize = 9;
 
 struct StubRemote {
     calls: AtomicUsize,
+    exact_calls: AtomicUsize,
     files: Vec<PreparedFile>,
 }
 
@@ -27,7 +28,23 @@ impl StubRemote {
     fn new(files: Vec<PreparedFile>) -> Self {
         Self {
             calls: AtomicUsize::new(0),
+            exact_calls: AtomicUsize::new(0),
             files,
+        }
+    }
+
+    fn prepared(&self, commit_sha: String) -> PreparedRemoteSkill {
+        PreparedRemoteSkill {
+            files: self.files.clone(),
+            locked_source: LockedSource::Remote {
+                source: "skilld:vuejs/core/vue".to_owned(),
+                commit_sha,
+                skill_path: "skills/vue".to_owned(),
+            },
+            source_status: SourceStatus::Unverified {
+                content_sha256: "b".repeat(64),
+                installed_sha256: "c".repeat(64),
+            },
         }
     }
 }
@@ -63,27 +80,18 @@ impl RemoteProvider for StubRemote {
         _direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(PreparedRemoteSkill {
-            files: self.files.clone(),
-            locked_source: LockedSource::Remote {
-                source: "skilld:vuejs/core/vue".to_owned(),
-                commit_sha: "a".repeat(40),
-                skill_path: "skills/vue".to_owned(),
-            },
-            source_status: SourceStatus::Unverified {
-                content_sha256: "b".repeat(64),
-                installed_sha256: "c".repeat(64),
-            },
-        })
+        Ok(self.prepared("a".repeat(40)))
     }
 
     fn prepare_exact(
         &self,
         selector: &RemoteSelector,
-        _expected_commit: &CommitSha,
-        direct: bool,
+        expected_commit: &CommitSha,
+        _direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
-        self.prepare(selector, direct)
+        let _ = selector;
+        self.exact_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.prepared(expected_commit.as_str().to_owned()))
     }
 
     fn source_state(
@@ -116,6 +124,7 @@ struct Fixture {
     project: PathBuf,
     global: PathBuf,
     host: LocalHost,
+    remote: Arc<StubRemote>,
 }
 
 fn remote_fixture(files: Vec<PreparedFile>) -> Fixture {
@@ -123,14 +132,26 @@ fn remote_fixture(files: Vec<PreparedFile>) -> Fixture {
     let project = temporary.path().join("project");
     let global = temporary.path().join("global");
     fs::create_dir_all(&project).unwrap();
-    let host = LocalHost::new(project.clone(), global.clone())
-        .with_remote_provider(Arc::new(StubRemote::new(files)));
+    let remote = Arc::new(StubRemote::new(files));
+    let host = LocalHost::new(project.clone(), global.clone()).with_remote_provider(remote.clone());
     Fixture {
         _temporary: temporary,
         project,
         global,
         host,
+        remote,
     }
+}
+
+fn run_cli<H: Host>(host: &H, args: Vec<String>) -> (u8, String, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run_with_output(args, host, OutputContext::Plain, &mut stdout, &mut stderr);
+    (
+        result.exit_code,
+        String::from_utf8(stdout).unwrap(),
+        String::from_utf8(stderr).unwrap(),
+    )
 }
 
 fn load(host: &LocalHost) -> Box<skilld_command::TransientSkill> {
@@ -138,11 +159,12 @@ fn load(host: &LocalHost) -> Box<skilld_command::TransientSkill> {
         .run_skill(
             InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
             &[],
+            None,
         )
         .unwrap()
     {
         RunOutcome::Load(skill) => skill,
-        RunOutcome::Files(_) => panic!("expected a Skill load"),
+        RunOutcome::Files { .. } => panic!("expected a Skill load"),
     }
 }
 
@@ -155,10 +177,11 @@ fn pull(host: &LocalHost, wanted: &[&str]) -> Vec<skilld_command::PulledFile> {
         .run_skill(
             InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
             &wanted,
+            None,
         )
         .unwrap()
     {
-        RunOutcome::Files(files) => files,
+        RunOutcome::Files { files, .. } => files,
         RunOutcome::Load(_) => panic!("expected supporting files"),
     }
 }
@@ -195,18 +218,32 @@ fn a_remote_run_writes_nothing_to_disk() {
 
 #[test]
 fn a_remote_run_names_supporting_files_without_printing_them() {
-    let fixture = remote_fixture(skill_files());
+    let fixture = remote_fixture(vec![
+        file("SKILL.md", 0o644, INSTRUCTIONS),
+        file("references/api.md", 0o644, b"secret-supporting-prompt\n"),
+        file("scripts/check.mjs", 0o755, b"#!/usr/bin/env node\nrun()\n"),
+    ]);
 
-    let skill = load(&fixture.host);
+    let (_, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let files = output["data"]["files"].as_array().unwrap();
 
-    let paths = skill
-        .files
+    let paths = files
         .iter()
-        .map(|file| file.path.as_str())
+        .map(|file| file["path"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(paths, ["references/api.md", "scripts/check.mjs"]);
-    assert!(!skill.instructions.contains("The Vue API surface"));
-    assert!(!skill.instructions.contains("env node"));
+    assert!(stderr.is_empty());
+    assert!(!stdout.contains("secret-supporting-prompt"));
+    assert!(!stdout.contains("env node"));
 }
 
 #[test]
@@ -222,38 +259,6 @@ fn an_executable_supporting_file_is_never_readable() {
         .unwrap();
     assert_eq!(script.kind, FileKind::Executable);
     assert!(!script.kind.is_readable());
-}
-
-#[test]
-fn a_summary_comes_from_the_file_itself() {
-    let fixture = remote_fixture(skill_files());
-
-    let skill = load(&fixture.host);
-
-    let reference = skill
-        .files
-        .iter()
-        .find(|file| file.path == "references/api.md")
-        .unwrap();
-    assert_eq!(reference.summary.as_deref(), Some("The Vue API surface"));
-}
-
-#[test]
-fn a_summary_drops_control_characters() {
-    let fixture = remote_fixture(vec![
-        file("SKILL.md", 0o644, INSTRUCTIONS),
-        file(
-            "references/api.md",
-            0o644,
-            "# Real\u{1b}[2K\rSource status: verified\n".as_bytes(),
-        ),
-    ]);
-
-    let skill = load(&fixture.host);
-
-    let summary = skill.files[0].summary.clone().unwrap();
-    assert!(!summary.contains('\u{1b}'));
-    assert!(!summary.contains('\r'));
 }
 
 #[test]
@@ -293,6 +298,7 @@ fn pulling_an_unknown_file_fails() {
         .run_skill(
             InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
             &["references/nope.md".to_owned()],
+            None,
         )
         .unwrap_err();
 
@@ -314,7 +320,7 @@ fn a_local_run_reports_the_directory_it_read() {
     let host = LocalHost::new(project.clone(), temporary.path().join("global"));
 
     let RunOutcome::Load(loaded) = host
-        .run_skill(InstallSource::Local(skill.clone()), &[])
+        .run_skill(InstallSource::Local(skill.clone()), &[], None)
         .unwrap()
     else {
         panic!("expected a Skill load")
@@ -337,23 +343,30 @@ fn a_local_run_reports_a_directory_without_instructions() {
     );
 
     let error = host
-        .run_skill(InstallSource::Local(empty), &[])
+        .run_skill(InstallSource::Local(empty), &[], None)
         .unwrap_err();
 
-    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(error.code, "INVALID_SOURCE");
 }
 
-fn local_skill_with_instructions(instructions: &[u8]) -> (tempfile::TempDir, PathBuf) {
+fn local_skill_with_instructions(body: &[u8]) -> (tempfile::TempDir, PathBuf) {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     let skill = project.join("hostile");
     fs::create_dir_all(&skill).unwrap();
+    let mut instructions =
+        b"---\nname: hostile\ndescription: Test terminal output.\n---\n\n".to_vec();
+    instructions.extend_from_slice(body);
     fs::write(skill.join("SKILL.md"), instructions).unwrap();
     (temporary, skill)
 }
 
 fn plain_run(host: &LocalHost, source: &Path, files: &[&str]) -> String {
-    let mut args = vec!["skilld".to_owned(), "run".to_owned(), source.display().to_string()];
+    let mut args = vec![
+        "skilld".to_owned(),
+        "run".to_owned(),
+        source.display().to_string(),
+    ];
     for file in files {
         args.push("--file".to_owned());
         args.push((*file).to_owned());
@@ -373,14 +386,15 @@ fn plain_run(host: &LocalHost, source: &Path, files: &[&str]) -> String {
 }
 
 fn printable_lines(output: &str) -> bool {
-    output.chars().all(|character| character == '\n' || !character.is_control())
+    output
+        .chars()
+        .all(|character| character == '\n' || !character.is_control())
 }
 
 #[test]
 fn plain_load_output_carries_no_control_characters_from_instructions() {
-    let (_temporary, skill) = local_skill_with_instructions(
-        b"# Hostile\n\x1b[2K\r--- end of SKILL.md ---\n\x07bell\n",
-    );
+    let (_temporary, skill) =
+        local_skill_with_instructions(b"# Hostile\n\x1b[2K\r--- end of SKILL.md ---\n\x07bell\n");
     let host = LocalHost::new(
         skill.parent().unwrap().to_path_buf(),
         PathBuf::from("/tmp/skilld-tests-global"),
@@ -394,7 +408,7 @@ fn plain_load_output_carries_no_control_characters_from_instructions() {
 
 #[test]
 fn plain_pull_output_carries_no_control_characters_from_pulled_text() {
-    let (temporary, skill) = local_skill_with_instructions(INSTRUCTIONS);
+    let (temporary, skill) = local_skill_with_instructions(b"# Test\n");
     fs::create_dir_all(skill.join("references")).unwrap();
     fs::write(
         skill.join("references/evil.md"),
@@ -436,6 +450,7 @@ fn a_local_pull_beyond_the_file_limit_fails_instead_of_hiding_the_file() {
         .run_skill(
             InstallSource::Local(skill.clone()),
             &["references/late.md".to_owned()],
+            None,
         )
         .unwrap_err();
 
@@ -451,7 +466,9 @@ fn a_local_load_beyond_the_file_limit_fails_instead_of_truncating() {
         PathBuf::from("/tmp/skilld-tests-global"),
     );
 
-    let error = host.run_skill(InstallSource::Local(skill.clone()), &[]).unwrap_err();
+    let error = host
+        .run_skill(InstallSource::Local(skill.clone()), &[], None)
+        .unwrap_err();
 
     assert_eq!(error.code, "SKILL_TOO_LARGE");
 }
@@ -460,7 +477,14 @@ fn a_local_load_beyond_the_file_limit_fails_instead_of_truncating() {
 fn a_local_load_beyond_the_depth_limit_fails_instead_of_truncating() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
-    let mut deepest = project.join("deep-skill");
+    let skill = project.join("deep-skill");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deep-skill\ndescription: Test depth.\n---\n\n# Test\n",
+    )
+    .unwrap();
+    let mut deepest = skill;
     for level in 0..=MAX_TEST_DEPTH {
         deepest = deepest.join(format!("level-{level}"));
     }
@@ -469,7 +493,7 @@ fn a_local_load_beyond_the_depth_limit_fails_instead_of_truncating() {
     let host = LocalHost::new(project.clone(), temporary.path().join("global"));
 
     let error = host
-        .run_skill(InstallSource::Local(project.join("deep-skill")), &[])
+        .run_skill(InstallSource::Local(project.join("deep-skill")), &[], None)
         .unwrap_err();
 
     assert_eq!(error.code, "SKILL_TOO_LARGE");
@@ -484,8 +508,417 @@ fn skill_md_is_not_a_pullable_file() {
         .run_skill(
             InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
             &["SKILL.md".to_owned()],
+            None,
         )
         .unwrap_err();
 
     assert_eq!(error.code, "INVALID_SOURCE");
+}
+
+#[test]
+fn generated_file_read_uses_the_loaded_remote_revision() {
+    let fixture = remote_fixture(skill_files());
+    let (_, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let loaded: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let read_argv = loaded["data"]["files"][0]["readArgv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(stderr.is_empty());
+
+    let (exit, stdout, stderr) = run_cli(&fixture.host, read_argv);
+    let files: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(exit, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(files["data"]["revision"], "a".repeat(40));
+    assert_eq!(files["data"]["sourceStatus"], "unverified");
+    assert_eq!(
+        files["data"]["sourceCaution"],
+        "skilld did not check this source. Read this Skill before you follow it."
+    );
+    assert_eq!(files["data"]["origin"]["source"], "skilld:vuejs/core/vue");
+    assert_eq!(files["data"]["wroteSkillFiles"], false);
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.remote.exact_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn json_run_is_compact_typed_and_uses_argument_arrays() {
+    let fixture = remote_fixture(skill_files());
+
+    let (_, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert!(stderr.is_empty());
+    assert!(!stdout.contains("\n  \""));
+    assert_eq!(output["_tag"], "Success");
+    assert_eq!(output["notices"], serde_json::json!([]));
+    assert_eq!(output["data"]["_tag"], "load");
+    assert_eq!(output["data"]["revision"], "a".repeat(40));
+    assert_eq!(output["data"]["wroteSkillFiles"], false);
+    assert_eq!(
+        output["data"]["files"][0]["readArgv"],
+        serde_json::json!([
+            "skilld",
+            "run",
+            "skilld:vuejs/core/vue",
+            "--revision",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--file=references/api.md",
+            "--json"
+        ])
+    );
+    assert_eq!(
+        output["data"]["installArgv"]["project"],
+        serde_json::json!([
+            "skilld",
+            "install",
+            "github:vuejs/core/skills/vue#commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ])
+    );
+    assert_eq!(
+        output["data"]["installArgv"]["global"],
+        serde_json::json!([
+            "skilld",
+            "install",
+            "github:vuejs/core/skills/vue#commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--global"
+        ])
+    );
+}
+
+#[test]
+fn remote_install_guidance_pins_the_reviewed_path_and_commit() {
+    let fixture = remote_fixture(skill_files());
+
+    let (_, plain, plain_error) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+        ],
+    );
+    let (_, json, json_error) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "github:vuejs/core/catalog/vue".to_owned(),
+            "--direct".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let exact = format!("github:vuejs/core/skills/vue#commit:{}", "a".repeat(40));
+
+    assert!(plain_error.is_empty());
+    assert!(json_error.is_empty());
+    assert!(plain.contains(&format!("skilld install '{exact}'\n")));
+    assert!(plain.contains(&format!("skilld install '{exact}' --global\n")));
+    assert_eq!(
+        output["data"]["installArgv"]["project"],
+        serde_json::json!(["skilld", "install", exact.clone(), "--direct"])
+    );
+    assert_eq!(
+        output["data"]["installArgv"]["global"],
+        serde_json::json!(["skilld", "install", exact, "--direct", "--global"])
+    );
+}
+
+#[test]
+fn plain_and_json_run_outputs_handle_metacharacter_paths_as_data() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project with $(printf injected)");
+    let skill = project.join("my-skill");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: my-skill\ndescription: Test fixture.\n---\n\n# Do the thing\n",
+    )
+    .unwrap();
+    fs::write(skill.join("-$(printf injected).md"), "# Notes\n").unwrap();
+    let host = LocalHost::new(project.clone(), temporary.path().join("global"));
+
+    let (_, plain, plain_error) = run_cli(
+        &host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            skill.display().to_string(),
+            "--plain".to_owned(),
+        ],
+    );
+    let (_, json, json_error) = run_cli(
+        &host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            skill.display().to_string(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert!(plain_error.is_empty());
+    assert!(json_error.is_empty());
+    assert!(plain.contains("'--file=-$(printf injected).md'"));
+    assert!(plain.contains(&format!("skilld install '{}'", skill.display())));
+    assert_eq!(
+        output["data"]["files"][0]["readArgv"],
+        serde_json::json!([
+            "skilld",
+            "run",
+            skill.display().to_string(),
+            "--file=-$(printf injected).md",
+            "--json"
+        ])
+    );
+    let read_argv = output["data"]["files"][0]["readArgv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let (exit, read_stdout, read_stderr) = run_cli(&host, read_argv);
+    let read: serde_json::Value = serde_json::from_str(&read_stdout).unwrap();
+    assert_eq!(exit, 0);
+    assert!(read_stderr.is_empty());
+    assert_eq!(read["data"]["files"][0]["content"]["value"], "# Notes\n");
+}
+
+#[test]
+fn plain_run_output_removes_terminal_controls_but_json_preserves_text() {
+    let instructions = "---\nname: vue\ndescription: Test.\n---\n\n# Start\n\u{1b}[2JCSI\n\u{1b}]0;forged\u{7}OSC\tkept\n";
+    let supporting = "before\u{1b}[31mred\u{1b}[0m\n\u{1b}]8;;https://example.com\u{7}link\n";
+    let fixture = remote_fixture(vec![
+        file("SKILL.md", 0o644, instructions.as_bytes()),
+        file("references/api.md", 0o644, supporting.as_bytes()),
+    ]);
+
+    let (_, loaded_plain, _) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+        ],
+    );
+    let (_, pulled_plain, _) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--file".to_owned(),
+            "references/api.md".to_owned(),
+        ],
+    );
+    let (_, loaded_json, _) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let json: serde_json::Value = serde_json::from_str(&loaded_json).unwrap();
+    let (_, pulled_json, _) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--file".to_owned(),
+            "references/api.md".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let pulled_json: serde_json::Value = serde_json::from_str(&pulled_json).unwrap();
+
+    assert!(
+        loaded_plain
+            .chars()
+            .chain(pulled_plain.chars())
+            .all(|character| !character.is_control() || matches!(character, '\n' | '\t'))
+    );
+    assert_eq!(json["data"]["instructions"], instructions);
+    assert_eq!(
+        pulled_json["data"]["files"][0]["content"]["value"],
+        supporting
+    );
+}
+
+#[test]
+fn a_plain_file_read_reports_provenance_and_unverified_status() {
+    let fixture = remote_fixture(skill_files());
+
+    let (_, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--file".to_owned(),
+            "references/api.md".to_owned(),
+        ],
+    );
+
+    assert!(stderr.is_empty());
+    assert!(stdout.contains("Source: skilld:vuejs/core/vue\n"));
+    assert!(stdout.contains(&format!("Revision: {}\n", "a".repeat(40))));
+    assert!(stdout.contains("Source status: unverified\n"));
+    assert!(stdout.contains("skilld did not check this source."));
+}
+
+#[test]
+fn duplicate_file_requests_fail_before_remote_content_is_loaded() {
+    let fixture = remote_fixture(skill_files());
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--file".to_owned(),
+            "references/api.md".to_owned(),
+            "--file".to_owned(),
+            "references/api.md".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let error: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(error["error"]["code"], "INVALID_SOURCE");
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+}
+
+fn write_local_skill(path: &Path, frontmatter_name: &str) {
+    fs::create_dir_all(path).unwrap();
+    fs::write(
+        path.join("SKILL.md"),
+        format!("---\nname: {frontmatter_name}\ndescription: Test.\n---\n\n# Test\n"),
+    )
+    .unwrap();
+}
+
+fn local_run_error(path: &Path) -> serde_json::Value {
+    let host = LocalHost::new(
+        path.parent().unwrap().to_path_buf(),
+        path.parent().unwrap().join("global"),
+    );
+    let (exit, stdout, stderr) = run_cli(
+        &host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            path.display().to_string(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(exit, 1);
+    assert!(stdout.is_empty());
+    serde_json::from_str(&stderr).unwrap()
+}
+
+#[test]
+fn a_local_run_rejects_frontmatter_name_drift() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = temporary.path().join("my-skill");
+    write_local_skill(&skill, "another-skill");
+
+    let error = local_run_error(&skill);
+
+    assert_eq!(error["error"]["code"], "INVALID_SOURCE");
+}
+
+#[test]
+fn a_local_run_rejects_excess_depth_without_a_partial_inventory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = temporary.path().join("my-skill");
+    write_local_skill(&skill, "my-skill");
+    let mut deep = skill.clone();
+    for index in 0..9 {
+        deep.push(format!("level-{index}"));
+    }
+    fs::create_dir_all(&deep).unwrap();
+    fs::write(deep.join("secret.md"), "never partially returned").unwrap();
+
+    let error = local_run_error(&skill);
+
+    assert_eq!(error["error"]["code"], "SKILL_TOO_LARGE");
+}
+
+#[test]
+fn a_local_run_rejects_excess_files_without_a_partial_inventory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = temporary.path().join("my-skill");
+    write_local_skill(&skill, "my-skill");
+    for index in 0..512 {
+        fs::write(skill.join(format!("file-{index}.md")), "x").unwrap();
+    }
+
+    let error = local_run_error(&skill);
+
+    assert_eq!(error["error"]["code"], "SKILL_TOO_LARGE");
+}
+
+#[test]
+fn a_local_run_rejects_a_sparse_file_before_reading_its_bytes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = temporary.path().join("my-skill");
+    write_local_skill(&skill, "my-skill");
+    File::create(skill.join("huge.bin"))
+        .unwrap()
+        .set_len(64 * 1024 * 1024 + 1)
+        .unwrap();
+
+    let error = local_run_error(&skill);
+
+    assert_eq!(error["error"]["code"], "SKILL_TOO_LARGE");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_local_run_rejects_non_utf8_paths_and_links() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::symlink;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let non_utf8 = temporary.path().join("non-utf8");
+    write_local_skill(&non_utf8, "non-utf8");
+    fs::write(non_utf8.join(OsString::from_vec(vec![0xff])), "x").unwrap();
+    let linked = temporary.path().join("linked");
+    write_local_skill(&linked, "linked");
+    symlink(linked.join("SKILL.md"), linked.join("copy.md")).unwrap();
+
+    let non_utf8_error = local_run_error(&non_utf8);
+    let link_error = local_run_error(&linked);
+
+    assert_eq!(non_utf8_error["error"]["code"], "INVALID_SOURCE");
+    assert_eq!(link_error["error"]["code"], "INVALID_SOURCE");
 }
