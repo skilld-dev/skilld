@@ -618,26 +618,6 @@ fn shell_command(argv: &[String]) -> String {
 }
 
 fn shell_quote(argument: &str) -> String {
-    if argument.chars().any(char::is_control) {
-        let mut quoted = String::from("$'");
-        for character in argument.chars() {
-            match character {
-                '\'' => quoted.push_str("\\'"),
-                '\\' => quoted.push_str("\\\\"),
-                character if character.is_control() => {
-                    let value = u32::from(character);
-                    if value <= 0xffff {
-                        quoted.push_str(&format!("\\u{value:04X}"));
-                    } else {
-                        quoted.push_str(&format!("\\U{value:08X}"));
-                    }
-                }
-                character => quoted.push(character),
-            }
-        }
-        quoted.push('\'');
-        return quoted;
-    }
     let portable = !argument.is_empty()
         && argument
             .bytes()
