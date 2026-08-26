@@ -465,6 +465,68 @@ fn json_search_parse_errors_are_tagged_usage_errors() {
 }
 
 #[test]
+fn human_parse_errors_keep_clap_guidance_without_untrusted_terminal_formatting() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(
+        &["skilld", "search", "grill", hostile],
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+    );
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("unexpected argument"));
+    assert!(stderr.contains("Usage:"));
+    assert!(stderr.contains("\\u{001B}"));
+    assert!(stderr.contains("\\u{0085}"));
+    assert!(stderr.contains("\\u{202E}"));
+    assert!(stderr.contains("\\rforged\\nline"));
+    assert!(!stderr.contains('\u{1b}'));
+    assert!(!stderr.contains('\u{0085}'));
+    assert!(!stderr.contains('\u{202e}'));
+    assert!(!stderr.contains('\r'));
+}
+
+#[test]
+fn plain_parse_errors_escape_record_delimiters_and_terminal_formatting() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(&["skilld", "search", "grill", hostile, "--plain"], PLAIN);
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(stderr.lines().count(), 1);
+    assert!(stderr.contains("INVALID_ARGUMENT:"));
+    assert!(stderr.contains("\\u{0085}"));
+    assert!(stderr.contains("\\u{202E}"));
+    assert!(stderr.contains("\\rforged\\nline"));
+    assert!(!stderr.contains('\u{1b}'));
+    assert!(!stderr.contains('\u{0085}'));
+    assert!(!stderr.contains('\u{202e}'));
+    assert!(!stderr.contains('\r'));
+}
+
+#[test]
+fn json_parse_errors_keep_the_typed_error_contract_for_untrusted_arguments() {
+    let hostile = "--unknown\u{1b}[31m\u{0085}\u{202e}\rforged\nline";
+    let (exit, stdout, stderr) = run(&["skilld", "search", "grill", hostile, "--json"], PLAIN);
+
+    assert_eq!(exit, 2);
+    assert!(stdout.is_empty());
+    assert_eq!(stderr.lines().count(), 1);
+    let error = serde_json::from_str::<serde_json::Value>(&stderr).unwrap();
+    assert_eq!(error["schemaVersion"], 1);
+    assert_eq!(error["_tag"], "UsageError");
+    assert_eq!(error["error"]["code"], "INVALID_ARGUMENT");
+    assert_eq!(
+        error["error"]["message"],
+        "unexpected argument '--unknown\u{0085}\u{202e}\rforged"
+    );
+}
+
+#[test]
 fn empty_json_search_is_a_tagged_usage_error() {
     let (exit, stdout, stderr) = run(&["skilld", "search", "--json"], PLAIN);
 

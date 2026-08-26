@@ -38,6 +38,7 @@ use skilld_core::{
     UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
     classify_update_comparison, select_target_ids,
 };
+use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
@@ -538,8 +539,18 @@ where
                         requested_mode,
                     )
                 }
+            } else if display || matches!(requested_mode, OutputMode::Human { .. }) {
+                terminal_safe_clap_text(&args, error.kind()).into_bytes()
             } else {
-                error.to_string().into_bytes()
+                let message = error
+                    .to_string()
+                    .trim()
+                    .trim_start_matches("error: ")
+                    .to_owned();
+                render_error(
+                    &CommandError::usage("INVALID_ARGUMENT", message),
+                    requested_mode,
+                )
             };
             if target.write_all(&rendered).is_err() {
                 return CommandResult {
@@ -641,6 +652,42 @@ where
             }
         }
     }
+}
+
+fn terminal_safe_clap_text(args: &[OsString], expected_kind: ErrorKind) -> String {
+    let safe_args = args.iter().map(terminal_safe_argument);
+    let text = match Cli::try_parse_from(safe_args) {
+        Err(error) if error.kind() == expected_kind => error.to_string(),
+        _ => "error: invalid command arguments\n\nFor more information, try '--help'.\n".to_owned(),
+    };
+    let mut safe = String::new();
+    for character in text.chars() {
+        match character {
+            '\n' | '\t' => safe.push(character),
+            '\r' => safe.push_str("\\r"),
+            character if is_unsafe_terminal(character) => {
+                safe.push_str(&format!("\\u{{{:04X}}}", u32::from(character)));
+            }
+            character => safe.push(character),
+        }
+    }
+    safe
+}
+
+fn terminal_safe_argument(argument: &OsString) -> OsString {
+    let mut safe = String::new();
+    for character in argument.to_string_lossy().chars() {
+        match character {
+            '\n' => safe.push_str("\\n"),
+            '\r' => safe.push_str("\\r"),
+            '\t' => safe.push_str("\\t"),
+            character if is_unsafe_terminal(character) => {
+                safe.push_str(&format!("\\u{{{:04X}}}", u32::from(character)));
+            }
+            character => safe.push(character),
+        }
+    }
+    OsString::from(safe)
 }
 
 fn requested_output(args: &[OsString]) -> (bool, bool) {
