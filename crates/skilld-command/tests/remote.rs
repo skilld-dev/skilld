@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 use skilld_command::{
     Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, LocalHost,
     NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
-    RemoteComparisonOutcome, RemoteComparisonRelation, RemoteProvider, RemoteSourceState,
-    RemoteUpdateComparison, SecretValue, SkilldRemote, Sleeper, TokenProvider, run,
+    RemoteComparisonOutcome, RemoteComparisonRelation, RemoteProgress, RemoteProgressStage,
+    RemoteProvider, RemoteSourceState, RemoteUpdateComparison, SecretValue, SkilldRemote, Sleeper,
+    TokenProvider, run,
 };
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
@@ -138,6 +139,15 @@ impl Sleeper for NoSleep {
         } else {
             Ok(())
         }
+    }
+}
+
+#[derive(Default)]
+struct RecordingProgress(Mutex<Vec<RemoteProgressStage>>);
+
+impl RemoteProgress for RecordingProgress {
+    fn stage(&self, stage: RemoteProgressStage) {
+        self.0.lock().unwrap().push(stage);
     }
 }
 
@@ -1018,6 +1028,67 @@ fn a_resolution_cannot_change_its_identity_while_polling() {
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
     assert_eq!(error.code, "INVALID_RESPONSE");
+}
+
+#[test]
+fn a_hosted_resolution_reports_each_service_stage() {
+    let resolution_id = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
+    let stages = [
+        "requested",
+        "resolving",
+        "fetching",
+        "checking",
+        "packaging",
+        "encrypting",
+        "signing",
+        "publishing",
+        "retry-wait",
+    ];
+    let mut responses = stages
+        .iter()
+        .map(|stage| {
+            response(
+                200,
+                serde_json::to_vec(&json!({
+                    "state": "pending",
+                    "resolutionId": resolution_id,
+                    "stage": stage,
+                    "pollAfterMs": 250
+                }))
+                .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    responses.push(response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "blocked",
+            "resolutionId": resolution_id,
+            "checkResults": []
+        }))
+        .unwrap(),
+    ));
+    let progress = Arc::new(RecordingProgress::default());
+    let remote = search_remote(Arc::new(FakeHttp::with(responses))).with_progress(progress.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(
+        *progress.0.lock().unwrap(),
+        [
+            RemoteProgressStage::RequestingResolution,
+            RemoteProgressStage::Requested,
+            RemoteProgressStage::Resolving,
+            RemoteProgressStage::Fetching,
+            RemoteProgressStage::Checking,
+            RemoteProgressStage::Packaging,
+            RemoteProgressStage::Encrypting,
+            RemoteProgressStage::Signing,
+            RemoteProgressStage::Publishing,
+            RemoteProgressStage::RetryWait,
+        ]
+    );
 }
 
 #[test]

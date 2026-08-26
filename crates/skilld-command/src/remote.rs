@@ -649,11 +649,42 @@ pub enum NativeRemoteConfig {
     Unconfigured,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RemoteProgressStage {
+    RequestingResolution,
+    Requested,
+    Resolving,
+    Fetching,
+    Checking,
+    Packaging,
+    Encrypting,
+    Signing,
+    Publishing,
+    RetryWait,
+    VerifyingAttestation,
+    RequestingDownload,
+    DownloadingArtifact,
+    VerifyingArtifact,
+}
+
+pub trait RemoteProgress: Send + Sync {
+    fn stage(&self, stage: RemoteProgressStage);
+}
+
+#[derive(Default)]
+pub struct NoRemoteProgress;
+
+impl RemoteProgress for NoRemoteProgress {
+    fn stage(&self, _stage: RemoteProgressStage) {}
+}
+
 pub struct SkilldRemote {
     adapter: Arc<dyn HttpAdapter>,
     tokens: Arc<dyn TokenProvider>,
     cancellation: Arc<dyn Cancellation>,
     sleeper: Arc<dyn Sleeper>,
+    progress: Arc<dyn RemoteProgress>,
     endpoint: Url,
     root_pin: NativeRemoteConfig,
 }
@@ -669,6 +700,7 @@ impl SkilldRemote {
             tokens,
             cancellation: Arc::new(NeverCancelled),
             sleeper: Arc::new(ThreadSleeper),
+            progress: Arc::new(NoRemoteProgress),
             endpoint: Url::parse("https://skilld.dev").expect("the fixed endpoint is valid"),
             root_pin,
         }
@@ -681,6 +713,11 @@ impl SkilldRemote {
 
     pub fn with_sleeper(mut self, sleeper: Arc<dyn Sleeper>) -> Self {
         self.sleeper = sleeper;
+        self
+    }
+
+    pub fn with_progress(mut self, progress: Arc<dyn RemoteProgress>) -> Self {
+        self.progress = progress;
         self
     }
 
@@ -843,6 +880,8 @@ impl SkilldRemote {
 
     fn resolve(&self, source: &SourceRequest) -> Result<ArtifactDescriptor, RemoteError> {
         let mut deadline = ResolutionDeadline::new();
+        self.progress
+            .stage(RemoteProgressStage::RequestingResolution);
         let body = serde_json::to_vec(&json!({ "source": source })).map_err(|_| {
             RemoteError::new("INVALID_SOURCE", "the source request cannot be encoded")
         })?;
@@ -891,9 +930,10 @@ impl SkilldRemote {
                 }
                 Resolution::Pending {
                     resolution_id,
+                    stage,
                     poll_after_ms,
-                    ..
                 } => {
+                    self.progress.stage(stage);
                     if !(250..=60_000).contains(&poll_after_ms) {
                         return Err(RemoteError::new(
                             "INVALID_RESPONSE",
@@ -1468,10 +1508,16 @@ impl RemoteProvider for SkilldRemote {
             return self.direct(selector);
         }
         let descriptor = self.resolve(selector.source())?;
+        self.progress
+            .stage(RemoteProgressStage::VerifyingAttestation);
         let root = self.verified_root()?;
         verify_attestation(&descriptor.attestation, &root)?;
+        self.progress.stage(RemoteProgressStage::RequestingDownload);
         let grant = self.grant(&descriptor.artifact_id)?;
+        self.progress
+            .stage(RemoteProgressStage::DownloadingArtifact);
         let archive = self.download_grant(&descriptor, grant)?;
+        self.progress.stage(RemoteProgressStage::VerifyingArtifact);
         let verified = verify_artifact(descriptor.attestation, &root, &archive)?;
         if matches!(
             &selector.source().selector,
@@ -2261,8 +2307,7 @@ enum Resolution {
     Pending {
         #[serde(rename = "resolutionId")]
         resolution_id: String,
-        #[serde(rename = "stage")]
-        _stage: String,
+        stage: RemoteProgressStage,
         #[serde(rename = "pollAfterMs")]
         poll_after_ms: u64,
     },

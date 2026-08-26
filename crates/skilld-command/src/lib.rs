@@ -23,10 +23,10 @@ pub use local_store::{
 pub use output::{CommandPlatform, OutputContext};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
-    NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill,
+    NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider, PreparedRemoteSkill,
     RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit,
-    RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
-    SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
+    RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState, RemoteUpdateComparison,
+    RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 pub use run::{
     FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
