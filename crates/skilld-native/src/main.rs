@@ -11,8 +11,9 @@ use std::sync::Arc;
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::{
-    CommandError, DetectionEnvironment, Host, LocalHost, NativeRemoteConfig, OutputContext,
-    SkilldRemote, TargetRoots, interactive_update_requested, run_stdio_probe, run_with_output,
+    CommandError, CommandPlatform, DetectionEnvironment, Host, LocalHost, NativeRemoteConfig,
+    OutputContext, SkilldRemote, TargetRoots, interactive_update_requested, run_stdio_probe,
+    run_with_output,
 };
 use skilld_core::{
     InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
@@ -121,6 +122,7 @@ fn main() -> ExitCode {
         environment_present("NO_COLOR"),
         env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
         terminal_width(),
+        CommandPlatform::current(),
     );
     let label = status::status_label(args.iter().map(|arg| arg.to_string_lossy()));
     let status = match label {
@@ -143,6 +145,7 @@ fn run_search_output_probe() -> ExitCode {
         environment_present("NO_COLOR"),
         env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
         terminal_width(),
+        CommandPlatform::current(),
     );
     let mut args = vec!["skilld", "search", "output"];
     if env::args_os().any(|argument| argument == "--json") {

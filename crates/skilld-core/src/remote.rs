@@ -56,6 +56,12 @@ pub enum RemoteSelector {
 
 impl RemoteSelector {
     pub fn parse(value: &str) -> Result<Self, RemoteError> {
+        if value.chars().any(char::is_control) {
+            return Err(RemoteError::new(
+                "INVALID_SOURCE",
+                "the remote selector cannot contain control characters",
+            ));
+        }
         let value = value.trim();
         if let Some(rest) = value.strip_prefix("skilld:") {
             let (owner, repository, name) = split_three(rest)?;
@@ -232,6 +238,10 @@ fn validate_source_request(source: &SourceRequest) -> Result<(), RemoteError> {
         ));
     }
     match &source.selector {
+        SourceSelector::Path { path } if path.contains('#') => Err(RemoteError::new(
+            "INVALID_SOURCE",
+            "the Skill source path cannot contain #",
+        )),
         SourceSelector::Path { path } => validate_relative_path(path, 1024),
         SourceSelector::NamedSkill { name } => SkillName::parse(name.clone())
             .map(|_| ())
@@ -243,6 +253,7 @@ fn validate_source_request(source: &SourceRequest) -> Result<(), RemoteError> {
                 if value.is_empty()
                     || value.len() > 255
                     || value.contains(['\0', '\\'])
+                    || value.chars().any(char::is_control)
                     || value.starts_with('-')
                 {
                     return Err(RemoteError::new(

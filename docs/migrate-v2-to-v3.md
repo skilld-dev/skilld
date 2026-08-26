@@ -140,6 +140,7 @@ CI should remain strict and use Harness.
 
 The `skilld install --direct` flag serves another purpose.
 It reads a public GitHub repository without skilld.dev Artifact delivery.
+Explicit GitHub selectors use Artifact delivery unless you add `--direct`.
 The installed Skill receives the `unverified` source status.
 It never handles private repositories.
 

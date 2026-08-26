@@ -581,63 +581,6 @@ fn native_auth_status_surfaces_an_unavailable_os_credential_store() {
     assert!(output.stdout.is_empty());
 }
 
-#[cfg(unix)]
-#[test]
-fn plain_read_command_survives_posix_sh_with_a_control_character_path() {
-    let temporary = tempfile::tempdir().unwrap();
-    let project = temporary.path().join("pro\tject");
-    let data = temporary.path().join("data");
-    let home = temporary.path().join("home");
-    let skill = project.join("tab-skill");
-    fs::create_dir_all(&skill).unwrap();
-    fs::write(
-        skill.join("SKILL.md"),
-        "---\nname: tab-skill\ndescription: Test fixture.\n---\n\n# Do the thing\n",
-    )
-    .unwrap();
-    fs::write(skill.join("notes.md"), "supporting-content\n").unwrap();
-    let run = Command::new(binary())
-        .current_dir(&project)
-        .env("SKILLD_DATA_DIR", &data)
-        .env("HOME", &home)
-        .args(["run", skill.display().to_string().as_str()])
-        .output()
-        .unwrap();
-    assert!(run.status.success());
-    let plain = String::from_utf8(run.stdout).unwrap();
-    let read_line = plain
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("skilld run ") && line.contains("--file=notes.md"))
-        .unwrap()
-        .to_owned();
-    assert!(!read_line.contains("$'"), "{read_line:?}");
-
-    let mut command = Command::new("sh");
-    command
-        .arg("-c")
-        .arg(&read_line)
-        .current_dir(&project)
-        .env("SKILLD_DATA_DIR", &data)
-        .env("HOME", &home)
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                binary().parent().unwrap().display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        );
-    for signal in DETECTION_SIGNALS {
-        command.env_remove(signal);
-    }
-    let read = command.output().unwrap();
-
-    assert!(read.status.success(), "{}", String::from_utf8_lossy(&read.stderr));
-    let read_output = String::from_utf8(read.stdout).unwrap();
-    assert!(read_output.contains("supporting-content"), "{read_output:?}");
-}
-
 #[test]
 fn global_skilld_install_uses_the_global_agent_target() {
     let temporary = tempfile::tempdir().unwrap();

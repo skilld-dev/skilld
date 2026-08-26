@@ -24,10 +24,11 @@ const MAX_LOCAL_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Where a transient Skill came from, and what that means for its files.
 ///
-/// A local Skill already sits on the user's disk, so its files carry a path. A
-/// remote Skill never lands, so it has no path to give.
+/// A local Skill already sits on the user's disk, so its files carry a path.
+/// Bundled and remote Skills have no path to give.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SkillOrigin {
+    Bundled,
     Local {
         root: PathBuf,
     },
@@ -80,7 +81,7 @@ pub struct TransientSkill {
     pub origin: SkillOrigin,
     /// `verified`, `local`, or `unverified`.
     pub source_status: &'static str,
-    /// The exact remote Git commit. Local Skills have no revision.
+    /// The exact remote Git commit. Local and bundled Skills have no revision.
     pub revision: Option<String>,
     pub files: Vec<SupportingFile>,
 }
@@ -213,6 +214,10 @@ pub fn pull_files(
 ///
 /// A local Skill needs no delivery decision. The user owns these files already.
 pub fn read_local(path: &Path) -> Result<(String, Vec<PreparedFile>), CommandError> {
+    let path_text = path
+        .to_str()
+        .ok_or_else(|| invalid_local("Skill paths must use UTF-8"))?;
+    reject_local_path_controls(path_text)?;
     crate::local_store::validate_skill_files(path).map_err(CommandError::store)?;
     let mut inventory = Vec::new();
     let mut total = 0;
@@ -260,6 +265,7 @@ fn collect_local_metadata(
         let name = name
             .to_str()
             .ok_or_else(|| invalid_local("Skill paths must use UTF-8"))?;
+        reject_local_path_controls(name)?;
         let child = relative.join(name);
         let file_type = entry.file_type().map_err(|error| {
             CommandError::filesystem(format!("cannot read a Skill file: {error}"))
@@ -323,6 +329,15 @@ fn read_local_file(file: LocalFile) -> Result<PreparedFile, CommandError> {
 
 fn invalid_local(message: &'static str) -> CommandError {
     CommandError::operation("INVALID_SOURCE", message)
+}
+
+fn reject_local_path_controls(value: &str) -> Result<(), CommandError> {
+    if value.chars().any(char::is_control) {
+        return Err(invalid_local(
+            "local Skill paths cannot contain control characters",
+        ));
+    }
+    Ok(())
 }
 
 fn too_large(message: &'static str) -> CommandError {

@@ -20,7 +20,7 @@ pub use local_store::{
     AllowTransaction, LocalStore, PreparedStoreUpdate, ResolvedTarget, SkillView, StoreError,
     TargetInstall, TransactionGate,
 };
-pub use output::OutputContext;
+pub use output::{CommandPlatform, OutputContext};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     NativeRemoteConfig, NeverCancelled, NoTokenProvider, PreparedRemoteSkill,
@@ -71,7 +71,7 @@ enum Command {
     Search { query: Vec<String> },
     /// Install a Skill, or restore the Skills recorded in your lockfile.
     #[command(
-        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Public GitHub Repository paths. Each one requires --direct.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
         after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
@@ -97,13 +97,13 @@ enum Command {
         mode: Option<String>,
         #[arg(
             long,
-            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct install records the unverified source status."
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive an explicit github: source or a GitHub tree URL.\nWithout --direct, these selectors use hosted Artifact delivery.\nA direct install records the unverified source status."
         )]
         direct: bool,
     },
     /// Load a Skill for this session without installing it.
     #[command(
-        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Use skilld install to put them on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
         after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
     )]
     Run {
@@ -113,7 +113,7 @@ enum Command {
         #[arg(
             long = "file",
             value_name = "PATH",
-            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nskilld never prints executable or binary files. Install the Skill to use one."
+            long_help = "Read one supporting file the Skill carries. Repeat --file for several.\nGive the path exactly as the Skill inventory reports it.\nRemote reads require --revision. Local and bundled reads do not.\nskilld never prints executable or binary files. Install the Skill to use one."
         )]
         files: Vec<String>,
         #[arg(
@@ -358,17 +358,37 @@ impl CommandError {
         Self::usage("INVALID_SOURCE", message)
     }
 
-    fn direct_local_source() -> Self {
+    fn direct_local_install_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
             "--direct cannot install a local Skill. Remove --direct, then run the same command again.",
         )
     }
 
-    fn direct_bundled_source() -> Self {
+    fn direct_bundled_install_source() -> Self {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
             "--direct cannot install the skilld-maintained Skill. Run skilld install skilld --global instead",
+        )
+    }
+
+    fn direct_local_run_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot run a local Skill. Remove --direct, then run the same command again.",
+        )
+    }
+
+    fn direct_bundled_run_source() -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            "--direct cannot run the skilld-maintained Skill. Run skilld run skilld without --direct.",
+        )
+    }
+
+    fn remote_file_revision() -> Self {
+        Self::input(
+            "Remote --file reads require --revision. Run the Skill without --file first. Then repeat this run with the returned revision.",
         )
     }
 
@@ -456,7 +476,15 @@ where
     O: Write,
     E: Write,
 {
-    run_with_output(args, host, OutputContext::Plain, stdout, stderr)
+    run_with_output(
+        args,
+        host,
+        OutputContext::Plain {
+            platform: CommandPlatform::current(),
+        },
+        stdout,
+        stderr,
+    )
 }
 
 pub fn run_with_output<I, T, H, O, E>(
@@ -476,7 +504,9 @@ where
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     let (requested_json, requested_plain) = requested_output(&args);
     let requested_mode = if requested_json && requested_plain {
-        OutputMode::Plain
+        OutputMode::Plain {
+            platform: context.platform(),
+        }
     } else {
         resolve_mode(requested_json, requested_plain, context)
     };
@@ -548,7 +578,7 @@ where
         Ok(CommandOutput::Screen(screen)) => {
             let bytes = match mode {
                 OutputMode::Human { color, .. } => screen.render_human(color),
-                OutputMode::Plain | OutputMode::JsonV1 => screen.render_plain(),
+                OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
         }
@@ -717,10 +747,10 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                         InstallOperation::Install(InstallSource::DirectRemote(source))
                     }
                     (true, InstallSource::Local(_)) => {
-                        return Err(CommandError::direct_local_source());
+                        return Err(CommandError::direct_local_install_source());
                     }
                     (true, InstallSource::BundledSkilld) => {
-                        return Err(CommandError::direct_bundled_source());
+                        return Err(CommandError::direct_bundled_install_source());
                     }
                     (false, source) => InstallOperation::Install(source),
                 },
@@ -772,12 +802,23 @@ fn dispatch<H: Host>(command: Command, host: &H) -> Result<CommandOutput, Comman
                 (true, InstallSource::Remote(source) | InstallSource::DirectRemote(source)) => {
                     InstallSource::DirectRemote(source)
                 }
-                (true, InstallSource::Local(_)) => return Err(CommandError::direct_local_source()),
+                (true, InstallSource::Local(_)) => {
+                    return Err(CommandError::direct_local_run_source());
+                }
                 (true, InstallSource::BundledSkilld) => {
-                    return Err(CommandError::direct_bundled_source());
+                    return Err(CommandError::direct_bundled_run_source());
                 }
                 (false, source) => source,
             };
+            if !files.is_empty()
+                && revision.is_none()
+                && matches!(
+                    source,
+                    InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+                )
+            {
+                return Err(CommandError::remote_file_revision());
+            }
             if revision.is_some()
                 && !matches!(
                     source,
@@ -985,6 +1026,7 @@ impl TargetRoots {
 }
 
 pub trait BundledSkillProvider: Send + Sync {
+    fn skilld_run_files(&self) -> Result<Vec<skilld_core::PreparedFile>, CommandError>;
     fn skilld_source(&self) -> Result<PathBuf, CommandError>;
 }
 
@@ -1000,6 +1042,10 @@ struct DirectoryBundledSkillProvider {
 }
 
 impl BundledSkillProvider for DirectoryBundledSkillProvider {
+    fn skilld_run_files(&self) -> Result<Vec<skilld_core::PreparedFile>, CommandError> {
+        run::read_local(&self.path).map(|(_, files)| files)
+    }
+
     fn skilld_source(&self) -> Result<PathBuf, CommandError> {
         Ok(self.path.clone())
     }
@@ -1253,6 +1299,11 @@ impl LocalHost {
                 "the prepared Skill has an invalid remote revision",
             )
         })?;
+        if skill_path.contains('#') {
+            return Err(CommandError::input(
+                "the attested Skill source path cannot contain #",
+            ));
+        }
         if expected_revision.is_some_and(|expected| expected != &revision) {
             return Err(CommandError::operation(
                 "SOURCE_MISMATCH",
@@ -1309,6 +1360,41 @@ impl LocalHost {
         let path = path.canonicalize().unwrap_or(path);
         let (name, files) = run::read_local(&path)?;
         let origin = SkillOrigin::Local { root: path };
+        if !wanted.is_empty() {
+            return Ok(RunOutcome::Files {
+                files: run::pull_files(&name, &files, wanted)?,
+                skill: name,
+                origin,
+                source_status: "local",
+                revision: None,
+            });
+        }
+        Ok(RunOutcome::Load(Box::new(TransientSkill {
+            instructions: run::read_instructions(&files)?,
+            files: run::supporting_files(&files),
+            name,
+            origin,
+            source_status: "local",
+            revision: None,
+        })))
+    }
+
+    fn run_bundled(&self, wanted: &[String]) -> Result<RunOutcome, CommandError> {
+        let provider = self.bundled_skill.as_ref().ok_or_else(|| {
+            CommandError::service(
+                "the bundled skilld-maintained Skill is unavailable in this build",
+            )
+        })?;
+        let (name, _, files) = skilld_core::prepare_unverified_files(provider.skilld_run_files()?)
+            .map_err(CommandError::remote)?;
+        if name.as_str() != "skilld" {
+            return Err(CommandError::operation(
+                "SOURCE_MISMATCH",
+                "the bundled Skill must declare the name skilld",
+            ));
+        }
+        let name = name.as_str().to_owned();
+        let origin = SkillOrigin::Bundled;
         if !wanted.is_empty() {
             return Ok(RunOutcome::Files {
                 files: run::pull_files(&name, &files, wanted)?,
@@ -1506,9 +1592,19 @@ impl Host for LocalHost {
         revision: Option<&CommitSha>,
     ) -> Result<RunOutcome, CommandError> {
         run::reject_duplicate_files(files)?;
+        if !files.is_empty()
+            && revision.is_none()
+            && matches!(
+                source,
+                InstallSource::Remote(_) | InstallSource::DirectRemote(_)
+            )
+        {
+            return Err(CommandError::remote_file_revision());
+        }
         match source {
             InstallSource::Remote(source) => self.run_remote(&source, false, files, revision),
             InstallSource::DirectRemote(source) => self.run_remote(&source, true, files, revision),
+            InstallSource::BundledSkilld if revision.is_none() => self.run_bundled(files),
             source if revision.is_none() => self.run_directory(source, files),
             _ => Err(CommandError::input(
                 "--revision requires a remote Skill source",

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use skilld_command::{BundledSkillProvider, CommandError};
+use skilld_core::PreparedFile;
 use tempfile::TempDir;
 
 const SKILLD_SKILL: &[u8] = include_bytes!("../../../skills/skilld/SKILL.md");
@@ -20,6 +21,14 @@ impl EmbeddedSkilld {
 }
 
 impl BundledSkillProvider for EmbeddedSkilld {
+    fn skilld_run_files(&self) -> Result<Vec<PreparedFile>, CommandError> {
+        Ok(vec![PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes: SKILLD_SKILL.to_vec(),
+        }])
+    }
+
     fn skilld_source(&self) -> Result<PathBuf, CommandError> {
         let mut directory = self.directory.lock().map_err(|_| {
             CommandError::service("the bundled Skill workspace lock is unavailable")

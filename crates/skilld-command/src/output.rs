@@ -12,12 +12,40 @@ const MIN_WIDTH: u16 = 20;
 const MAX_WIDTH: u16 = 240;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandPlatform {
+    Unix,
+    WindowsPowerShell,
+}
+
+impl CommandPlatform {
+    pub const fn current() -> Self {
+        if cfg!(windows) {
+            Self::WindowsPowerShell
+        } else {
+            Self::Unix
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputContext {
-    HumanTerminal { width: u16, color: bool },
-    Plain,
+    HumanTerminal {
+        width: u16,
+        color: bool,
+        platform: CommandPlatform,
+    },
+    Plain {
+        platform: CommandPlatform,
+    },
 }
 
 impl OutputContext {
+    pub const fn platform(self) -> CommandPlatform {
+        match self {
+            Self::HumanTerminal { platform, .. } | Self::Plain { platform } => platform,
+        }
+    }
+
     pub fn auto(
         stdout_is_terminal: bool,
         active_agent: bool,
@@ -25,21 +53,29 @@ impl OutputContext {
         no_color: bool,
         term_is_dumb: bool,
         width: u16,
+        platform: CommandPlatform,
     ) -> Self {
         if active_agent || ci || !stdout_is_terminal {
-            return Self::Plain;
+            return Self::Plain { platform };
         }
         Self::HumanTerminal {
             width: width.clamp(MIN_WIDTH, MAX_WIDTH),
             color: !no_color && !term_is_dumb,
+            platform,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputMode {
-    Human { width: u16, color: bool },
-    Plain,
+    Human {
+        width: u16,
+        color: bool,
+        platform: CommandPlatform,
+    },
+    Plain {
+        platform: CommandPlatform,
+    },
     JsonV1,
 }
 
@@ -47,11 +83,21 @@ pub(crate) fn resolve_mode(json: bool, plain: bool, context: OutputContext) -> O
     if json {
         OutputMode::JsonV1
     } else if plain {
-        OutputMode::Plain
+        OutputMode::Plain {
+            platform: context.platform(),
+        }
     } else {
         match context {
-            OutputContext::HumanTerminal { width, color } => OutputMode::Human { width, color },
-            OutputContext::Plain => OutputMode::Plain,
+            OutputContext::HumanTerminal {
+                width,
+                color,
+                platform,
+            } => OutputMode::Human {
+                width,
+                color,
+                platform,
+            },
+            OutputContext::Plain { platform } => OutputMode::Plain { platform },
         }
     }
 }
@@ -77,8 +123,12 @@ pub(crate) fn render_search(
     mode: OutputMode,
 ) -> Result<Vec<u8>, CommandError> {
     match mode {
-        OutputMode::Human { width, color } => Ok(render_human(outcome, width, color).into_bytes()),
-        OutputMode::Plain => Ok(render_plain(outcome).into_bytes()),
+        OutputMode::Human {
+            width,
+            color,
+            platform,
+        } => Ok(render_human(outcome, width, color, platform).into_bytes()),
+        OutputMode::Plain { .. } => Ok(render_plain(outcome).into_bytes()),
         OutputMode::JsonV1 => render_json_success(
             "search",
             JsonSearchData {
@@ -169,7 +219,7 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
             skilld_ui::paint(&format!("({})", error.code), skilld_ui::Role::Dim, color),
         )
         .into_bytes(),
-        OutputMode::Plain => format!("{error}\n").into_bytes(),
+        OutputMode::Plain { .. } => format!("{error}\n").into_bytes(),
         OutputMode::JsonV1 => unreachable!("JSON errors return early"),
     }
 }
@@ -191,7 +241,12 @@ fn render_plain(outcome: &SearchOutcome) -> String {
     output
 }
 
-fn render_human(outcome: &SearchOutcome, terminal_width: u16, color: bool) -> String {
+fn render_human(
+    outcome: &SearchOutcome,
+    terminal_width: u16,
+    color: bool,
+    platform: CommandPlatform,
+) -> String {
     let columns = usize::from(terminal_width);
     let mut output = String::new();
     let heading = format!("Skill search  {}", sanitize(&outcome.query));
@@ -251,7 +306,10 @@ fn render_human(outcome: &SearchOutcome, terminal_width: u16, color: bool) -> St
                 output.push('\n');
             }
         }
-        let run = shell_command(&["skilld".to_owned(), "run".to_owned(), item.selector.clone()]);
+        let run = shell_command(
+            &["skilld".to_owned(), "run".to_owned(), item.selector.clone()],
+            platform,
+        );
         output.push_str("  ");
         output.push_str(&skilld_ui::paint_command(&run, color));
         output.push('\n');
@@ -348,7 +406,9 @@ pub(crate) fn render_run(outcome: &RunOutcome, mode: OutputMode) -> Result<Vec<u
             files_json(skill, origin, source_status, revision.as_deref(), files),
             "Skill run output could not be encoded",
         ),
-        (RunOutcome::Load(skill), _) => Ok(render_load(skill, colored(mode)).into_bytes()),
+        (RunOutcome::Load(skill), _) => {
+            Ok(render_load(skill, colored(mode), command_platform(mode)).into_bytes())
+        }
         (
             RunOutcome::Files {
                 skill,
@@ -374,7 +434,14 @@ const fn colored(mode: OutputMode) -> bool {
     matches!(mode, OutputMode::Human { color: true, .. })
 }
 
-fn render_load(skill: &TransientSkill, color: bool) -> String {
+const fn command_platform(mode: OutputMode) -> CommandPlatform {
+    match mode {
+        OutputMode::Human { platform, .. } | OutputMode::Plain { platform } => platform,
+        OutputMode::JsonV1 => unreachable!(),
+    }
+}
+
+fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{}\n",
@@ -389,6 +456,11 @@ fn render_load(skill: &TransientSkill, color: bool) -> String {
     ));
 
     match &skill.origin {
+        SkillOrigin::Bundled => {
+            out.push_str("This skilld-maintained Skill is bundled with the skilld CLI.\n");
+            out.push_str("skilld wrote no Skill files.\n");
+            out.push_str(&field("Source", "skilld-maintained Skill", color));
+        }
         SkillOrigin::Remote { source, .. } => {
             out.push_str("skilld retained no Skill files.\n");
             out.push_str("It created no lockfile entry, Agent target, or project file.\n");
@@ -418,12 +490,12 @@ fn render_load(skill: &TransientSkill, color: bool) -> String {
 
     out.push('\n');
     out.push_str("Follow these instructions now.\n");
-    out.push_str(&render_inventory(skill, color));
-    out.push_str(&render_install_guidance(&skill.origin, color));
+    out.push_str(&render_inventory(skill, color, platform));
+    out.push_str(&render_install_guidance(&skill.origin, color, platform));
     out
 }
 
-fn render_inventory(skill: &TransientSkill, color: bool) -> String {
+fn render_inventory(skill: &TransientSkill, color: bool, platform: CommandPlatform) -> String {
     if skill.files.is_empty() {
         return String::new();
     }
@@ -455,12 +527,10 @@ fn render_inventory(skill: &TransientSkill, color: bool) -> String {
             out.push_str(&format!(
                 "    {}\n",
                 paint(
-                    &shell_command(&read_argv(
-                        &skill.origin,
-                        skill.revision.as_deref(),
-                        &file.path,
-                        false,
-                    )),
+                    &shell_command(
+                        &read_argv(&skill.origin, skill.revision.as_deref(), &file.path, false,),
+                        platform
+                    ),
                     Role::Brand,
                     color,
                 )
@@ -537,17 +607,32 @@ fn render_files(
     out
 }
 
-fn render_install_guidance(origin: &SkillOrigin, color: bool) -> String {
+fn render_install_guidance(origin: &SkillOrigin, color: bool, platform: CommandPlatform) -> String {
     let mut out = String::new();
     out.push_str(&paint("To keep this Skill:", Role::Emphasis, color));
     out.push('\n');
+    if matches!(origin, SkillOrigin::Bundled) {
+        out.push_str(&format!(
+            "  {}\n",
+            shell_command(&install_argv(origin, true), platform)
+        ));
+        out.push_str("This keeps the Skill for every project.\n");
+        out.push_str(
+            "Ask the user before you install. An install writes files they did not request.\n",
+        );
+        out.push('\n');
+        out.push_str(&field("Find another Skill", "skilld search <query>", color));
+        out.push_str(&field("List installed Skills", "skilld list", color));
+        out.push_str(&field("Update installed Skills", "skilld update", color));
+        return out;
+    }
     out.push_str(&format!(
         "  {}\n",
-        shell_command(&install_argv(origin, false))
+        shell_command(&install_argv(origin, false), platform)
     ));
     out.push_str(&format!(
         "  {}\n",
-        shell_command(&install_argv(origin, true))
+        shell_command(&install_argv(origin, true), platform)
     ));
     out.push_str("The first writes the Skill into this project and records it in the lockfile.\n");
     out.push_str("The second keeps it for every project.\n");
@@ -598,6 +683,7 @@ fn install_argv(origin: &SkillOrigin, global: bool) -> Vec<String> {
 
 fn source_argument(origin: &SkillOrigin) -> String {
     match origin {
+        SkillOrigin::Bundled => "skilld".to_owned(),
         SkillOrigin::Remote { source, .. } => source.clone(),
         SkillOrigin::Local { root } => root.display().to_string(),
     }
@@ -605,27 +691,35 @@ fn source_argument(origin: &SkillOrigin) -> String {
 
 fn install_source_argument(origin: &SkillOrigin) -> String {
     match origin {
+        SkillOrigin::Bundled => "skilld".to_owned(),
         SkillOrigin::Remote { exact_source, .. } => exact_source.clone(),
         SkillOrigin::Local { root } => root.display().to_string(),
     }
 }
 
-fn shell_command(argv: &[String]) -> String {
+fn shell_command(argv: &[String], platform: CommandPlatform) -> String {
     argv.iter()
-        .map(|argument| shell_quote(argument))
+        .map(|argument| shell_quote(argument, platform))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn shell_quote(argument: &str) -> String {
+fn shell_quote(argument: &str, platform: CommandPlatform) -> String {
     let portable = !argument.is_empty()
-        && argument
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte));
+        && argument.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || match platform {
+                    CommandPlatform::Unix => b"_@%+=:,./-".contains(&byte),
+                    CommandPlatform::WindowsPowerShell => b"_./:-".contains(&byte),
+                }
+        });
     if portable {
         return argument.to_owned();
     }
-    format!("'{}'", argument.replace('\'', "'\\''"))
+    match platform {
+        CommandPlatform::Unix => format!("'{}'", argument.replace('\'', "'\\''")),
+        CommandPlatform::WindowsPowerShell => format!("'{}'", argument.replace('\'', "''")),
+    }
 }
 
 /// State what the status covers, on every status.
@@ -648,6 +742,7 @@ fn field(label: &str, value: &str, color: bool) -> String {
 
 fn origin_field(origin: &SkillOrigin, color: bool) -> String {
     match origin {
+        SkillOrigin::Bundled => field("Source", "skilld-maintained Skill", color),
         SkillOrigin::Remote { source, .. } => field("Source", source, color),
         SkillOrigin::Local { root } => field("Source", &root.display().to_string(), color),
     }
@@ -663,12 +758,14 @@ fn safe_terminal_text(value: &str) -> String {
 #[derive(Serialize)]
 #[serde(tag = "_tag", rename_all = "lowercase")]
 enum JsonOrigin {
+    Bundled { source: &'static str },
     Remote { source: String, direct: bool },
     Local { root: String },
 }
 
 fn origin_json(origin: &SkillOrigin) -> JsonOrigin {
     match origin {
+        SkillOrigin::Bundled => JsonOrigin::Bundled { source: "skilld" },
         SkillOrigin::Remote { source, direct, .. } => JsonOrigin::Remote {
             source: source.clone(),
             direct: *direct,
@@ -692,7 +789,8 @@ struct JsonSupportingFile {
 
 #[derive(Serialize)]
 struct JsonInstallArgv {
-    project: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<Vec<String>>,
     global: Vec<String>,
 }
 
@@ -765,7 +863,8 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
             })
             .collect(),
         install_argv: JsonInstallArgv {
-            project: install_argv(&skill.origin, false),
+            project: (!matches!(skill.origin, SkillOrigin::Bundled))
+                .then(|| install_argv(&skill.origin, false)),
             global: install_argv(&skill.origin, true),
         },
     }

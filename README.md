@@ -76,7 +76,7 @@ skilld search vue
 skilld run skilld:skilld-dev/skills/vue
 
 # Read one supporting file that Skill carries
-skilld run skilld:skilld-dev/skills/vue --file references/api.md
+skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
 
 # Install a Skill in the current project
 skilld install skilld:skilld-dev/skills/vue
@@ -122,6 +122,7 @@ The API does not expose private storage addresses.
 ### Direct mode
 
 `--direct` fetches a public GitHub Repository without the skilld.dev API.
+Explicit GitHub selectors use hosted Artifact delivery unless you add `--direct`.
 
 ```sh
 skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex
@@ -132,6 +133,9 @@ The user reviews the Skill before use.
 
 Direct mode never handles private Repositories.
 It never falls back to skilld.dev.
+
+Generated commands use POSIX shell quoting on Unix.
+They use PowerShell quoting on Windows.
 
 ## Source status
 
