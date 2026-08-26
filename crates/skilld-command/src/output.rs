@@ -233,6 +233,13 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
     }
 }
 
+pub(crate) fn screen_message(value: &str) -> String {
+    sanitize(value)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn render_plain(outcome: &SearchOutcome) -> String {
     let mut output = String::new();
     for item in &outcome.items {

@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use skilld_command::{
-    Host, LocalHost, PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome,
-    RemoteComparisonRelation, RemoteLatestCommit, RemoteProvider, RemoteSourceState,
-    RemoteUpdateComparison, RemoteUpdateResult, run,
+    CommandPlatform, Host, LocalHost, OutputContext, PreparedRemoteSkill, RemoteComparisonAccess,
+    RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit, RemoteProvider,
+    RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, run, run_with_output,
 };
 use skilld_core::{
     AgentTargetId, CommitAuthor, CommitHistory, CommitSha, CommitSummary, InstallMode,
@@ -21,8 +21,10 @@ struct Provider {
     content: Mutex<Vec<u8>>,
     stale: Mutex<bool>,
     fail_state: Mutex<bool>,
+    state_failure_message: Mutex<String>,
     search_results: Mutex<Vec<SearchResult>>,
     fail_search: Mutex<bool>,
+    search_failure_message: Mutex<String>,
     search_calls: AtomicUsize,
     search_in_flight: AtomicUsize,
     search_max_in_flight: Mutex<usize>,
@@ -35,8 +37,10 @@ impl Provider {
             content: Mutex::new(content.as_bytes().to_vec()),
             stale: Mutex::new(false),
             fail_state: Mutex::new(false),
+            state_failure_message: Mutex::new("the remote service returned HTTP 503".to_owned()),
             search_results: Mutex::new(vec![]),
             fail_search: Mutex::new(false),
+            search_failure_message: Mutex::new("Skill search returned invalid JSON".to_owned()),
             search_calls: std::sync::atomic::AtomicUsize::new(0),
             search_in_flight: std::sync::atomic::AtomicUsize::new(0),
             search_max_in_flight: Mutex::new(0),
@@ -97,7 +101,7 @@ impl RemoteProvider for Provider {
             if *self.fail_search.lock().unwrap() {
                 return Err(RemoteError::new(
                     "INVALID_RESPONSE",
-                    "Skill search returned invalid JSON",
+                    self.search_failure_message.lock().unwrap().clone(),
                 ));
             }
             let items = self.search_results.lock().unwrap().clone();
@@ -154,7 +158,7 @@ impl RemoteProvider for Provider {
         if *self.fail_state.lock().unwrap() {
             return Err(RemoteError::new(
                 "SERVICE_UNAVAILABLE",
-                "the remote service returned HTTP 503",
+                self.state_failure_message.lock().unwrap().clone(),
             ));
         }
         Ok(if *self.stale.lock().unwrap() {
@@ -412,6 +416,58 @@ fn outdated_all_surfaces_a_search_failure_and_keeps_scanning() {
 }
 
 #[test]
+fn outdated_search_failures_are_single_line_and_terminal_safe() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    *provider.fail_search.lock().unwrap() = true;
+    *provider.search_failure_message.lock().unwrap() =
+        "request\u{1b}[31m\u{0085}\u{202e}\rforged\nline".to_owned();
+    unmanaged_skill(temporary.path(), ".agents", "search-failure");
+    let host =
+        LocalHost::new(project, temporary.path().join("data")).with_remote_provider(provider);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let plain = run(
+        ["skilld", "outdated", "--all"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(plain.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout.clone()).unwrap(),
+        "Skill search unavailable for 1 Skill (search-failure (codex)): request [31m forged line.\n"
+    );
+    stdout.clear();
+    let human = run_with_output(
+        ["skilld", "outdated", "--all"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(human.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        concat!(
+            "⚠ Skill search unavailable: request [31m forged line\n",
+            "  search-failure  codex\n"
+        )
+    );
+}
+
+#[test]
 fn outdated_all_reports_a_managed_skill_once() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
@@ -513,6 +569,55 @@ fn outdated_survives_a_source_state_failure() {
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
         "Source state unavailable for Skill example: the remote service returned HTTP 503.\n"
+    );
+}
+
+#[test]
+fn outdated_source_state_failures_are_single_line_and_terminal_safe() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(Provider::new(
+        "---\nname: example\ndescription: first\n---\n",
+    ));
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    install_project(&host, "skilld:skilld-dev/skills/example");
+    *provider.fail_state.lock().unwrap() = true;
+    *provider.state_failure_message.lock().unwrap() =
+        "request\u{1b}[31m\u{0085}\u{202e}\rforged\nline".to_owned();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let plain = run(["skilld", "outdated"], &host, &mut stdout, &mut stderr);
+
+    assert_eq!(plain.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout.clone()).unwrap(),
+        "Source state unavailable for Skill example: request [31m forged line.\n"
+    );
+    stdout.clear();
+    let human = run_with_output(
+        ["skilld", "outdated"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 80,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(human.exit_code, 0);
+    assert!(stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        concat!(
+            "✗ example  source unavailable\n",
+            "  error  request [31m forged line\n"
+        )
     );
 }
 

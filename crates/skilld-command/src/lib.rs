@@ -43,7 +43,7 @@ use skilld_ui::{Detail, Line, Marker, Screen};
 
 use output::{
     OutputMode, SearchItem, SearchOutcome, render_error, render_run, render_search,
-    render_update_check, resolve_mode,
+    render_update_check, resolve_mode, screen_message,
 };
 
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
@@ -2150,11 +2150,12 @@ impl Host for LocalHost {
             let names = match store.list(&known) {
                 Ok(names) => names,
                 Err(error) => {
+                    let message = screen_message(&CommandError::store(error).message);
                     // Without a readable lockfile, managed copies cannot be told from unmanaged ones.
                     lines.push(Line::error(format!(
                         "Skill store unavailable in {} scope: {}",
                         scope.as_str(),
-                        CommandError::store(error).message
+                        message
                     )));
                     if all {
                         // The ancestor scan must not report Skills this scope cannot verify.
@@ -2169,9 +2170,9 @@ impl Host for LocalHost {
                 let view = match store.view(&skill_name, &known) {
                     Ok(view) => view,
                     Err(error) => {
+                        let message = screen_message(&CommandError::store(error).message);
                         lines.push(Line::error(format!(
-                            "Skill {name} details unavailable: {}",
-                            CommandError::store(error).message
+                            "Skill {name} details unavailable: {message}"
                         )));
                         continue;
                     }
@@ -2243,7 +2244,10 @@ impl Host for LocalHost {
                         &self.project_root,
                     )),
                     Ok(None) => no_match.push(skill),
-                    Err(error) => failures.entry(error.message).or_default().push(skill),
+                    Err(error) => failures
+                        .entry(screen_message(&error.message))
+                        .or_default()
+                        .push(skill),
                 }
             }
             lines.extend(outdated::render_no_match(&no_match));
@@ -2707,15 +2711,13 @@ impl LocalHost {
                         )]
                     }
                     Err(error) => {
+                        let message = screen_message(&error.message);
                         vec![Line::record(
                             Marker::Error,
-                            format!(
-                                "Source state unavailable for Skill {name}: {}.",
-                                error.message
-                            ),
+                            format!("Source state unavailable for Skill {name}: {message}."),
                             name,
                             Some("source unavailable".to_owned()),
-                            vec![Detail::plain("error", error.message.clone())],
+                            vec![Detail::plain("error", message)],
                         )]
                     }
                 }
