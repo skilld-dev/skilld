@@ -1,4 +1,4 @@
-use skilld_command::OutputContext;
+use skilld_command::{OutputContext, RemoteProgress, RemoteProgressStage};
 use skilld_ui::spinner;
 use skilld_ui::theme::{RESET, Role, paint};
 
@@ -36,6 +36,40 @@ fn frame_line(label: &str, frame: usize, seconds: u64, color: bool) -> String {
 pub struct StatusLine {
     shared: Option<Arc<Mutex<StatusState>>>,
     thread: Option<JoinHandle<()>>,
+}
+
+struct StatusProgress {
+    shared: Option<Arc<Mutex<StatusState>>>,
+}
+
+impl RemoteProgress for StatusProgress {
+    fn stage(&self, stage: RemoteProgressStage) {
+        let Some(shared) = &self.shared else {
+            return;
+        };
+        if let Ok(mut state) = shared.lock() {
+            state.label = remote_status_label(stage).to_owned();
+        }
+    }
+}
+
+fn remote_status_label(stage: RemoteProgressStage) -> &'static str {
+    match stage {
+        RemoteProgressStage::RequestingResolution => "Starting Artifact resolution",
+        RemoteProgressStage::Requested => "Waiting for Artifact resolution",
+        RemoteProgressStage::Resolving => "Resolving Skill source",
+        RemoteProgressStage::Fetching => "Fetching Repository",
+        RemoteProgressStage::Checking => "Checking Skill",
+        RemoteProgressStage::Packaging => "Packaging Artifact",
+        RemoteProgressStage::Encrypting => "Encrypting Artifact",
+        RemoteProgressStage::Signing => "Signing attestation",
+        RemoteProgressStage::Publishing => "Publishing Artifact",
+        RemoteProgressStage::RetryWait => "Waiting to retry",
+        RemoteProgressStage::VerifyingAttestation => "Verifying attestation",
+        RemoteProgressStage::RequestingDownload => "Requesting Artifact download",
+        RemoteProgressStage::DownloadingArtifact => "Downloading Artifact",
+        RemoteProgressStage::VerifyingArtifact => "Verifying Artifact",
+    }
 }
 
 impl StatusLine {
@@ -109,6 +143,12 @@ impl StatusLine {
             color,
             Box::new(std::io::stderr()),
         )
+    }
+
+    pub fn remote_progress(&self) -> Arc<dyn RemoteProgress> {
+        Arc::new(StatusProgress {
+            shared: self.shared.clone(),
+        })
     }
 
     pub fn stop(&mut self) {
@@ -259,8 +299,11 @@ impl skilld_command::OutdatedProgress for OutdatedProgressLine {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatedStderr, OutputContext, StatusLine, frame_line, status_label};
+    use super::{
+        GatedStderr, OutputContext, StatusLine, frame_line, remote_status_label, status_label,
+    };
     use skilld_command::CommandPlatform;
+    use skilld_command::RemoteProgressStage;
     use std::io::Write;
     use std::sync::Mutex;
     use std::thread;
@@ -288,6 +331,26 @@ mod tests {
         let colored = frame_line("Searching", 1, 2, true);
         assert!(colored.starts_with("\r\x1b[2K\u{1b}[1m\u{1b}[36m⠙"));
         assert!(colored.contains("Searching"));
+    }
+
+    #[test]
+    fn remote_stages_name_the_current_work() {
+        assert_eq!(
+            remote_status_label(RemoteProgressStage::Resolving),
+            "Resolving Skill source"
+        );
+        assert_eq!(
+            remote_status_label(RemoteProgressStage::Checking),
+            "Checking Skill"
+        );
+        assert_eq!(
+            remote_status_label(RemoteProgressStage::Packaging),
+            "Packaging Artifact"
+        );
+        assert_eq!(
+            remote_status_label(RemoteProgressStage::DownloadingArtifact),
+            "Downloading Artifact"
+        );
     }
 
     #[test]

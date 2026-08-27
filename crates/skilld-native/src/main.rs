@@ -60,17 +60,39 @@ fn main() -> ExitCode {
     };
     let global_root = global_root();
     let detection = detection_environment();
+    let output = OutputContext::auto(
+        std::io::stdout().is_terminal(),
+        active_agent_detected(),
+        environment_enabled("CI"),
+        environment_present("NO_COLOR"),
+        env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
+        terminal_width(),
+        CommandPlatform::current(),
+    );
+    let label = if interactive {
+        None
+    } else {
+        status::status_label(args.iter().map(|arg| arg.to_string_lossy()))
+    };
+    let status = match label {
+        Some(label) => StatusLine::for_terminal(label, output),
+        None => StatusLine::disabled(),
+    };
+    let remote_progress = status.remote_progress();
     let account = Arc::new(NativeAccount::new());
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
         .with_detection_environment(detection.clone())
         .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
         .with_account_provider(account.clone())
-        .with_remote_provider(Arc::new(SkilldRemote::new(
-            Arc::new(NativeHttpAdapter::new()),
-            account,
-            native_remote_config(),
-        )));
+        .with_remote_provider(Arc::new(
+            SkilldRemote::new(
+                Arc::new(NativeHttpAdapter::new()),
+                account,
+                native_remote_config(),
+            )
+            .with_progress(remote_progress),
+        ));
     let host = if args.iter().skip(1).any(|arg| arg == "outdated")
         && !args.iter().any(|arg| arg == "--json" || arg == "--plain")
     {
@@ -115,20 +137,6 @@ fn main() -> ExitCode {
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr();
-    let output = OutputContext::auto(
-        stdout.is_terminal(),
-        active_agent_detected(),
-        environment_enabled("CI"),
-        environment_present("NO_COLOR"),
-        env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")),
-        terminal_width(),
-        CommandPlatform::current(),
-    );
-    let label = status::status_label(args.iter().map(|arg| arg.to_string_lossy()));
-    let status = match label {
-        Some(label) => StatusLine::for_terminal(label, output),
-        None => StatusLine::disabled(),
-    };
     let mut gated = status::GatedStderr::new(&mut stderr, status);
     let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
     gated.finish_status();
