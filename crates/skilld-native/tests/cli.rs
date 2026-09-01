@@ -11,7 +11,7 @@ use std::process::{Command, Output};
 #[cfg(unix)]
 use nix::pty::{Winsize, openpty};
 
-const DETECTION_SIGNALS: [&str; 18] = [
+const DETECTION_SIGNALS: [&str; 29] = [
     "CLAUDE_CODE",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -30,6 +30,17 @@ const DETECTION_SIGNALS: [&str; 18] = [
     "OPENCODE_SESSION_ID",
     "ROO_SESSION",
     "ANTIGRAVITY_CLI_ALIAS",
+    "OPENCLAW_SHELL",
+    "OPENCLAW_CLI",
+    "OPENCLAW_STATE_DIR",
+    "HERMES_AGENT",
+    "HERMES_SESSION_ID",
+    "HERMES_HOME",
+    "KIRO_HOME",
+    "AGENT_CONTEXT_OUT",
+    "KILO_RUN_ID",
+    "KILO_PID",
+    "ZED_TERM",
 ];
 
 fn binary() -> PathBuf {
@@ -191,7 +202,9 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA",
         "https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH",
         "Values: claude-code, cursor, windsurf, cline, codex, github-copilot,",
-        "gemini-cli, goose, amp, opencode, roo, antigravity.",
+        "gemini-cli, goose, amp, opencode, roo, antigravity, openclaw,",
+        "hermes, kiro, kilo, droid, trae, zed.",
+        "Use --agent all to select every Agent target.",
         "Repeat --agent to select several.",
         "Default: every Agent target skilld detects.",
         "If skilld detects none, it uses agent.targets.",
@@ -341,6 +354,80 @@ fn empty_interactive_update_restores_the_terminal_before_its_summary() {
 
     assert!(output.contains("\u{1b}[?25h"));
     assert!(restored < summary, "{output:?}");
+}
+
+#[test]
+fn short_global_flag_installs_to_the_named_global_target() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let install = run(
+        &project,
+        &data,
+        &home,
+        &[
+            "install",
+            fixture().to_str().unwrap(),
+            "-g",
+            "--agent",
+            "kiro",
+        ],
+    );
+
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    assert!(home.join(".kiro/skills/local-skill/SKILL.md").exists());
+    assert!(!project.join(".kiro").exists());
+
+    let list = run(&project, &data, &home, &["list", "-g"]);
+    assert_eq!(String::from_utf8(list.stdout).unwrap(), "local-skill\n");
+}
+
+#[test]
+fn agent_all_installs_to_every_known_target() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&home).unwrap();
+
+    let install = run(
+        &project,
+        &data,
+        &home,
+        &["install", fixture().to_str().unwrap(), "--agent", "all"],
+    );
+
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    for dir in [
+        ".claude/skills",
+        ".cursor/skills",
+        ".agents/skills",
+        ".github/skills",
+        "skills",
+        ".hermes/skills",
+        ".kiro/skills",
+        ".kilo/skills",
+        ".factory/skills",
+        ".trae/skills",
+    ] {
+        assert!(
+            project.join(dir).join("local-skill/SKILL.md").exists(),
+            "{dir}"
+        );
+    }
 }
 
 #[test]

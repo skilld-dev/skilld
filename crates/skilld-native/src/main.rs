@@ -230,7 +230,7 @@ fn target_roots() -> TargetRoots {
 }
 
 fn detection_environment() -> DetectionEnvironment {
-    const SIGNALS: [&str; 18] = [
+    const SIGNALS: [&str; 29] = [
         "CLAUDE_CODE",
         "CLAUDECODE",
         "CLAUDE_CODE_ENTRYPOINT",
@@ -249,6 +249,17 @@ fn detection_environment() -> DetectionEnvironment {
         "OPENCODE_SESSION_ID",
         "ROO_SESSION",
         "ANTIGRAVITY_CLI_ALIAS",
+        "OPENCLAW_SHELL",
+        "OPENCLAW_CLI",
+        "OPENCLAW_STATE_DIR",
+        "HERMES_AGENT",
+        "HERMES_SESSION_ID",
+        "HERMES_HOME",
+        "KIRO_HOME",
+        "AGENT_CONTEXT_OUT",
+        "KILO_RUN_ID",
+        "KILO_PID",
+        "ZED_TERM",
     ];
     DetectionEnvironment::new(
         SIGNALS
@@ -259,7 +270,7 @@ fn detection_environment() -> DetectionEnvironment {
 }
 
 fn active_agent_detected() -> bool {
-    const SIGNALS: [&str; 17] = [
+    const SIGNALS: [&str; 28] = [
         "CLAUDE_CODE",
         "CLAUDECODE",
         "CLAUDE_CODE_ENTRYPOINT",
@@ -277,6 +288,17 @@ fn active_agent_detected() -> bool {
         "OPENCODE_SESSION_ID",
         "ROO_SESSION",
         "ANTIGRAVITY_CLI_ALIAS",
+        "OPENCLAW_SHELL",
+        "OPENCLAW_CLI",
+        "OPENCLAW_STATE_DIR",
+        "HERMES_AGENT",
+        "HERMES_SESSION_ID",
+        "HERMES_HOME",
+        "KIRO_HOME",
+        "AGENT_CONTEXT_OUT",
+        "KILO_RUN_ID",
+        "KILO_PID",
+        "ZED_TERM",
     ];
     SIGNALS.iter().any(|name| environment_enabled(name))
 }

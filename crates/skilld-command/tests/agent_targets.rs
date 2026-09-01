@@ -38,6 +38,13 @@ fn every_project_signal_selects_the_matching_agent_target() {
         (AgentTargetId::Opencode, ".opencode", ".opencode/skills"),
         (AgentTargetId::Roo, ".roo", ".roo/skills"),
         (AgentTargetId::Antigravity, ".agent", ".agent/skills"),
+        (AgentTargetId::Openclaw, ".openclaw", "skills"),
+        (AgentTargetId::Hermes, ".hermes", ".hermes/skills"),
+        (AgentTargetId::Kiro, ".kiro", ".kiro/skills"),
+        (AgentTargetId::Kilo, ".kilo", ".kilo/skills"),
+        (AgentTargetId::Droid, ".factory", ".factory/skills"),
+        (AgentTargetId::Trae, ".trae", ".trae/skills"),
+        (AgentTargetId::Zed, ".zed", ".agents/skills"),
     ];
 
     for (agent, signal, skills_dir) in cases {
@@ -105,6 +112,11 @@ fn every_runtime_signal_selects_the_matching_agent_target() {
             "ANTIGRAVITY_CLI_ALIAS",
             ".agent/skills",
         ),
+        (AgentTargetId::Openclaw, "OPENCLAW_SHELL", "skills"),
+        (AgentTargetId::Hermes, "HERMES_AGENT", ".hermes/skills"),
+        (AgentTargetId::Kiro, "AGENT_CONTEXT_OUT", ".kiro/skills"),
+        (AgentTargetId::Kilo, "KILO_RUN_ID", ".kilo/skills"),
+        (AgentTargetId::Zed, "ZED_TERM", ".agents/skills"),
     ];
 
     for (agent, signal, skills_dir) in cases {
@@ -129,6 +141,54 @@ fn every_runtime_signal_selects_the_matching_agent_target() {
             "{}",
             agent.as_str()
         );
+    }
+}
+
+#[test]
+fn every_new_agent_target_resolves_its_global_and_project_paths() {
+    let cases = [
+        (AgentTargetId::Openclaw, ".openclaw/skills", "skills"),
+        (AgentTargetId::Hermes, ".hermes/skills", ".hermes/skills"),
+        (AgentTargetId::Kiro, ".kiro/skills", ".kiro/skills"),
+        (AgentTargetId::Kilo, ".kilo/skills", ".kilo/skills"),
+        (AgentTargetId::Droid, ".factory/skills", ".factory/skills"),
+        (AgentTargetId::Trae, ".trae/skills", ".trae/skills"),
+        (AgentTargetId::Zed, ".agents/skills", ".agents/skills"),
+    ];
+
+    for (agent, global_dir, project_dir) in cases {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let data = temporary.path().join("data");
+        let home = temporary.path().join("home");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let source = source(temporary.path());
+        let host = LocalHost::new(project.clone(), data).with_target_roots(TargetRoots::new(
+            home.clone(),
+            home.join(".config"),
+            home.join(".claude"),
+        ));
+
+        for (scope, root, dir) in [
+            (InstallScope::Global, &home, global_dir),
+            (InstallScope::Project, &project, project_dir),
+        ] {
+            host.install_request(InstallRequest {
+                operation: InstallOperation::Install(InstallSource::Local(source.clone())),
+                scope,
+                targets: vec![agent],
+                mode: None,
+            })
+            .unwrap();
+
+            assert!(
+                root.join(dir).join("example/SKILL.md").exists(),
+                "{} {:?}",
+                agent.as_str(),
+                scope
+            );
+        }
     }
 }
 
