@@ -94,12 +94,12 @@ skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/ap
 skilld install skilld:skilld-dev/skills/vue
 
 # List every Skill a Repository, curator, or collection names
-skilld run gh:vuejs/core
+skilld run gh:anthropics/skills
 skilld run @harlan-zw
-skilld run @harlan-zw/vue-nuxt
+skilld run @harlan-zw/agent-workflow-stack
 
 # Install every Skill one of those refs names
-skilld add @harlan-zw/vue-nuxt
+skilld add @harlan-zw/agent-workflow-stack
 
 # Inspect installed Skills
 skilld list

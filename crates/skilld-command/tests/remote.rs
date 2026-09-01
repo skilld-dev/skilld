@@ -465,6 +465,55 @@ fn a_repository_ref_lists_that_repository_from_the_owner_index() {
 }
 
 #[test]
+fn an_owner_index_past_page_one_is_merged_into_the_listing() {
+    let page_one = response(
+        200,
+        serde_json::to_vec(&json!({
+            "items": [{
+                "name": "padding",
+                "owner": "big",
+                "repo": "other",
+                "description": null,
+                "stars": 1,
+                "registryPath": "/gh/big/other/padding",
+            }],
+            "total": 300,
+            "page": 1,
+            "pages": 2,
+        }))
+        .unwrap(),
+    );
+    let page_two = registry_page(&[
+        ("big", "wanted", "zulu", None),
+        ("big", "wanted", "alpha", Some("On page two.")),
+    ]);
+    let http = Arc::new(FakeHttp::with([page_one, page_two]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "big".to_owned(),
+            repository: "wanted".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("big", "wanted", "alpha", Some("On page two.")),
+            listed("big", "wanted", "zulu", None),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/skills?owner=big&limit=200",
+            "/api/skills?owner=big&limit=200&page=2",
+        ]
+    );
+}
+
+#[test]
 fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
     let http = Arc::new(FakeHttp::with([
         response(

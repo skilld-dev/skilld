@@ -1511,6 +1511,8 @@ struct CollectionEntry {
 #[derive(Deserialize)]
 struct RegistrySkillPage {
     items: Vec<RegistrySkillRow>,
+    total: Option<usize>,
+    pages: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -1562,19 +1564,44 @@ impl SkilldRemote {
 
     /// Every indexed Skill one GitHub account owns.
     fn owner_skills(&self, owner: &str) -> Result<Vec<ListedSkill>, RemoteError> {
-        let mut url = self.service_url("/api/skills")?;
-        url.query_pairs_mut()
-            .append_pair("owner", owner)
-            .append_pair("limit", &LISTING_PAGE.to_string());
-        let page: RegistrySkillPage = self.service_json(url)?;
-        Ok(page
-            .items
+        let first = self.owner_skills_page(owner, 1)?;
+        let pages = first
+            .pages
+            .or_else(|| first.total.map(|total| total.div_ceil(LISTING_PAGE)))
+            .unwrap_or(1);
+        let mut rows = first.items;
+        for page in 2..=pages {
+            let next = self.owner_skills_page(owner, page)?;
+            let received = next.items.len();
+            rows.extend(next.items);
+            if received < LISTING_PAGE {
+                break;
+            }
+        }
+        Ok(rows
             .into_iter()
             .filter(|row| row.owner.eq_ignore_ascii_case(owner))
             .filter_map(|row| {
                 listed_skill(row.owner, row.repo, row.name, row.description.as_deref())
             })
             .collect())
+    }
+
+    fn owner_skills_page(
+        &self,
+        owner: &str,
+        page: usize,
+    ) -> Result<RegistrySkillPage, RemoteError> {
+        let mut url = self.service_url("/api/skills")?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("owner", owner);
+            pairs.append_pair("limit", &LISTING_PAGE.to_string());
+            if page > 1 {
+                pairs.append_pair("page", &page.to_string());
+            }
+        }
+        self.service_json(url)
     }
 
     /// Every Skill one Repository carries, by name.
