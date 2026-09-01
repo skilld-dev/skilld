@@ -18,9 +18,10 @@ use skilld_command::{
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
     CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, LockedSource, PreparedFile, RemoteError,
-    RemoteSelector, RepositoryVisibility, ResolvedSource, SearchResponse, SignatureAlgorithm,
-    SourceProvider, SourceStatus, TrustedRootPin, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    InstallRequest, InstallScope, InstallSource, ListedSkill, LockedSource, MultiSkillRef,
+    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
+    SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
+    UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -386,6 +387,204 @@ fn search_remote(http: Arc<FakeHttp>) -> SkilldRemote {
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep))
+}
+
+fn listed(owner: &str, repository: &str, name: &str, description: Option<&str>) -> ListedSkill {
+    ListedSkill {
+        name: name.to_owned(),
+        owner: owner.to_owned(),
+        repository: repository.to_owned(),
+        description: description.map(str::to_owned),
+    }
+}
+
+fn registry_page(rows: &[(&str, &str, &str, Option<&str>)]) -> HttpResponse {
+    let items = rows
+        .iter()
+        .map(|(owner, repo, name, description)| {
+            json!({
+                "name": name,
+                "owner": owner,
+                "repo": repo,
+                "description": description,
+                "stars": 12,
+                "registryPath": format!("/gh/{owner}/{repo}/{name}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    response(
+        200,
+        serde_json::to_vec(&json!({ "items": items, "total": items.len(), "page": 1 })).unwrap(),
+    )
+}
+
+fn request_paths(http: &FakeHttp) -> Vec<String> {
+    http.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| {
+            request
+                .url
+                .trim_start_matches("http://127.0.0.1:8787")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_repository_ref_lists_that_repository_from_the_owner_index() {
+    let http = Arc::new(FakeHttp::with([registry_page(&[
+        (
+            "vuejs",
+            "core",
+            "vue",
+            Some("Build Vue interfaces.\nSecond line."),
+        ),
+        ("vuejs", "core", "Not A Skill", Some("dropped: no selector")),
+        ("vuejs", "router", "vue-router", None),
+        ("vuejs", "core", "composition", None),
+    ])]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "composition", None),
+            listed("vuejs", "core", "vue", Some("Build Vue interfaces.")),
+        ]
+    );
+    assert_eq!(request_paths(&http), ["/api/skills?owner=vuejs&limit=200"]);
+}
+
+#[test]
+fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "authorLogin": "harlan-zw",
+                "slug": "nuxt",
+                "skills": [
+                    { "position": 0, "owner": "vuejs", "repo": "core", "name": "vue", "reason": "The reactive core." },
+                    { "position": 1, "owner": "nuxt", "repo": "skills", "name": null, "reason": null },
+                    { "position": 2, "owner": "vuejs", "repo": "core", "name": "vue", "reason": "Listed twice." },
+                ]
+            }))
+            .unwrap(),
+        ),
+        registry_page(&[
+            ("nuxt", "skills", "nuxt", Some("Build Nuxt apps.")),
+            ("nuxt", "other", "ignored", None),
+        ]),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "nuxt".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "vue", Some("The reactive core.")),
+            listed("nuxt", "skills", "nuxt", Some("Build Nuxt apps.")),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/collections/by-author/harlan-zw/nuxt",
+            "/api/skills?owner=nuxt&limit=200",
+        ]
+    );
+}
+
+#[test]
+fn a_curator_ref_lists_every_collection_once() {
+    let collection = |name: &str| {
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "skills": [
+                    { "position": 0, "owner": "vuejs", "repo": "core", "name": name, "reason": null },
+                    { "position": 1, "owner": "vuejs", "repo": "core", "name": "shared", "reason": null },
+                ]
+            }))
+            .unwrap(),
+        )
+    };
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "login": "harlan-zw",
+                "collections": [
+                    { "slug": "vue", "name": "Vue", "itemCount": 2 },
+                    { "slug": "nuxt", "name": "Nuxt", "itemCount": 2 },
+                ]
+            }))
+            .unwrap(),
+        ),
+        collection("vue"),
+        collection("nuxt"),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Curator {
+            login: "harlan-zw".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "vue", None),
+            listed("vuejs", "core", "shared", None),
+            listed("vuejs", "core", "nuxt", None),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/curators/harlan-zw",
+            "/api/collections/by-author/harlan-zw/vue",
+            "/api/collections/by-author/harlan-zw/nuxt",
+        ]
+    );
+}
+
+#[test]
+fn a_missing_collection_is_a_source_not_found_error() {
+    let http = Arc::new(FakeHttp::with([response(
+        404,
+        br#"{"error":true,"statusCode":404,"message":"Collection not found"}"#.to_vec(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "missing".to_owned(),
+        })
+        .unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(
+        error.message,
+        "skilld.dev has no collection @harlan-zw/missing"
+    );
 }
 
 fn skilld_selector() -> RemoteSelector {

@@ -89,6 +89,14 @@ skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/ap
 # Install a Skill in the current project
 skilld install skilld:skilld-dev/skills/vue
 
+# List every Skill a Repository, curator, or collection names
+skilld run gh:vuejs/core
+skilld run @harlan-zw
+skilld run @harlan-zw/vue-nuxt
+
+# Install every Skill one of those refs names
+skilld add @harlan-zw/vue-nuxt
+
 # Inspect installed Skills
 skilld list
 skilld view vue
@@ -109,6 +117,10 @@ Use `--global` for account level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
 
 Run `skilld install` without a source to restore the lockfile state.
+
+`skilld run` with a Repository, curator, or collection ref prints an index.
+The index has one line per Skill with its run command. It loads no Skill.
+`skilld add` installs every Skill the same ref names. It accepts the `skilld install` flags.
 
 ## Artifact delivery
 

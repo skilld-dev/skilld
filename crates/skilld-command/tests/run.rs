@@ -201,7 +201,7 @@ fn load(host: &LocalHost) -> Box<skilld_command::TransientSkill> {
         .unwrap()
     {
         RunOutcome::Load(skill) => skill,
-        RunOutcome::Files { .. } => panic!("expected a Skill load"),
+        RunOutcome::Files { .. } | RunOutcome::Index(_) => panic!("expected a Skill load"),
     }
 }
 
@@ -219,7 +219,7 @@ fn pull(host: &LocalHost, wanted: &[&str]) -> Vec<skilld_command::PulledFile> {
         .unwrap()
     {
         RunOutcome::Files { files, .. } => files,
-        RunOutcome::Load(_) => panic!("expected supporting files"),
+        RunOutcome::Load(_) | RunOutcome::Index(_) => panic!("expected supporting files"),
     }
 }
 

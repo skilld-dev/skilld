@@ -221,22 +221,28 @@ fn split_three(value: &str) -> Result<(&str, &str, &str), RemoteError> {
     }
 }
 
+/// Whether a value is a valid GitHub account login.
+pub(crate) fn valid_owner(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 39
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Whether a value is a valid GitHub Repository name.
+pub(crate) fn valid_repository(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
 fn validate_source_request(source: &SourceRequest) -> Result<(), RemoteError> {
-    let valid_owner = !source.owner.is_empty()
-        && source.owner.len() <= 39
-        && !source.owner.starts_with('-')
-        && !source.owner.ends_with('-')
-        && source
-            .owner
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    let valid_repository = !source.repository.is_empty()
-        && source.repository.len() <= 100
-        && source
-            .repository
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-    if !valid_owner || !valid_repository {
+    if !valid_owner(&source.owner) || !valid_repository(&source.repository) {
         return Err(RemoteError::new(
             "INVALID_SOURCE",
             "the GitHub Repository owner or name is invalid",
@@ -1098,7 +1104,7 @@ fn validate_relative_path(value: &str, maximum: usize) -> Result<(), RemoteError
     }
 }
 
-fn is_unsafe_terminal(character: char) -> bool {
+pub(crate) fn is_unsafe_terminal(character: char) -> bool {
     let code = u32::from(character);
     character.is_control()
         || matches!(

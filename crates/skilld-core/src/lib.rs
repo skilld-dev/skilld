@@ -1,4 +1,5 @@
 mod lock;
+mod reference;
 mod remote;
 mod target;
 mod update;
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub use lock::{
     LockDocument, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES, SourceStatus,
 };
+pub use reference::{ListedSkill, MultiSkillRef, SkillListing, SkillRef};
 pub use remote::{
     ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
     PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,

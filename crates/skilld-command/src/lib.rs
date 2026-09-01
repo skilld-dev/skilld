@@ -34,9 +34,9 @@ pub use run::{
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    NotTrackedReason, RemoteSelector, SourceRef, UpdateFailure, UpdateLatestCommit,
-    UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter,
-    VERSION, classify_update_comparison, select_target_ids,
+    MultiSkillRef, NotTrackedReason, RemoteSelector, SkillListing, SkillRef, SourceRef,
+    UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1,
+    UpdateRelation, UpdateRetryAfter, VERSION, classify_update_comparison, select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
@@ -102,13 +102,45 @@ enum Command {
         )]
         direct: bool,
     },
+    /// Install every Skill a Repository, curator, or collection names.
+    #[command(
+        long_about = "Install every Skill a Repository, curator, or collection names.\n\nGive REF as:\n  gh:OWNER/REPOSITORY\n      Install every Skill the Repository carries.\n  @LOGIN\n      Install every Skill the curator's collections name.\n  @LOGIN/SLUG\n      Install every Skill one collection names.\n  Any SOURCE skilld install accepts\n      Install that one Skill.\n\nEach Skill installs through the same hosted Artifact path skilld install uses.\nRun skilld run REF first to see the Skills a ref names.",
+        after_long_help = "Examples:\n  npx skilld add gh:skilld-dev/skills\n  npx skilld add @harlan-zw/nuxt --agent codex\n  npx skilld add skilld:skilld-dev/skills/vue --global"
+    )]
+    Add {
+        /// The Repository, curator, collection, or Skill source to install.
+        #[arg(value_name = "REF")]
+        reference: String,
+        #[arg(
+            long,
+            long_help = "Install to your account-level Agent targets. The default is the current project."
+        )]
+        global: bool,
+        #[arg(
+            long = "agent",
+            value_name = "AGENT",
+            long_help = "Select an Agent target. Repeat --agent to select several.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
+        )]
+        agents: Vec<String>,
+        #[arg(
+            long,
+            value_name = "MODE",
+            long_help = "Choose how each Agent target receives the Skill.\nValues: copy, symlink. The default comes from install.mode."
+        )]
+        mode: Option<String>,
+        #[arg(
+            long,
+            long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nOnly one Skill source accepts --direct. A direct install records the unverified source status."
+        )]
+        direct: bool,
+    },
     /// Load a Skill for this session without installing it.
     #[command(
-        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.",
-        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.\n\nGive a ref that names several Skills to list them instead:\n  gh:OWNER/REPOSITORY, @LOGIN, or @LOGIN/SLUG\nskilld prints one line per Skill with its run command and loads none of them.",
+        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  npx skilld run gh:skilld-dev/skills\n  npx skilld run @harlan-zw/nuxt\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
     )]
     Run {
-        /// The Skill source to load.
+        /// The Skill source to load, or a ref that names several Skills.
         #[arg(value_name = "SOURCE")]
         source: String,
         #[arg(
@@ -224,6 +256,12 @@ pub trait Host {
     ) -> Result<RunOutcome, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill runs are unavailable on this host",
+        ))
+    }
+
+    fn list_skills(&self, _reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill listings are unavailable on this host",
         ))
     }
 
@@ -384,6 +422,15 @@ impl CommandError {
         Self::usage(
             "DIRECT_SOURCE_REQUIRED",
             "--direct cannot run the skilld-maintained Skill. Run skilld run skilld without --direct.",
+        )
+    }
+
+    fn direct_multi_skill_ref(reference: &MultiSkillRef) -> Self {
+        Self::usage(
+            "DIRECT_SOURCE_REQUIRED",
+            format!(
+                "--direct needs one Skill source. {reference} names several Skills. Remove --direct, then run the same command again."
+            ),
         )
     }
 
@@ -708,7 +755,8 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
-        "search", "install", "run", "list", "view", "remove", "update", "verify", "auth", "config",
+        "search", "install", "add", "run", "list", "view", "remove", "update", "verify", "auth",
+        "config",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -781,6 +829,51 @@ fn dispatch<H: Host>(
     platform: CommandPlatform,
 ) -> Result<CommandOutput, CommandError> {
     match command {
+        Command::Add {
+            reference,
+            global,
+            agents,
+            mode,
+            direct,
+        } => {
+            let reference = SkillRef::parse(&reference).map_err(CommandError::remote)?;
+            let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
+            match reference {
+                SkillRef::Skill(source) => install(host, Some(source), options, direct),
+                SkillRef::Many(reference) if direct => {
+                    Err(CommandError::direct_multi_skill_ref(&reference))
+                }
+                SkillRef::Many(reference) => {
+                    let listing = list_skills(host, &reference)?;
+                    let mut lines = Vec::with_capacity(listing.items.len());
+                    for (index, item) in listing.items.iter().enumerate() {
+                        let names = host
+                            .install_request(InstallRequest {
+                                operation: InstallOperation::Install(InstallSource::Remote(
+                                    item.selector(),
+                                )),
+                                scope: options.scope,
+                                targets: options.targets.clone(),
+                                mode: options.mode,
+                            })
+                            .map_err(|error| CommandError {
+                                message: format!(
+                                    "{}. skilld installed {index} of {} Skills from {reference} before this failure.",
+                                    error.message.trim_end_matches('.'),
+                                    listing.items.len()
+                                ),
+                                ..error
+                            })?;
+                        lines.extend(
+                            names
+                                .into_iter()
+                                .map(|name| Line::success(format!("Installed Skill {name}."))),
+                        );
+                    }
+                    Ok(CommandOutput::Screen(Screen::new(lines)))
+                }
+            }
+        }
         Command::Install {
             source,
             global,
@@ -788,56 +881,8 @@ fn dispatch<H: Host>(
             mode,
             direct,
         } => {
-            let scope = scope(global);
-            let operation = match source {
-                Some(source) => match (direct, InstallSource::parse(&source)) {
-                    (true, InstallSource::Remote(source)) => {
-                        InstallOperation::Install(InstallSource::DirectRemote(source))
-                    }
-                    (true, InstallSource::DirectRemote(source)) => {
-                        InstallOperation::Install(InstallSource::DirectRemote(source))
-                    }
-                    (true, InstallSource::Local(_)) => {
-                        return Err(CommandError::direct_local_install_source());
-                    }
-                    (true, InstallSource::BundledSkilld) => {
-                        return Err(CommandError::direct_bundled_install_source());
-                    }
-                    (false, source) => InstallOperation::Install(source),
-                },
-                None if direct => InstallOperation::DirectRestore,
-                None => InstallOperation::Restore,
-            };
-            if operation == InstallOperation::Install(InstallSource::BundledSkilld)
-                && scope != InstallScope::Global
-            {
-                return Err(CommandError::input(
-                    "install the skilld-maintained Skill with --global",
-                ));
-            }
-            let targets = agents
-                .iter()
-                .map(|agent| AgentTargetId::parse(agent).map_err(CommandError::domain))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mode = mode
-                .as_deref()
-                .map(InstallMode::parse)
-                .transpose()
-                .map_err(CommandError::domain)?;
-            let names = host.install_request(InstallRequest {
-                operation,
-                scope,
-                targets,
-                mode,
-            })?;
-            let mut lines = names
-                .into_iter()
-                .map(|name| Line::success(format!("Installed Skill {name}.")))
-                .collect::<Vec<_>>();
-            if direct {
-                lines.push(Line::hint("Review the unverified Skill before use."));
-            }
-            Ok(CommandOutput::Screen(Screen::new(lines)))
+            let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
+            install(host, source, options, direct)
         }
         Command::Run {
             source,
@@ -845,6 +890,22 @@ fn dispatch<H: Host>(
             revision,
             direct,
         } => {
+            let reference = SkillRef::parse(&source).map_err(CommandError::remote)?;
+            let source = match reference {
+                SkillRef::Skill(source) => source,
+                SkillRef::Many(reference) => {
+                    if direct {
+                        return Err(CommandError::direct_multi_skill_ref(&reference));
+                    }
+                    if !files.is_empty() || revision.is_some() {
+                        return Err(CommandError::input(format!(
+                            "--file and --revision need one Skill source. {reference} names several Skills. Run skilld run {reference} to list them."
+                        )));
+                    }
+                    return list_skills(host, &reference)
+                        .map(|listing| CommandOutput::Run(RunOutcome::Index(listing)));
+                }
+            };
             run::reject_duplicate_files(&files)?;
             let revision = revision.map(CommitSha::parse).transpose().map_err(|_| {
                 CommandError::input("--revision must use 40 lowercase hexadecimal characters")
@@ -993,6 +1054,95 @@ fn dispatch<H: Host>(
             .outdated(all, platform)
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
     }
+}
+
+/// The install flags `skilld install` and `skilld add` share, parsed once.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InstallOptions {
+    scope: InstallScope,
+    targets: Vec<AgentTargetId>,
+    mode: Option<InstallMode>,
+}
+
+impl InstallOptions {
+    fn parse(global: bool, agents: &[String], mode: Option<&str>) -> Result<Self, CommandError> {
+        let targets = agents
+            .iter()
+            .map(|agent| AgentTargetId::parse(agent).map_err(CommandError::domain))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mode = mode
+            .map(InstallMode::parse)
+            .transpose()
+            .map_err(CommandError::domain)?;
+        Ok(Self {
+            scope: scope(global),
+            targets,
+            mode,
+        })
+    }
+}
+
+/// Install one Skill source, or restore the lockfile when SOURCE is absent.
+fn install<H: Host>(
+    host: &H,
+    source: Option<String>,
+    options: InstallOptions,
+    direct: bool,
+) -> Result<CommandOutput, CommandError> {
+    let scope = options.scope;
+    let operation = match source {
+        Some(source) => match (direct, InstallSource::parse(&source)) {
+            (true, InstallSource::Remote(source)) => {
+                InstallOperation::Install(InstallSource::DirectRemote(source))
+            }
+            (true, InstallSource::DirectRemote(source)) => {
+                InstallOperation::Install(InstallSource::DirectRemote(source))
+            }
+            (true, InstallSource::Local(_)) => {
+                return Err(CommandError::direct_local_install_source());
+            }
+            (true, InstallSource::BundledSkilld) => {
+                return Err(CommandError::direct_bundled_install_source());
+            }
+            (false, source) => InstallOperation::Install(source),
+        },
+        None if direct => InstallOperation::DirectRestore,
+        None => InstallOperation::Restore,
+    };
+    if operation == InstallOperation::Install(InstallSource::BundledSkilld)
+        && scope != InstallScope::Global
+    {
+        return Err(CommandError::input(
+            "install the skilld-maintained Skill with --global",
+        ));
+    }
+    let names = host.install_request(InstallRequest {
+        operation,
+        scope,
+        targets: options.targets,
+        mode: options.mode,
+    })?;
+    let mut lines = names
+        .into_iter()
+        .map(|name| Line::success(format!("Installed Skill {name}.")))
+        .collect::<Vec<_>>();
+    if direct {
+        lines.push(Line::hint("Review the unverified Skill before use."));
+    }
+    Ok(CommandOutput::Screen(Screen::new(lines)))
+}
+
+/// List the Skills a multi-skill ref names. An empty listing is a failure:
+/// the caller asked for Skills and got none to act on.
+fn list_skills<H: Host>(host: &H, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+    let listing = host.list_skills(reference)?;
+    if listing.items.is_empty() {
+        return Err(CommandError::operation(
+            "SOURCE_NOT_FOUND",
+            format!("{reference} names no Skills that skilld.dev lists"),
+        ));
+    }
+    Ok(listing)
 }
 
 fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
@@ -1670,6 +1820,12 @@ impl Host for LocalHost {
                 "--revision requires a remote Skill source",
             )),
         }
+    }
+
+    fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+        self.remote_provider()?
+            .list_skills(reference)
+            .map_err(CommandError::remote)
     }
 
     fn view(&self, name: &str, scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -3061,12 +3217,231 @@ mod tests {
         }
     }
 
+    /// Lists two Skills for any multi-skill ref and records every install.
+    struct ListingHost {
+        installs: std::sync::Mutex<Vec<InstallRequest>>,
+        empty: bool,
+    }
+
+    impl ListingHost {
+        fn new() -> Self {
+            Self {
+                installs: std::sync::Mutex::new(vec![]),
+                empty: false,
+            }
+        }
+
+        fn requests(&self) -> Vec<InstallRequest> {
+            self.installs.lock().unwrap().clone()
+        }
+    }
+
+    impl Host for ListingHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<String, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
+            let InstallOperation::Install(InstallSource::Remote(source)) = &request.operation
+            else {
+                panic!("expected a hosted install: {:?}", request.operation);
+            };
+            let name = source.rsplit('/').next().unwrap().to_owned();
+            self.installs.lock().unwrap().push(request);
+            Ok(vec![name])
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            let items = if self.empty {
+                vec![]
+            } else {
+                vec![
+                    skilld_core::ListedSkill {
+                        name: "vue".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: Some("Build Vue interfaces.".to_owned()),
+                    },
+                    skilld_core::ListedSkill {
+                        name: "nuxt".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                    },
+                ]
+            };
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items,
+            })
+        }
+    }
+
+    fn run_plain(host: &impl Host, args: &[&str]) -> (u8, String, String) {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(args.iter().copied(), host, &mut stdout, &mut stderr);
+        (
+            result.exit_code,
+            String::from_utf8(stdout).unwrap(),
+            String::from_utf8(stderr).unwrap(),
+        )
+    }
+
+    #[test]
+    fn run_prints_an_index_for_a_multi_skill_ref() {
+        let host = ListingHost::new();
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "run", "@harlan-zw/nuxt"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert_eq!(
+            stdout,
+            "vue\tskilld-dev/skills\tBuild Vue interfaces.\tnpx skilld run skilld:skilld-dev/skills/vue\n\
+             nuxt\tskilld-dev/skills\t\tnpx skilld run skilld:skilld-dev/skills/nuxt\n"
+        );
+        assert!(host.requests().is_empty(), "run must install nothing");
+    }
+
+    #[test]
+    fn run_index_json_names_every_skill_and_its_run_command() {
+        let host = ListingHost::new();
+        let (exit, stdout, _) =
+            run_plain(&host, &["skilld", "run", "gh:skilld-dev/skills", "--json"]);
+
+        assert_eq!(exit, 0);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(json["command"], "run");
+        assert_eq!(json["data"]["_tag"], "index");
+        assert_eq!(json["data"]["kind"], "repository");
+        assert_eq!(json["data"]["reference"], "gh:skilld-dev/skills");
+        assert_eq!(json["data"]["wroteSkillFiles"], false);
+        assert_eq!(json["data"]["total"], 2);
+        assert_eq!(
+            json["data"]["items"][0]["selector"],
+            "skilld:skilld-dev/skills/vue"
+        );
+        assert_eq!(
+            json["data"]["items"][0]["runArgv"],
+            serde_json::json!(["skilld", "run", "skilld:skilld-dev/skills/vue", "--json"])
+        );
+        assert_eq!(
+            json["data"]["items"][1]["description"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            json["data"]["addArgv"],
+            serde_json::json!(["skilld", "add", "gh:skilld-dev/skills"])
+        );
+    }
+
+    #[test]
+    fn run_rejects_file_direct_and_empty_listings_for_multi_skill_refs() {
+        let host = ListingHost::new();
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "run", "@harlan-zw", "--direct"]);
+        assert_eq!((exit, stdout.as_str()), (2, ""));
+        assert!(stderr.starts_with("DIRECT_SOURCE_REQUIRED:"), "{stderr}");
+
+        let (exit, _, stderr) = run_plain(
+            &host,
+            &["skilld", "run", "@harlan-zw", "--file", "references/api.md"],
+        );
+        assert_eq!(exit, 2);
+        assert!(
+            stderr.contains("--file and --revision need one Skill source"),
+            "{stderr}"
+        );
+
+        let empty = ListingHost {
+            empty: true,
+            ..ListingHost::new()
+        };
+        let (exit, stdout, stderr) = run_plain(&empty, &["skilld", "run", "gh:skilld-dev/empty"]);
+        assert_eq!((exit, stdout.as_str()), (1, ""));
+        assert_eq!(
+            stderr,
+            "SOURCE_NOT_FOUND: gh:skilld-dev/empty names no Skills that skilld.dev lists\n"
+        );
+    }
+
+    #[test]
+    fn add_installs_every_listed_skill_with_the_shared_install_flags() {
+        let host = ListingHost::new();
+        let (exit, stdout, stderr) = run_plain(
+            &host,
+            &[
+                "skilld",
+                "add",
+                "gh:skilld-dev/skills",
+                "--global",
+                "--agent",
+                "codex",
+                "--mode",
+                "symlink",
+            ],
+        );
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert_eq!(stdout, "Installed Skill vue.\nInstalled Skill nuxt.\n");
+        let requests = host.requests();
+        assert_eq!(requests.len(), 2);
+        for (request, selector) in requests.iter().zip([
+            "skilld:skilld-dev/skills/vue",
+            "skilld:skilld-dev/skills/nuxt",
+        ]) {
+            assert_eq!(
+                request.operation,
+                InstallOperation::Install(InstallSource::Remote(selector.to_owned()))
+            );
+            assert_eq!(request.scope, InstallScope::Global);
+            assert_eq!(request.targets, [AgentTargetId::Codex]);
+            assert_eq!(request.mode, Some(InstallMode::Symlink));
+        }
+    }
+
+    #[test]
+    fn add_with_one_skill_source_installs_like_install() {
+        let host = ListingHost::new();
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld:skilld-dev/skills/vue"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert_eq!(stdout, "Installed Skill vue.\n");
+        assert_eq!(
+            host.requests()[0].operation,
+            InstallOperation::Install(InstallSource::Remote(
+                "skilld:skilld-dev/skills/vue".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn add_rejects_ambiguous_refs_before_any_request() {
+        let host = ListingHost::new();
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "gh:skilld-dev/skills/vue"]);
+
+        assert_eq!((exit, stdout.as_str()), (2, ""));
+        assert!(
+            stderr.contains("gh:OWNER/REPOSITORY names every Skill in a Repository"),
+            "{stderr}"
+        );
+        assert!(host.requests().is_empty());
+    }
+
     #[test]
     fn public_command_vocabulary_matches_v3() {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "run", "list", "view", "remove", "update", "verify",
+                "search", "install", "add", "run", "list", "view", "remove", "update", "verify",
                 "outdated", "auth", "config"
             ]
         );

@@ -10,11 +10,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use skilld_core::{
-    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, LockedSource, PreparedFile,
-    RemoteError, RemoteSelector, RepositoryVisibility, SearchResponse, SourceRef, SourceRequest,
-    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot,
-    parse_search_response, prepare_unverified_files, verify_artifact, verify_attestation,
-    verify_trusted_root,
+    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, ListedSkill, LockedSource,
+    MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, SearchResponse,
+    SkillListing, SourceRef, SourceRequest, SourceSelector, SourceStatus, TrustedRoot,
+    TrustedRootPin, VerifiedTrustedRoot, parse_search_response, prepare_unverified_files,
+    verify_artifact, verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -22,6 +22,8 @@ use url::Url;
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const UPDATE_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 1024 * 1024;
+const LISTING_LIMIT: usize = 4 * 1024 * 1024;
+const LISTING_PAGE: usize = 200;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
@@ -380,6 +382,15 @@ pub trait RemoteProvider: Send + Sync {
         &self,
         comparisons: &[RemoteUpdateComparison],
     ) -> Result<Vec<RemoteUpdateResult>, RemoteError>;
+
+    /// List every Skill a Repository, curator, or collection names.
+    fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
+        let _ = reference;
+        Err(RemoteError::new(
+            "NOT_IMPLEMENTED",
+            "this remote provider lists no Skills",
+        ))
+    }
 }
 
 #[derive(Clone)]
@@ -1485,7 +1496,229 @@ impl SkilldRemote {
     }
 }
 
+/// One entry a collection names, before the Skills behind it are known.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CollectionEntry {
+    owner: String,
+    repository: String,
+    /// `None` names every Skill the Repository carries.
+    name: Option<String>,
+    /// The curator's one-line reason for including it.
+    reason: Option<String>,
+}
+
+/// `GET /api/skills?owner=` rows. The site returns more fields; skilld reads these.
+#[derive(Deserialize)]
+struct RegistrySkillPage {
+    items: Vec<RegistrySkillRow>,
+}
+
+#[derive(Deserialize)]
+struct RegistrySkillRow {
+    name: String,
+    owner: String,
+    repo: String,
+    description: Option<String>,
+}
+
+/// `GET /api/curators/{login}`: the protocol `CuratorPayload` shape.
+#[derive(Deserialize)]
+struct CuratorPayload {
+    collections: Vec<CollectionSummary>,
+}
+
+#[derive(Deserialize)]
+struct CollectionSummary {
+    slug: String,
+}
+
+/// `GET /api/collections/by-author/{login}/{slug}`. The site returns more
+/// fields; skilld reads the resolved Skill rows.
+#[derive(Deserialize)]
+struct CollectionDetail {
+    skills: Vec<CollectionSkillRow>,
+}
+
+#[derive(Deserialize)]
+struct CollectionSkillRow {
+    owner: String,
+    repo: String,
+    name: Option<String>,
+    reason: Option<String>,
+}
+
+impl SkilldRemote {
+    fn service_json<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<T, RemoteError> {
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            url: url.into(),
+            headers: vec![],
+            body: vec![],
+            response_limit: LISTING_LIMIT,
+        };
+        let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
+        parse_json(&response.body)
+    }
+
+    /// Every indexed Skill one GitHub account owns.
+    fn owner_skills(&self, owner: &str) -> Result<Vec<ListedSkill>, RemoteError> {
+        let mut url = self.service_url("/api/skills")?;
+        url.query_pairs_mut()
+            .append_pair("owner", owner)
+            .append_pair("limit", &LISTING_PAGE.to_string());
+        let page: RegistrySkillPage = self.service_json(url)?;
+        Ok(page
+            .items
+            .into_iter()
+            .filter(|row| row.owner.eq_ignore_ascii_case(owner))
+            .filter_map(|row| {
+                listed_skill(row.owner, row.repo, row.name, row.description.as_deref())
+            })
+            .collect())
+    }
+
+    /// Every Skill one Repository carries, by name.
+    fn repository_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let mut items = self
+            .owner_skills(owner)?
+            .into_iter()
+            .filter(|skill| skill.repository.eq_ignore_ascii_case(repository))
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(items)
+    }
+
+    fn collection_entries(
+        &self,
+        login: &str,
+        slug: &str,
+    ) -> Result<Vec<CollectionEntry>, RemoteError> {
+        let path = format!(
+            "/api/collections/by-author/{}/{}",
+            path_segment(login),
+            path_segment(slug)
+        );
+        let detail: CollectionDetail =
+            self.service_json(self.service_url(&path)?)
+                .map_err(|error| {
+                    not_found_as_source(
+                        error,
+                        format!("skilld.dev has no collection @{login}/{slug}"),
+                    )
+                })?;
+        Ok(detail
+            .skills
+            .into_iter()
+            .map(|row| CollectionEntry {
+                owner: row.owner,
+                repository: row.repo,
+                name: row.name,
+                reason: row.reason,
+            })
+            .collect())
+    }
+
+    fn curator_slugs(&self, login: &str) -> Result<Vec<String>, RemoteError> {
+        let path = format!("/api/curators/{}", path_segment(login));
+        let curator: CuratorPayload =
+            self.service_json(self.service_url(&path)?)
+                .map_err(|error| {
+                    not_found_as_source(error, format!("skilld.dev has no curator @{login}"))
+                })?;
+        Ok(curator
+            .collections
+            .into_iter()
+            .map(|collection| collection.slug)
+            .collect())
+    }
+
+    /// Turn collection entries into listed Skills, in collection order.
+    /// An entry that names one Skill lists it with the curator's reason.
+    /// An entry that names a Repository lists every Skill it carries.
+    fn expand_entries(
+        &self,
+        entries: Vec<CollectionEntry>,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let mut seen = BTreeSet::new();
+        let mut items = Vec::new();
+        for entry in entries {
+            let expanded = match entry.name {
+                Some(name) => {
+                    listed_skill(entry.owner, entry.repository, name, entry.reason.as_deref())
+                        .into_iter()
+                        .collect()
+                }
+                None => self.repository_skills(&entry.owner, &entry.repository)?,
+            };
+            for skill in expanded {
+                if seen.insert(skill.selector()) {
+                    items.push(skill);
+                }
+            }
+        }
+        Ok(items)
+    }
+}
+
+/// Build one listed Skill from untrusted registry fields.
+///
+/// A row outside the selector contract has no `skilld:` selector, so skilld
+/// could not run or install it. Listing it would print a command that fails,
+/// so the row is dropped.
+fn listed_skill(
+    owner: String,
+    repository: String,
+    name: String,
+    description: Option<&str>,
+) -> Option<ListedSkill> {
+    let skill = ListedSkill {
+        owner,
+        repository,
+        name,
+        description: description
+            .map(|value| sanitize_line(value, 500, ""))
+            .filter(|value| !value.is_empty()),
+    };
+    RemoteSelector::parse(&skill.selector())
+        .is_ok()
+        .then_some(skill)
+}
+
+fn not_found_as_source(error: RemoteError, message: String) -> RemoteError {
+    if error.code == "SERVICE_UNAVAILABLE" && error.message.ends_with("HTTP 404") {
+        RemoteError::new("SOURCE_NOT_FOUND", message)
+    } else {
+        error
+    }
+}
+
 impl RemoteProvider for SkilldRemote {
+    fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
+        let items = match reference {
+            MultiSkillRef::Repository { owner, repository } => {
+                self.repository_skills(owner, repository)?
+            }
+            MultiSkillRef::Collection { login, slug } => {
+                self.expand_entries(self.collection_entries(login, slug)?)?
+            }
+            MultiSkillRef::Curator { login } => {
+                let mut entries = Vec::new();
+                for slug in self.curator_slugs(login)? {
+                    entries.extend(self.collection_entries(login, &slug)?);
+                }
+                self.expand_entries(entries)?
+            }
+        };
+        Ok(SkillListing {
+            reference: reference.clone(),
+            items,
+        })
+    }
+
     fn search(&self, query: &str, limit: u8) -> Result<SearchResponse, RemoteError> {
         let query = query.trim();
         if query.is_empty() || query.len() > 200 || !(1..=50).contains(&limit) {
