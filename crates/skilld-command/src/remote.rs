@@ -24,6 +24,10 @@ const UPDATE_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 1024 * 1024;
 const LISTING_LIMIT: usize = 4 * 1024 * 1024;
 const LISTING_PAGE: usize = 200;
+/// Most pages one owner index may span. `pages` is server supplied, so this
+/// bounds the loop when the response lies; a partial or empty page also ends
+/// paging early.
+const MAX_LISTING_PAGES: usize = 25;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
@@ -1568,7 +1572,8 @@ impl SkilldRemote {
         let pages = first
             .pages
             .or_else(|| first.total.map(|total| total.div_ceil(LISTING_PAGE)))
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .min(MAX_LISTING_PAGES);
         let mut rows = first.items;
         for page in 2..=pages {
             let next = self.owner_skills_page(owner, page)?;
@@ -1578,12 +1583,14 @@ impl SkilldRemote {
                 break;
             }
         }
+        let mut seen = BTreeSet::new();
         Ok(rows
             .into_iter()
             .filter(|row| row.owner.eq_ignore_ascii_case(owner))
             .filter_map(|row| {
                 listed_skill(row.owner, row.repo, row.name, row.description.as_deref())
             })
+            .filter(|skill| seen.insert(skill.selector()))
             .collect())
     }
 

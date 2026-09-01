@@ -513,6 +513,73 @@ fn an_owner_index_past_page_one_is_merged_into_the_listing() {
     );
 }
 
+/// Serves the same full page for every owner index request, whatever `page`
+/// names, so only a client side page cap can end the listing.
+#[derive(Default)]
+struct RunawayOwnerIndexHttp {
+    requests: Mutex<Vec<String>>,
+}
+
+const RUNAWAY_PAGE_ROWS: usize = 200;
+const RUNAWAY_REQUEST_LIMIT: usize = 25;
+
+impl HttpAdapter for RunawayOwnerIndexHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.url.to_string());
+        assert!(
+            requests.len() <= RUNAWAY_REQUEST_LIMIT,
+            "the owner index kept paging: {} requests issued",
+            requests.len()
+        );
+        let mut page = json!({
+            "items": (0..RUNAWAY_PAGE_ROWS)
+                .map(|_| json!({
+                    "name": "wanted",
+                    "owner": "big",
+                    "repo": "wanted",
+                    "description": null,
+                    "stars": 1,
+                    "registryPath": "/gh/big/wanted/wanted",
+                }))
+                .collect::<Vec<_>>(),
+            "total": 20_000_000,
+        });
+        if requests.len() == 1 {
+            page["pages"] = json!(u64::MAX);
+        }
+        Ok(response(200, serde_json::to_vec(&page).unwrap()))
+    }
+}
+
+#[test]
+fn a_runaway_owner_index_stops_paging_and_lists_each_skill_once() {
+    let http = Arc::new(RunawayOwnerIndexHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "big".to_owned(),
+            repository: "wanted".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [listed("big", "wanted", "wanted", None)]);
+    assert_eq!(http.requests.lock().unwrap().len(), RUNAWAY_REQUEST_LIMIT);
+}
+
 #[test]
 fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
     let http = Arc::new(FakeHttp::with([
