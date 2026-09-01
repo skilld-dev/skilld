@@ -2249,7 +2249,10 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
         mode: Some(InstallMode::Copy),
     };
 
-    assert_eq!(host.install_request(request).unwrap(), ["example"]);
+    let installed = host.install_request(request).unwrap();
+    assert_eq!(installed.len(), 1);
+    assert_eq!(installed[0].name, "example");
+    assert_eq!(installed[0].source_status, "verified");
     assert_eq!(
         host.verify(Some("example"))
             .unwrap()
@@ -2358,6 +2361,45 @@ fn update_check_carries_the_exact_comparison_and_commit_history() {
 }
 
 #[test]
+fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider("---\nname: example\n---\n"));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        [
+            "skilld",
+            "install",
+            "skilld:skilld-dev/skills/example",
+            "--agent",
+            "codex",
+        ],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(stdout).unwrap(),
+        concat!(
+            "Installed Skill example.\n",
+            "example · skilld-dev/skills @ 0123456\n",
+            "Source: skilld:skilld-dev/skills/example\n",
+            "Source status: verified\n",
+            "skilld checked where this Skill came from, not what it asks you to do.\n",
+            "Read it before you follow it.\n",
+            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+        )
+    );
+    assert!(stderr.is_empty());
+}
+
+#[test]
 fn cli_direct_install_marks_review_as_required() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
@@ -2384,7 +2426,14 @@ fn cli_direct_install_marks_review_as_required() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed Skill example.\nReview the unverified Skill before use.\n"
+        concat!(
+            "Installed Skill example.\n",
+            "example · skilld-dev/skills @ 0123456\n",
+            "Source: github:skilld-dev/skills/skills/example\n",
+            "Source status: unverified\n",
+            "skilld did not check this source. Read this Skill before you follow it.\n",
+            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+        )
     );
     assert!(stderr.is_empty());
 }
@@ -2428,7 +2477,14 @@ fn cli_direct_restore_uses_the_locked_commit() {
     assert_eq!(restored.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed Skill example.\nReview the unverified Skill before use.\n"
+        concat!(
+            "Installed Skill example.\n",
+            "example · skilld-dev/skills @ 0123456\n",
+            "Source: github:skilld-dev/skills/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
+            "Source status: unverified\n",
+            "skilld did not check this source. Read this Skill before you follow it.\n",
+            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+        )
     );
     assert!(stderr.is_empty());
     assert_eq!(
@@ -2547,7 +2603,15 @@ fn cli_verified_restore_keeps_artifact_delivery() {
     assert_eq!(restored.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed Skill example.\n"
+        concat!(
+            "Installed Skill example.\n",
+            "example · skilld-dev/skills @ 0123456\n",
+            "Source: skilld:skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
+            "Source status: verified\n",
+            "skilld checked where this Skill came from, not what it asks you to do.\n",
+            "Read it before you follow it.\n",
+            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+        )
     );
     assert!(stderr.is_empty());
     assert_eq!(

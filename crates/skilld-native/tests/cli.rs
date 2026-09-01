@@ -143,7 +143,11 @@ fn run_empty_interactive_update_in_pty(project: &Path, data: &Path, home: &Path)
 fn active_agent_signal_uses_plain_output_in_a_terminal() {
     let output = run_output_probe_in_pty(("AGENT_SESSION_ID", "test-session"), 40);
 
-    assert!(output.contains("output-probe\tskilld:skilld-dev/skilld/output-probe\t1\t"));
+    assert!(
+        output.contains(
+            "output-probe\tskilld:skilld-dev/skilld/output-probe\tskilld-dev/skilld\t1\t"
+        )
+    );
     assert!(!output.contains("Skill search"));
 }
 
@@ -372,7 +376,15 @@ fn local_install_list_view_and_remove_use_project_state() {
     );
     assert_eq!(
         String::from_utf8(install.stdout).unwrap(),
-        "Installed Skill local-skill.\n"
+        format!(
+            concat!(
+                "Installed Skill local-skill.\n",
+                "Source: local {}\n",
+                "Source status: local\n",
+                "Read this Skill before you follow it.\n",
+            ),
+            fixture().display()
+        )
     );
     assert_eq!(
         fs::read_to_string(project.join(".skills/local-skill/SKILL.md")).unwrap(),

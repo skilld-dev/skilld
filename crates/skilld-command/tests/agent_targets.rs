@@ -64,7 +64,15 @@ fn every_project_signal_selects_the_matching_agent_target() {
             })
             .unwrap();
 
-        assert_eq!(names, ["example"], "{}", agent.as_str());
+        assert_eq!(
+            names
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            ["example"],
+            "{}",
+            agent.as_str()
+        );
         assert!(
             project.join(skills_dir).join("example/SKILL.md").exists(),
             "{}",

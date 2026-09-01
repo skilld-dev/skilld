@@ -4,6 +4,7 @@ use skilld_core::UpdatePlanV1;
 use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
+use crate::provenance::{RemoteProvenance, source_status_caution};
 use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
 use crate::{CommandError, CommandErrorKind};
 
@@ -115,7 +116,16 @@ pub(crate) struct SearchItem {
     pub name: String,
     pub selector: String,
     pub description: Option<String>,
+    pub owner: String,
+    pub repository: String,
     pub stargazer_count: u64,
+}
+
+impl SearchItem {
+    /// `owner/repository`, the way GitHub names it.
+    fn slug(&self) -> String {
+        format!("{}/{}", self.owner, self.repository)
+    }
 }
 
 pub(crate) fn render_search(
@@ -247,6 +257,8 @@ fn render_plain(outcome: &SearchOutcome) -> String {
         output.push('\t');
         output.push_str(&escape_plain(&item.selector));
         output.push('\t');
+        output.push_str(&escape_plain(&item.slug()));
+        output.push('\t');
         output.push_str(&item.stargazer_count.to_string());
         output.push('\t');
         output.push_str(&escape_plain(
@@ -296,13 +308,20 @@ fn render_human(
     for item in &outcome.items {
         output.push('\n');
         let name = sanitize(&item.name);
+        let slug = sanitize(&item.slug());
         let stars = format!("{} stars", grouped_number(item.stargazer_count));
-        if 2 + width(&name) + 2 + width(&stars) <= columns {
-            let gap = columns - 2 - width(&name) - width(&stars);
+        let meta = format!(
+            "{} · {}",
+            paint(&slug, Role::Dim, color),
+            paint(&stars, Role::Warn, color)
+        );
+        let meta_width = width(&slug) + 3 + width(&stars);
+        if 2 + width(&name) + 2 + meta_width <= columns {
+            let gap = columns - 2 - width(&name) - meta_width;
             output.push_str("  ");
             output.push_str(&paint(&name, Role::Emphasis, color));
             output.push_str(&" ".repeat(gap));
-            output.push_str(&paint(&stars, Role::Warn, color));
+            output.push_str(&meta);
             output.push('\n');
         } else {
             for line in wrap(&name, columns.saturating_sub(2)) {
@@ -310,9 +329,11 @@ fn render_human(
                 output.push_str(&paint(&line, Role::Emphasis, color));
                 output.push('\n');
             }
-            output.push_str("  ");
-            output.push_str(&paint(&stars, Role::Warn, color));
-            output.push('\n');
+            for line in wrap(&format!("{slug} · {stars}"), columns.saturating_sub(2)) {
+                output.push_str("  ");
+                output.push_str(&paint(&line, Role::Dim, color));
+                output.push('\n');
+            }
         }
 
         if let Some(description) = &item.description {
@@ -477,9 +498,17 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
             out.push_str("skilld wrote no Skill files.\n");
             out.push_str(&field("Source", "skilld-maintained Skill", color));
         }
-        SkillOrigin::Remote { source, .. } => {
+        SkillOrigin::Remote {
+            source, provenance, ..
+        } => {
             out.push_str("skilld retained no Skill files.\n");
             out.push_str("It created no lockfile entry, Agent target, or project file.\n");
+            out.push_str(&paint(
+                &sanitize(&provenance.headline(&skill.name)),
+                Role::Emphasis,
+                color,
+            ));
+            out.push('\n');
             out.push_str(&field("Source", source, color));
         }
         SkillOrigin::Local { root } => {
@@ -492,6 +521,7 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     }
     out.push_str(&field("Source status", skill.source_status, color));
     out.push_str(source_status_caution(skill.source_status));
+    out.push_str(&read_it_first(&skill.origin, color));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
@@ -588,6 +618,7 @@ fn render_files(
     }
     out.push_str(&field("Source status", source_status, color));
     out.push_str(source_status_caution(source_status));
+    out.push_str(&read_it_first(origin, color));
     out.push('\n');
     for file in files {
         let path = sanitize(&file.path);
@@ -738,17 +769,14 @@ fn shell_quote(argument: &str, platform: CommandPlatform) -> String {
     }
 }
 
-/// State what the status covers, on every status.
-///
-/// A verified Artifact proves where the bytes came from. It says nothing about
-/// what the instructions ask an Agent to do, and the output must not imply it.
-fn source_status_caution(status: &str) -> &'static str {
-    match status {
-        "verified" => {
-            "skilld checked where this Skill came from, not what it asks you to do.\nRead it before you follow it.\n"
+/// Point at the exact SKILL.md on GitHub. Local and bundled Skills sit on
+/// disk already, so they get no link.
+fn read_it_first(origin: &SkillOrigin, color: bool) -> String {
+    match origin {
+        SkillOrigin::Remote { provenance, .. } => {
+            field("Read it first", &provenance.source_url, color)
         }
-        "unverified" => "skilld did not check this source. Read this Skill before you follow it.\n",
-        _ => "Read this Skill before you follow it.\n",
+        SkillOrigin::Bundled | SkillOrigin::Local { .. } => String::new(),
     }
 }
 
@@ -773,19 +801,51 @@ fn safe_terminal_text(value: &str) -> String {
 
 #[derive(Serialize)]
 #[serde(tag = "_tag", rename_all = "lowercase")]
+#[serde(rename_all_fields = "camelCase")]
 enum JsonOrigin {
-    Bundled { source: &'static str },
-    Remote { source: String, direct: bool },
-    Local { root: String },
+    Bundled {
+        source: &'static str,
+    },
+    Remote {
+        source: String,
+        direct: bool,
+        owner: String,
+        repository: String,
+        skill_path: String,
+        commit: String,
+        source_url: String,
+    },
+    Local {
+        root: String,
+    },
 }
 
 fn origin_json(origin: &SkillOrigin) -> JsonOrigin {
     match origin {
         SkillOrigin::Bundled => JsonOrigin::Bundled { source: "skilld" },
-        SkillOrigin::Remote { source, direct, .. } => JsonOrigin::Remote {
-            source: source.clone(),
-            direct: *direct,
-        },
+        SkillOrigin::Remote {
+            source,
+            direct,
+            provenance,
+            ..
+        } => {
+            let RemoteProvenance {
+                owner,
+                repository,
+                skill_path,
+                commit_sha,
+                source_url,
+            } = provenance.as_ref();
+            JsonOrigin::Remote {
+                source: source.clone(),
+                direct: *direct,
+                owner: owner.clone(),
+                repository: repository.clone(),
+                skill_path: skill_path.clone(),
+                commit: commit_sha.clone(),
+                source_url: source_url.clone(),
+            }
+        }
         SkillOrigin::Local { root } => JsonOrigin::Local {
             root: root.display().to_string(),
         },

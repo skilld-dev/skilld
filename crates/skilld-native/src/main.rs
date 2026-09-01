@@ -11,9 +11,9 @@ use std::sync::Arc;
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::{
-    CommandError, CommandPlatform, DetectionEnvironment, Host, LocalHost, NativeRemoteConfig,
-    OutputContext, SkilldRemote, TargetRoots, interactive_update_requested, run_stdio_probe,
-    run_with_output,
+    CommandError, CommandPlatform, DetectionEnvironment, Host, InstalledSkill, LocalHost,
+    NativeRemoteConfig, OutputContext, SkilldRemote, TargetRoots, interactive_update_requested,
+    run_stdio_probe, run_with_output,
 };
 use skilld_core::{
     InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
@@ -177,7 +177,7 @@ impl Host for SearchOutputProbe {
         &self,
         _source: InstallSource,
         _scope: InstallScope,
-    ) -> Result<String, CommandError> {
+    ) -> Result<InstalledSkill, CommandError> {
         unreachable!("install is outside the search output probe")
     }
 

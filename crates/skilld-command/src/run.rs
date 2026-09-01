@@ -15,6 +15,7 @@ use skilld_core::PreparedFile;
 use skilld_ui::text::is_unsafe_terminal;
 
 use crate::CommandError;
+use crate::provenance::RemoteProvenance;
 
 /// The instructions file every Skill carries.
 pub const INSTRUCTIONS_FILE: &str = "SKILL.md";
@@ -37,6 +38,8 @@ pub enum SkillOrigin {
         source: String,
         exact_source: String,
         direct: bool,
+        /// The Repository, path, and commit the bytes came from.
+        provenance: Box<RemoteProvenance>,
     },
 }
 

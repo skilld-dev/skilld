@@ -436,7 +436,13 @@ fn view_and_outdated_preserve_valid_metacharacters_as_quoted_data() {
     assert_eq!(view.exit_code, 0);
     assert!(stderr.is_empty());
     assert!(stdout.contains(source));
-    assert!(stdout.contains("\u{1b}]8;;https://github.com/skilld-dev/skills\u{1b}\\"));
+    assert!(
+        stdout.contains(concat!(
+            "\u{1b}]8;;https://github.com/skilld-dev/skills/blob/",
+            "0123456789abcdef0123456789abcdef01234567/skills/o'hare$(%22quoted%22)/SKILL.md\u{1b}\\"
+        )),
+        "{stdout:?}"
+    );
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
