@@ -74,6 +74,16 @@ Teach your Agent the CLI with the skilld-maintained `skilld` Skill:
 skilld install skilld --global
 ```
 
+Use `--agent` when you want an explicit Agent target.
+Repeat it for several targets. Use `--agent all` for every known target.
+`-g` is the short form of `--global`.
+
+```sh
+skilld install skilld --global --agent codex
+skilld install skilld -g --agent kiro --agent zed
+skilld install skilld -g --agent all
+```
+
 ### Selectors
 
 `skilld:OWNER/REPOSITORY/SKILL` names one Skill in the registry.
@@ -124,8 +134,8 @@ skilld remove <skill>
 ```
 
 Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
-Use `--global` for account level Agent targets.
-Use `--agent <agent>` to name a target; repeat it for several.
+Use `--global` (or `-g`) for account level Agent targets.
+Use `--agent <agent>` to name a target; repeat it for several, or use `--agent all`.
 Use `--mode copy` or `--mode symlink` to control target writes.
 Use `--json` with `search`, `run`, and `update --check` for stable output.
 
