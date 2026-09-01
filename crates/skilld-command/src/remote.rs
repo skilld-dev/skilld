@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 #[cfg(not(target_os = "wasi"))]
@@ -28,6 +28,10 @@ const LISTING_PAGE: usize = 200;
 /// bounds the loop when the response lies; a partial or empty page also ends
 /// paging early.
 const MAX_LISTING_PAGES: usize = 25;
+/// Most server supplied listing rows skilld trusts per response, mirroring
+/// `MAX_LISTING_PAGES`: the curator collection list and each collection's
+/// entry list are capped here so a malformed response cannot fan out.
+const MAX_LISTING_ENTRIES: usize = MAX_LISTING_PAGES;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
@@ -1611,18 +1615,26 @@ impl SkilldRemote {
         self.service_json(url)
     }
 
-    /// Every Skill one Repository carries, by name.
+    /// Every Skill one Repository carries, by name. The owner index fetch is
+    /// memoized per Repository in `memo` for one listing, so repeated
+    /// collection entries naming the same Repository cost one fetch.
     fn repository_skills(
         &self,
         owner: &str,
         repository: &str,
+        memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
     ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let key = (owner.to_ascii_lowercase(), repository.to_ascii_lowercase());
+        if let Some(items) = memo.get(&key) {
+            return Ok(items.clone());
+        }
         let mut items = self
             .owner_skills(owner)?
             .into_iter()
             .filter(|skill| skill.repository.eq_ignore_ascii_case(repository))
             .collect::<Vec<_>>();
         items.sort_by(|left, right| left.name.cmp(&right.name));
+        memo.insert(key, items.clone());
         Ok(items)
     }
 
@@ -1653,6 +1665,7 @@ impl SkilldRemote {
                 name: row.name,
                 reason: row.reason,
             })
+            .take(MAX_LISTING_ENTRIES)
             .collect())
     }
 
@@ -1676,6 +1689,7 @@ impl SkilldRemote {
     fn expand_entries(
         &self,
         entries: Vec<CollectionEntry>,
+        memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
     ) -> Result<Vec<ListedSkill>, RemoteError> {
         let mut seen = BTreeSet::new();
         let mut items = Vec::new();
@@ -1686,7 +1700,7 @@ impl SkilldRemote {
                         .into_iter()
                         .collect()
                 }
-                None => self.repository_skills(&entry.owner, &entry.repository)?,
+                None => self.repository_skills(&entry.owner, &entry.repository, memo)?,
             };
             for skill in expanded {
                 if seen.insert(skill.selector()) {
@@ -1732,19 +1746,24 @@ fn not_found_as_source(error: RemoteError, message: String) -> RemoteError {
 
 impl RemoteProvider for SkilldRemote {
     fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
+        let mut memo = HashMap::new();
         let items = match reference {
             MultiSkillRef::Repository { owner, repository } => {
-                self.repository_skills(owner, repository)?
+                self.repository_skills(owner, repository, &mut memo)?
             }
             MultiSkillRef::Collection { login, slug } => {
-                self.expand_entries(self.collection_entries(login, slug)?)?
+                self.expand_entries(self.collection_entries(login, slug)?, &mut memo)?
             }
             MultiSkillRef::Curator { login } => {
                 let mut entries = Vec::new();
-                for slug in self.curator_slugs(login)? {
+                for slug in self
+                    .curator_slugs(login)?
+                    .into_iter()
+                    .take(MAX_LISTING_ENTRIES)
+                {
                     entries.extend(self.collection_entries(login, &slug)?);
                 }
-                self.expand_entries(entries)?
+                self.expand_entries(entries, &mut memo)?
             }
         };
         Ok(SkillListing {

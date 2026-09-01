@@ -681,6 +681,112 @@ fn a_curator_ref_lists_every_collection_once() {
     );
 }
 
+/// Serves a curator payload with 100 collections, answers every collection
+/// detail with one name-less Repository entry, and serves a runaway owner
+/// index to every owner, so only client side caps and memoization can end
+/// the listing.
+#[derive(Default)]
+struct RunawayCuratorHttp {
+    requests: Mutex<Vec<String>>,
+}
+
+const RUNAWAY_CURATOR_COLLECTIONS: usize = 100;
+const RUNAWAY_CURATOR_PAGE_CAP: usize = 25;
+
+/// One curator payload, the capped collection details, and one memoized
+/// owner index fetch for the repeated entry spanning the capped pages.
+const RUNAWAY_CURATOR_REQUEST_LIMIT: usize = 1 + 2 * RUNAWAY_CURATOR_PAGE_CAP;
+
+impl HttpAdapter for RunawayCuratorHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.url.clone());
+        assert!(
+            requests.len() <= RUNAWAY_CURATOR_REQUEST_LIMIT,
+            "the curator listing kept issuing requests: {} requests issued",
+            requests.len()
+        );
+        if request.url.contains("/api/curators/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "login": "curator",
+                    "collections": (0..RUNAWAY_CURATOR_COLLECTIONS)
+                        .map(|index| {
+                            json!({
+                                "slug": format!("collection-{index}"),
+                                "name": format!("Collection {index}"),
+                                "itemCount": 1,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                }))
+                .unwrap(),
+            ));
+        }
+        if request.url.contains("/api/collections/by-author/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "skills": [{
+                        "position": 0,
+                        "owner": "big",
+                        "repo": "wanted",
+                        "name": null,
+                        "reason": null,
+                    }]
+                }))
+                .unwrap(),
+            ));
+        }
+        let page = json!({
+            "items": (0..RUNAWAY_PAGE_ROWS)
+                .map(|_| json!({
+                    "name": "wanted",
+                    "owner": "big",
+                    "repo": "wanted",
+                    "description": null,
+                    "stars": 1,
+                    "registryPath": "/gh/big/wanted/wanted",
+                }))
+                .collect::<Vec<_>>(),
+            "total": 20_000_000,
+            "pages": u64::MAX,
+        });
+        Ok(response(200, serde_json::to_vec(&page).unwrap()))
+    }
+}
+
+#[test]
+fn a_runaway_curator_stops_fanning_out_and_fetches_one_repository_once() {
+    let http = Arc::new(RunawayCuratorHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Curator {
+            login: "curator".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [listed("big", "wanted", "wanted", None)]);
+    assert_eq!(
+        http.requests.lock().unwrap().len(),
+        RUNAWAY_CURATOR_REQUEST_LIMIT
+    );
+}
+
 #[test]
 fn a_missing_collection_is_a_source_not_found_error() {
     let http = Arc::new(FakeHttp::with([response(
