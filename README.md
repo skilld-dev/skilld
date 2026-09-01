@@ -34,10 +34,14 @@ Install it only when you want your Agent to keep it across sessions:
 skilld install skilld --global
 ```
 
-Use `--agent` when you want an explicit Agent target:
+Use `--agent` when you want an explicit Agent target.
+Repeat it for several targets. Use `--agent all` for every known target.
+`-g` is the short form of `--global`.
 
 ```sh
 skilld install skilld --global --agent codex
+skilld install skilld -g --agent kiro --agent zed
+skilld install skilld -g --agent all
 ```
 
 ## Run a Skill without installing it
