@@ -223,6 +223,7 @@ fn a_first_party_skills_directory_alone_does_not_select_openclaw() {
         })
         .unwrap();
 
+    let names: Vec<&str> = names.iter().map(|skill| skill.name.as_str()).collect();
     assert_eq!(names, ["example"]);
     let skills = fs::read_dir(project.join("skills"))
         .unwrap()
