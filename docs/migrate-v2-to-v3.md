@@ -93,8 +93,8 @@ It writes project state to `.skills/skilld-lock.yaml`.
 Search first, then run the returned selector:
 
 ```sh
-skilld search vue
-skilld run skilld:skilld-dev/skills/vue
+skilld search find-skill
+skilld run skilld:skilld-dev/skills/find-skill
 ```
 
 Use the exact selector printed by your search result.
@@ -105,7 +105,7 @@ It writes no project files or lockfile state.
 Install the Skill only when you want to keep it:
 
 ```sh
-skilld install skilld:skilld-dev/skills/vue
+skilld install skilld:skilld-dev/skills/find-skill
 ```
 
 An install writes project files and records lockfile state.

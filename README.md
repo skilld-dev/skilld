@@ -70,7 +70,7 @@ skilld install skilld --global
 
 ```sh
 # Find a Skill
-skilld search vue
+skilld search find-skill
 
 # Run a Skill for this session only
 skilld run skilld:skilld-dev/skills/find-skill
