@@ -1,6 +1,7 @@
 # skilld-protocol
 
-Wire shapes and constants shared between the [skilld CLI](https://github.com/skilld-dev/skilld) and [skilld.dev](https://skilld.dev). The single source of truth for everything that crosses that boundary: telemetry, audit, auth, device flow, collection manifests.
+Wire shapes and constants shared between the [skilld CLI](https://github.com/skilld-dev/skilld) and [skilld.dev](https://skilld.dev).
+The package is the single source of truth for everything that crosses that boundary.
 
 ## Install
 
@@ -8,14 +9,17 @@ Wire shapes and constants shared between the [skilld CLI](https://github.com/ski
 pnpm add skilld-protocol
 ```
 
-ESM-only. Node ≥18. One peer-free dep: `zod` v4.
+ESM only. Node 22 or newer. One dependency: `zod` v4.
 
 ## Subpaths
 
-- `skilld-protocol/wire` — every endpoint shape as a zod schema (suffix `Schema`) and the matching inferred TS type (no suffix). Use `import { FooSchema }` for runtime validation; `import type { Foo }` for the type.
-- `skilld-protocol/constants` — readonly tuples backing the closed enums plus their inferred unions.
-- `skilld-protocol/test-fixtures` — canonical payloads each consumer round-trips through their schema on CI.
+- `skilld-protocol/v1`: TypeScript types generated from `openapi/skilld-v1.yaml`. This is the Artifact delivery contract the v3 CLI uses: source resolution, Skill search, Artifact descriptors, attestations, check results, grants, trusted roots, and problems.
+- `skilld-protocol/openapi/skilld-v1.yaml`: the OpenAPI 3.1 document itself.
+- `skilld-protocol/wire`: zod schemas (suffix `Schema`) and inferred types (no suffix) for the endpoints skilld.dev still serves to older clients. Use `import { FooSchema }` for runtime validation and `import type { Foo }` for the type.
+- `skilld-protocol/constants`: readonly tuples behind the closed enums, plus their inferred unions.
+- `skilld-protocol/test-fixtures`: canonical payloads that each consumer round-trips through its schema on CI.
 
-## Repo
+## Repository
 
-This package lives inside the [skilld CLI](https://github.com/skilld-dev/skilld) monorepo at `packages/protocol`. The CLI consumes it as a workspace dep; skilld.dev consumes the published npm version.
+This package lives in the [skilld CLI](https://github.com/skilld-dev/skilld) monorepo at `packages/protocol`.
+The Rust crates mirror the v1 OpenAPI document. skilld.dev consumes the published npm version.

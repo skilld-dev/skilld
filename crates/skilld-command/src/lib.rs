@@ -70,9 +70,9 @@ pub struct Cli {
 enum Command {
     /// Search for Skills.
     Search { query: Vec<String> },
-    /// Install a Skill, or restore the Skills recorded in your lockfile.
+    /// Install a Skill, or restore the Skills in your lockfile.
     #[command(
-        long_about = "Install a Skill, or restore the Skills recorded in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        long_about = "Install a Skill, or restore the Skills in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
         after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
@@ -135,7 +135,7 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// View Skill details.
+    /// View Skill details and source.
     View {
         skill: String,
         #[arg(long)]
@@ -147,7 +147,7 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Update installed Skills.
+    /// Update installed Skills to their current source commit.
     Update {
         skill: Option<String>,
         /// Check update relations without changing files.
@@ -163,7 +163,7 @@ enum Command {
         #[arg(long)]
         global: bool,
     },
-    /// Verify a Skill source.
+    /// Verify a Skill source and report its source status.
     Verify { skill: Option<String> },
     /// Report outdated and unmanaged Skills.
     Outdated {
@@ -171,12 +171,12 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Manage account authentication.
+    /// Log in, check, or log out of your account.
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
     },
-    /// Manage configuration.
+    /// Read, set, or list configuration values.
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
@@ -1761,7 +1761,10 @@ impl Host for LocalHost {
                         .map_err(CommandError::remote)?
                     {
                         RemoteSourceState::Current => {
-                            lines.push(Line::success(format!("Verified Skill {}.", name.as_str())));
+                            lines.push(Line::success(format!(
+                                "Verified the source of Skill {}.",
+                                name.as_str()
+                            )));
                         }
                         RemoteSourceState::Stale { .. } => {
                             return Err(CommandError::operation(

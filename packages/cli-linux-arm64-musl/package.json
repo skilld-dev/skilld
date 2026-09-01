@@ -3,6 +3,7 @@
   "version": "3.0.0-beta.3",
   "description": "Linux arm64 musl executable for the skilld CLI",
   "license": "MIT",
+  "homepage": "https://skilld.dev",
   "repository": "github:skilld-dev/skilld",
   "publishConfig": {
     "access": "public",

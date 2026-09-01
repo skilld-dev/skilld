@@ -187,7 +187,7 @@ fn transport_error(error: &ureq::Error, request_url: &str) -> RemoteError {
         ureq::Error::ConnectionFailed => format!("the connection to {host} failed"),
         ureq::Error::Timeout(_) => format!("the request to {host} timed out"),
         ureq::Error::Tls(_) | ureq::Error::Rustls(_) | ureq::Error::Pem(_) => {
-            format!("the secure connection to {host} failed")
+            format!("the TLS connection to {host} failed")
         }
         ureq::Error::Io(io) => match io.kind() {
             std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {

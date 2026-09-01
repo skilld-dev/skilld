@@ -1,17 +1,14 @@
-<h1><a href="https://skilld.dev"><img src=".github/logos/logo-mark.svg" alt="" width="28" height="28" valign="middle"></a> skilld</h1>
+<h1><a href="https://skilld.dev"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/logos/logo-mark.svg"><img src=".github/logos/logo-mark-light.svg" alt="" width="28" height="28" valign="middle"></picture></a> skilld</h1>
 
 [![npm version](https://img.shields.io/npm/v/skilld?color=yellow)](https://npmjs.com/package/skilld)
 [![npm downloads](https://img.shields.io/npm/dm/skilld?color=yellow)](https://npm.chart.dev/skilld)
 [![license](https://img.shields.io/npm/l/skilld?color=yellow)](https://github.com/skilld-dev/skilld/blob/main/LICENSE)
 
-Search, run, install, and keep Agent Skills current.
+**Curated agent skills by humans.**
 
-skilld v3 has two products:
+Search, run, install, and keep them current. One command, every Agent.
 
-- The native `skilld` CLI manages Skills.
-- The JavaScript [`skilld-harness`](./packages/harness) package runs visible Skill generation and review instructions.
-
-The skilld CLI contains no Skill generation logic or Agent runtime.
+skilld is a curated registry of agent Skills real maintainers wrote in their own GitHub repositories, usable with one command in every Agent.
 
 ## Install the skilld CLI
 
@@ -22,57 +19,52 @@ npm install --global skilld
 The npm package selects a native executable for the current system.
 It has no JavaScript CLI engine or JavaScript fallback.
 
-Ask your Agent to run the skilld-maintained Skill for the current session:
-
-```sh
-skilld run skilld
-```
-
-Install it only when you want your Agent to keep it across sessions:
-
-```sh
-skilld install skilld --global
-```
-
-Use `--agent` when you want an explicit Agent target:
-
-```sh
-skilld install skilld --global --agent codex
-```
-
 ## Run a Skill without installing it
 
 `skilld run` is the default way to use a Skill.
-It prints `SKILL.md` to stdout.
+It prints `SKILL.md` to stdout and installs nothing.
 Ask your Agent to run the command and follow the printed instructions.
 If you run it yourself, pass the output to your Agent.
 
 ```sh
-npx skilld run skilld:skilld-dev/skills/vue
+npx skilld run skilld:skilld-dev/skills/find-skill
 ```
 
 A remote run writes no Skill files.
 It creates no lockfile entry, Agent target, project file, or Skill cache.
-The command retains no Skill files after it exits.
 
 skilld names the supporting files a Skill carries and prints none of them.
 Read one when the instructions call for it:
 
 ```sh
-npx skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
+npx skilld run skilld:skilld-dev/skills/find-skill --revision <commit> --file references/api.md
 ```
 
 Use the revision and file-read command from the initial output.
 skilld never prints executable or binary files.
 A Skill that must run its own script needs an install.
 
-Install the Skill when you want it in every session:
+## Install a Skill
+
+Install a Skill when you want it in every session:
 
 ```sh
-skilld install skilld:skilld-dev/skills/vue
+skilld install skilld:skilld-dev/skills/find-skill
 ```
 
 An install writes files. Ask the user first.
+
+Use `--agent` when you want an explicit Agent target:
+
+```sh
+skilld install skilld:skilld-dev/skills/find-skill --agent codex
+```
+
+Install the skilld-maintained `skilld` Skill so your Agent knows the CLI:
+
+```sh
+skilld install skilld --global
+```
 
 ## Use the skilld CLI
 
@@ -81,27 +73,28 @@ An install writes files. Ask the user first.
 skilld search vue
 
 # Run a Skill for this session only
-skilld run skilld:skilld-dev/skills/vue
+skilld run skilld:skilld-dev/skills/find-skill
 
 # Read one supporting file that Skill carries
-skilld run skilld:skilld-dev/skills/vue --revision <commit> --file references/api.md
+skilld run skilld:skilld-dev/skills/find-skill --revision <commit> --file references/api.md
 
 # Install a Skill in the current project
-skilld install skilld:skilld-dev/skills/vue
+skilld install skilld:skilld-dev/skills/find-skill
 
 # Inspect installed Skills
 skilld list
-skilld view vue
+skilld view find-skill
 
 # Keep Skills current
-skilld verify vue
-skilld update vue
+skilld verify find-skill
+skilld update find-skill
+skilld outdated
 
 # Check update relations for an Agent or CI
 skilld update --check --json
 
 # Remove a Skill
-skilld remove vue
+skilld remove find-skill
 ```
 
 Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
@@ -109,6 +102,31 @@ Use `--global` for account level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
 
 Run `skilld install` without a source to restore the lockfile state.
+
+## Why skilld
+
+- **Every Skill has a human author.** A maintainer wrote it in their own GitHub Repository, and skilld.dev lists it under their name.
+- **Read the SKILL.md first.** `skilld run` prints the file before your Agent follows it, and `skilld view` links the source Repository.
+- **Know when the source moved.** skilld records the source commit. `skilld update --check` reports each update relation, and `skilld outdated` lists what fell behind.
+- **One command, every Agent.** `skilld install` detects your Agent targets. Claude Code, Codex, Cursor, Gemini CLI, and the rest get the same Skill.
+
+skilld reads `SKILL.md` files in the Agent Skills format ([agentskills.io](https://agentskills.io)).
+The CLI checks that `SKILL.md` sits at the Skill root and declares a name.
+
+See how skilld compares with skills.sh and Context7: https://skilld.dev/vs/skills-sh
+
+## Author a Skill <a id="generate-or-review-a-skill"></a>
+
+Run the skilld-maintained `generate-package-skill` Skill, or the Harness, to bootstrap a draft Skill for a package you maintain.
+Edit the draft, commit it to your Repository, and own it from there.
+skilld lists it with your name and a link to the file.
+
+The skilld-maintained Skills:
+
+- [`skilld`](./skills/skilld): search, run, and install Skills with the CLI
+- [`generate-package-skill`](./skills/generate-package-skill): draft a Skill for a package you maintain
+- [`generate-project-skill`](./skills/generate-project-skill): draft a Skill from a project you maintain
+- [`review-skill`](./skills/review-skill): review a Skill before you publish it
 
 ## Artifact delivery
 
@@ -142,9 +160,6 @@ The user reviews the Skill before use.
 Direct mode never handles private Repositories.
 It never falls back to skilld.dev.
 
-Generated commands use POSIX shell quoting on Unix.
-They use PowerShell quoting on Windows.
-
 ## Source status
 
 - `verified`: skilld checked a skilld.dev Artifact and its attestation.
@@ -153,6 +168,7 @@ They use PowerShell quoting on Windows.
 
 `verified` describes provenance checks.
 It does not endorse the instructions inside a Skill.
+See [SECURITY.md](./SECURITY.md) for what skilld checks and how to report a problem.
 
 ## Account and configuration
 
@@ -169,39 +185,10 @@ skilld config list
 Native builds store account credentials in the operating system keychain.
 The CLI does not store tokens in environment variables or plain text files.
 
-## Generate or review a Skill
-
-Skill generation lives outside the skilld CLI.
-
-Use these skilld-maintained Skills directly with your Agent:
-
-- [`generate-package-skill`](./skills/generate-package-skill)
-- [`generate-project-skill`](./skills/generate-project-skill)
-- [`review-skill`](./skills/review-skill)
-- [`skilld`](./skills/skilld)
-
-Direct Skill runs remain user reviewed.
-The instructions and changes stay visible to the user.
+## Harness
 
 Use [`skilld-harness`](./packages/harness) when an application or CI needs strict output checks.
 The Harness runs the same visible Skill files through an AI SDK Harness.
-
-```sh
-pnpm add skilld-harness @ai-sdk/harness ws zod
-```
-
-```ts
-import { createSkillHarness } from 'skilld-harness'
-
-const skillHarness = createSkillHarness({ harness, sandbox })
-
-const result = await skillHarness.run({
-  _tag: 'PackageSkill',
-  source: { _tag: 'NpmPackage', spec: 'vue' },
-  destination: { rootDir: '.agents/skills', name: 'vue' },
-})
-```
-
 See the [`skilld-harness` guide](./packages/harness/README.md) for its full contract.
 
 ## Upgrade from v2
@@ -212,7 +199,7 @@ Back up v2 state before replacing the CLI.
 Follow the [v2 to v3 migration guide](./docs/migrate-v2-to-v3.md).
 It maps removed commands and explains rollback limits.
 
-## v3 development
+## Development <a id="v3-development"></a>
 
 ```sh
 pnpm install

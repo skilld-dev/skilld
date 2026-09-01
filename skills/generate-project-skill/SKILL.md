@@ -6,6 +6,7 @@ description: Generate or update an Agent Skill from the observed workflows, boun
 # Generate a project Skill
 
 Create a compact, searchable Skill from the project itself.
+This Skill is for maintainers who author a draft Skill they own.
 
 ## Inputs
 
