@@ -10,5 +10,12 @@
   { "id": "amp", "displayName": "Amp", "projectSkillsDir": ".agents/skills", "globalSkillsDir": "config:agents/skills" },
   { "id": "opencode", "displayName": "OpenCode", "projectSkillsDir": ".opencode/skills", "globalSkillsDir": "config:opencode/skills" },
   { "id": "roo", "displayName": "Roo Code", "projectSkillsDir": ".roo/skills", "globalSkillsDir": "home:.roo/skills" },
-  { "id": "antigravity", "displayName": "Antigravity", "projectSkillsDir": ".agent/skills", "globalSkillsDir": "home:.gemini/antigravity/skills" }
+  { "id": "antigravity", "displayName": "Antigravity", "projectSkillsDir": ".agent/skills", "globalSkillsDir": "home:.gemini/antigravity/skills" },
+  { "id": "openclaw", "displayName": "OpenClaw", "projectSkillsDir": "skills", "globalSkillsDir": "openclaw:skills" },
+  { "id": "hermes", "displayName": "Hermes Agent", "projectSkillsDir": ".hermes/skills", "globalSkillsDir": "hermes:skills" },
+  { "id": "kiro", "displayName": "Kiro CLI", "projectSkillsDir": ".kiro/skills", "globalSkillsDir": "kiro:skills" },
+  { "id": "kilo", "displayName": "Kilo Code", "projectSkillsDir": ".kilo/skills", "globalSkillsDir": "home:.kilo/skills" },
+  { "id": "droid", "displayName": "Droid", "projectSkillsDir": ".factory/skills", "globalSkillsDir": "home:.factory/skills" },
+  { "id": "trae", "displayName": "Trae", "projectSkillsDir": ".trae/skills", "globalSkillsDir": "home:.trae/skills" },
+  { "id": "zed", "displayName": "Zed", "projectSkillsDir": ".agents/skills", "globalSkillsDir": "home:.agents/skills" }
 ]

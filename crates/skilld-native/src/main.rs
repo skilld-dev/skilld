@@ -226,11 +226,27 @@ fn target_roots() -> TargetRoots {
     let claude_home = env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".claude"));
-    TargetRoots::new(home, config_home, claude_home)
+    let openclaw_home = env::var_os("OPENCLAW_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".openclaw"));
+    let hermes_home = env::var_os("HERMES_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".hermes"));
+    let kiro_home = env::var_os("KIRO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".kiro"));
+    TargetRoots::new(
+        home,
+        config_home,
+        claude_home,
+        openclaw_home,
+        hermes_home,
+        kiro_home,
+    )
 }
 
 fn detection_environment() -> DetectionEnvironment {
-    const SIGNALS: [&str; 18] = [
+    const SIGNALS: [&str; 29] = [
         "CLAUDE_CODE",
         "CLAUDECODE",
         "CLAUDE_CODE_ENTRYPOINT",
@@ -249,6 +265,17 @@ fn detection_environment() -> DetectionEnvironment {
         "OPENCODE_SESSION_ID",
         "ROO_SESSION",
         "ANTIGRAVITY_CLI_ALIAS",
+        "OPENCLAW_SHELL",
+        "OPENCLAW_CLI",
+        "OPENCLAW_STATE_DIR",
+        "HERMES_AGENT",
+        "HERMES_SESSION_ID",
+        "HERMES_HOME",
+        "KIRO_HOME",
+        "AGENT_CONTEXT_OUT",
+        "KILO_RUN_ID",
+        "KILO_PID",
+        "ZED_TERM",
     ];
     DetectionEnvironment::new(
         SIGNALS
@@ -259,7 +286,7 @@ fn detection_environment() -> DetectionEnvironment {
 }
 
 fn active_agent_detected() -> bool {
-    const SIGNALS: [&str; 17] = [
+    const SIGNALS: [&str; 28] = [
         "CLAUDE_CODE",
         "CLAUDECODE",
         "CLAUDE_CODE_ENTRYPOINT",
@@ -277,6 +304,17 @@ fn active_agent_detected() -> bool {
         "OPENCODE_SESSION_ID",
         "ROO_SESSION",
         "ANTIGRAVITY_CLI_ALIAS",
+        "OPENCLAW_SHELL",
+        "OPENCLAW_CLI",
+        "OPENCLAW_STATE_DIR",
+        "HERMES_AGENT",
+        "HERMES_SESSION_ID",
+        "HERMES_HOME",
+        "KIRO_HOME",
+        "AGENT_CONTEXT_OUT",
+        "KILO_RUN_ID",
+        "KILO_PID",
+        "ZED_TERM",
     ];
     SIGNALS.iter().any(|name| environment_enabled(name))
 }

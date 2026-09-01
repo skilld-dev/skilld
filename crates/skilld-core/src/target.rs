@@ -19,6 +19,13 @@ pub enum AgentTargetId {
     Opencode,
     Roo,
     Antigravity,
+    Openclaw,
+    Hermes,
+    Kiro,
+    Kilo,
+    Droid,
+    Trae,
+    Zed,
 }
 
 impl AgentTargetId {
@@ -36,6 +43,13 @@ impl AgentTargetId {
             Self::Opencode => "opencode",
             Self::Roo => "roo",
             Self::Antigravity => "antigravity",
+            Self::Openclaw => "openclaw",
+            Self::Hermes => "hermes",
+            Self::Kiro => "kiro",
+            Self::Kilo => "kilo",
+            Self::Droid => "droid",
+            Self::Trae => "trae",
+            Self::Zed => "zed",
         }
     }
 
@@ -59,6 +73,9 @@ pub enum GlobalTargetPath {
     Home(&'static str),
     ConfigHome(&'static str),
     ClaudeHome(&'static str),
+    OpenclawHome(&'static str),
+    HermesHome(&'static str),
+    KiroHome(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,7 +86,15 @@ pub struct AgentTarget {
     pub global_skills_dir: GlobalTargetPath,
 }
 
-pub const AGENT_TARGETS: [AgentTarget; 12] = [
+impl AgentTarget {
+    /// A bare project directory such as `skills` is a common first-party
+    /// path, so its existence alone must not select this target.
+    pub fn auto_detects_project_dir(&self) -> bool {
+        self.project_skills_dir.starts_with('.')
+    }
+}
+
+pub const AGENT_TARGETS: [AgentTarget; 19] = [
     AgentTarget {
         id: AgentTargetId::ClaudeCode,
         display_name: "Claude Code",
@@ -142,7 +167,69 @@ pub const AGENT_TARGETS: [AgentTarget; 12] = [
         project_skills_dir: ".agent/skills",
         global_skills_dir: GlobalTargetPath::Home(".gemini/antigravity/skills"),
     },
+    AgentTarget {
+        id: AgentTargetId::Openclaw,
+        display_name: "OpenClaw",
+        project_skills_dir: "skills",
+        global_skills_dir: GlobalTargetPath::OpenclawHome("skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Hermes,
+        display_name: "Hermes Agent",
+        project_skills_dir: ".hermes/skills",
+        global_skills_dir: GlobalTargetPath::HermesHome("skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Kiro,
+        display_name: "Kiro CLI",
+        project_skills_dir: ".kiro/skills",
+        global_skills_dir: GlobalTargetPath::KiroHome("skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Kilo,
+        display_name: "Kilo Code",
+        project_skills_dir: ".kilo/skills",
+        global_skills_dir: GlobalTargetPath::Home(".kilo/skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Droid,
+        display_name: "Droid",
+        project_skills_dir: ".factory/skills",
+        global_skills_dir: GlobalTargetPath::Home(".factory/skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Trae,
+        display_name: "Trae",
+        project_skills_dir: ".trae/skills",
+        global_skills_dir: GlobalTargetPath::Home(".trae/skills"),
+    },
+    AgentTarget {
+        id: AgentTargetId::Zed,
+        display_name: "Zed",
+        project_skills_dir: ".agents/skills",
+        global_skills_dir: GlobalTargetPath::Home(".agents/skills"),
+    },
 ];
+
+/// The `--agent` value that selects every known Agent target.
+pub const ALL_AGENT_TARGETS: &str = "all";
+
+/// Parse `--agent` values. `all` expands to every known Agent target in registry order.
+pub fn parse_agent_targets(values: &[String]) -> Result<Vec<AgentTargetId>, DomainError> {
+    let mut parsed = Vec::with_capacity(values.len());
+    let mut expand_all = false;
+    for value in values {
+        if value == ALL_AGENT_TARGETS {
+            expand_all = true;
+            continue;
+        }
+        parsed.push(AgentTargetId::parse(value)?);
+    }
+    if expand_all {
+        return Ok(AGENT_TARGETS.iter().map(|target| target.id).collect());
+    }
+    Ok(parsed)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TargetSelection {
@@ -218,6 +305,9 @@ mod tests {
                     GlobalTargetPath::Home(path) => format!("home:{path}"),
                     GlobalTargetPath::ConfigHome(path) => format!("config:{path}"),
                     GlobalTargetPath::ClaudeHome(path) => format!("claude:{path}"),
+                    GlobalTargetPath::OpenclawHome(path) => format!("openclaw:{path}"),
+                    GlobalTargetPath::HermesHome(path) => format!("hermes:{path}"),
+                    GlobalTargetPath::KiroHome(path) => format!("kiro:{path}"),
                 },
             })
             .collect::<Vec<_>>();

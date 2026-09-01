@@ -570,7 +570,7 @@ fn outdated_all_reports_unmanaged_skills_without_a_match() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "No Repository match for 1 Skill (private-skill (codex)).\n"
+        "No Repository match for 1 Skill (private-skill (codex, zed)).\n"
     );
 }
 
@@ -599,7 +599,7 @@ fn outdated_all_surfaces_a_search_failure_and_keeps_scanning() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Skill search unavailable for 2 Skills (other-skill (codex), vue-testing (claude-code)): Skill search returned invalid JSON.\n"
+        "Skill search unavailable for 2 Skills (other-skill (codex, zed), vue-testing (claude-code)): Skill search returned invalid JSON.\n"
     );
 }
 
@@ -629,7 +629,7 @@ fn outdated_search_failures_are_single_line_and_terminal_safe() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout.clone()).unwrap(),
-        "Skill search unavailable for 1 Skill (search-failure (codex)): request [31m forged line.\n"
+        "Skill search unavailable for 1 Skill (search-failure (codex, zed)): request [31m forged line.\n"
     );
     stdout.clear();
     let human = run_with_output(
@@ -650,7 +650,7 @@ fn outdated_search_failures_are_single_line_and_terminal_safe() {
         String::from_utf8(stdout).unwrap(),
         concat!(
             "⚠ Skill search unavailable: request [31m forged line\n",
-            "  search-failure  codex\n"
+            "  search-failure  codex, zed\n"
         )
     );
 }
@@ -838,7 +838,9 @@ fn outdated_all_survives_a_corrupt_global_store() {
         output.starts_with("Skill store unavailable in global scope: "),
         "expected a store failure line, got: {output}"
     );
-    assert!(output.contains("No Repository match for 1 Skill (unmanaged-project (amp, codex)).\n"));
+    assert!(
+        output.contains("No Repository match for 1 Skill (unmanaged-project (amp, codex, zed)).\n")
+    );
     assert!(
         !output.contains("hidden-global"),
         "a scope with an unreadable lockfile must not report its Skills: {output}"
@@ -867,7 +869,7 @@ fn outdated_all_groups_agents_sharing_one_directory() {
     assert_eq!(result.exit_code, 0);
     let output = String::from_utf8(stdout).unwrap();
     assert!(
-        output.contains("No Repository match for 1 Skill (shared (amp, codex)).\n"),
+        output.contains("No Repository match for 1 Skill (shared (amp, codex, zed)).\n"),
         "expected both agents sharing .agents/skills, got: {output}"
     );
 }

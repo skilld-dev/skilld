@@ -39,7 +39,7 @@ use skilld_core::{
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
     NotTrackedReason, SourceRef, UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan,
     UpdatePlanItem, UpdatePlanV1, UpdateRelation, UpdateRetryAfter, VERSION,
-    classify_update_comparison, select_target_ids,
+    classify_update_comparison, parse_agent_targets, select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
@@ -83,6 +83,7 @@ enum Command {
         #[arg(value_name = "SOURCE")]
         source: Option<String>,
         #[arg(
+            short = 'g',
             long,
             long_help = "Install to your account-level Agent targets. The default is the current project."
         )]
@@ -90,7 +91,7 @@ enum Command {
         #[arg(
             long = "agent",
             value_name = "AGENT",
-            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
+            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity, openclaw,\n        hermes, kiro, kilo, droid, trae, zed.\nUse --agent all to select every Agent target.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
         )]
         agents: Vec<String>,
         #[arg(
@@ -135,19 +136,22 @@ enum Command {
     },
     /// List installed Skills.
     List {
-        #[arg(long)]
+        /// List Skills in the global scope.
+        #[arg(short = 'g', long)]
         global: bool,
     },
     /// View Skill details.
     View {
         skill: String,
-        #[arg(long)]
+        /// View a Skill in the global scope.
+        #[arg(short = 'g', long)]
         global: bool,
     },
     /// Remove an installed Skill.
     Remove {
         skill: String,
-        #[arg(long)]
+        /// Remove a Skill from the global scope.
+        #[arg(short = 'g', long)]
         global: bool,
     },
     /// Update installed Skills.
@@ -163,7 +167,7 @@ enum Command {
         )]
         interactive: bool,
         /// Update Skills in the global scope.
-        #[arg(long)]
+        #[arg(short = 'g', long)]
         global: bool,
     },
     /// Verify a Skill source.
@@ -834,10 +838,7 @@ fn dispatch<H: Host>(
                     "install the skilld-maintained Skill with --global",
                 ));
             }
-            let targets = agents
-                .iter()
-                .map(|agent| AgentTargetId::parse(agent).map_err(CommandError::domain))
-                .collect::<Result<Vec<_>, _>>()?;
+            let targets = parse_agent_targets(&agents).map_err(CommandError::domain)?;
             let mode = mode
                 .as_deref()
                 .map(InstallMode::parse)
@@ -1104,14 +1105,27 @@ pub struct TargetRoots {
     pub home: PathBuf,
     pub config_home: PathBuf,
     pub claude_home: PathBuf,
+    pub openclaw_home: PathBuf,
+    pub hermes_home: PathBuf,
+    pub kiro_home: PathBuf,
 }
 
 impl TargetRoots {
-    pub fn new(home: PathBuf, config_home: PathBuf, claude_home: PathBuf) -> Self {
+    pub fn new(
+        home: PathBuf,
+        config_home: PathBuf,
+        claude_home: PathBuf,
+        openclaw_home: PathBuf,
+        hermes_home: PathBuf,
+        kiro_home: PathBuf,
+    ) -> Self {
         Self {
             home,
             config_home,
             claude_home,
+            openclaw_home,
+            hermes_home,
+            kiro_home,
         }
     }
 }
@@ -1166,6 +1180,9 @@ impl LocalHost {
                 home.clone(),
                 home.join(".config"),
                 home.join(".claude"),
+                home.join(".openclaw"),
+                home.join(".hermes"),
+                home.join(".kiro"),
             ),
             detection: DetectionEnvironment::default(),
             bundled_skill: None,
@@ -1234,6 +1251,13 @@ impl LocalHost {
                         GlobalTargetPath::ClaudeHome(path) => {
                             self.target_roots.claude_home.join(path)
                         }
+                        GlobalTargetPath::OpenclawHome(path) => {
+                            self.target_roots.openclaw_home.join(path)
+                        }
+                        GlobalTargetPath::HermesHome(path) => {
+                            self.target_roots.hermes_home.join(path)
+                        }
+                        GlobalTargetPath::KiroHome(path) => self.target_roots.kiro_home.join(path),
                     },
                 };
                 let root = absolute(&root)?;
@@ -1247,7 +1271,8 @@ impl LocalHost {
             .iter()
             .filter(|target| match scope {
                 InstallScope::Project => {
-                    self.project_root.join(target.project_skills_dir).exists()
+                    (target.auto_detects_project_dir()
+                        && self.project_root.join(target.project_skills_dir).exists())
                         || detects_environment(target.id, &self.detection)
                         || detects_project(target.id, &self.project_root)
                 }
@@ -3011,6 +3036,21 @@ fn detects_environment(agent: AgentTargetId, environment: &DetectionEnvironment)
             .any(|name| environment.has(name)),
         AgentTargetId::Roo => environment.has("ROO_SESSION"),
         AgentTargetId::Antigravity => environment.has("ANTIGRAVITY_CLI_ALIAS"),
+        AgentTargetId::Openclaw => ["OPENCLAW_SHELL", "OPENCLAW_CLI", "OPENCLAW_STATE_DIR"]
+            .iter()
+            .any(|name| environment.has(name)),
+        AgentTargetId::Hermes => ["HERMES_AGENT", "HERMES_SESSION_ID", "HERMES_HOME"]
+            .iter()
+            .any(|name| environment.has(name)),
+        AgentTargetId::Kiro => ["KIRO_HOME", "AGENT_CONTEXT_OUT"]
+            .iter()
+            .any(|name| environment.has(name)),
+        AgentTargetId::Kilo => ["KILO_RUN_ID", "KILO_PID"]
+            .iter()
+            .any(|name| environment.has(name)),
+        AgentTargetId::Droid => false,
+        AgentTargetId::Trae => false,
+        AgentTargetId::Zed => environment.has("ZED_TERM"),
     }
 }
 
@@ -3039,6 +3079,13 @@ fn detects_project(agent: AgentTargetId, root: &Path) -> bool {
         AgentTargetId::Opencode => exists(".opencode"),
         AgentTargetId::Roo => exists(".roo"),
         AgentTargetId::Antigravity => exists(".agent"),
+        AgentTargetId::Openclaw => exists(".openclaw"),
+        AgentTargetId::Hermes => exists(".hermes"),
+        AgentTargetId::Kiro => exists(".kiro"),
+        AgentTargetId::Kilo => exists(".kilo"),
+        AgentTargetId::Droid => exists(".factory"),
+        AgentTargetId::Trae => exists(".trae"),
+        AgentTargetId::Zed => exists(".zed"),
     }
 }
 
@@ -3058,6 +3105,13 @@ fn detects_installed(agent: AgentTargetId, roots: &TargetRoots) -> bool {
         AgentTargetId::Opencode => roots.config_home.join("opencode").exists(),
         AgentTargetId::Roo => roots.home.join(".roo").exists(),
         AgentTargetId::Antigravity => roots.home.join(".gemini/antigravity").exists(),
+        AgentTargetId::Openclaw => roots.openclaw_home.exists(),
+        AgentTargetId::Hermes => roots.hermes_home.exists(),
+        AgentTargetId::Kiro => roots.kiro_home.exists(),
+        AgentTargetId::Kilo => roots.home.join(".kilo").exists(),
+        AgentTargetId::Droid => roots.home.join(".factory").exists(),
+        AgentTargetId::Trae => roots.home.join(".trae").exists(),
+        AgentTargetId::Zed => roots.config_home.join("zed").exists(),
     }
 }
 
@@ -3066,6 +3120,9 @@ fn global_target_root(path: GlobalTargetPath, roots: &TargetRoots) -> PathBuf {
         GlobalTargetPath::Home(path) => roots.home.join(path),
         GlobalTargetPath::ConfigHome(path) => roots.config_home.join(path),
         GlobalTargetPath::ClaudeHome(path) => roots.claude_home.join(path),
+        GlobalTargetPath::OpenclawHome(path) => roots.openclaw_home.join(path),
+        GlobalTargetPath::HermesHome(path) => roots.hermes_home.join(path),
+        GlobalTargetPath::KiroHome(path) => roots.kiro_home.join(path),
     }
 }
 
