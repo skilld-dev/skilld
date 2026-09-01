@@ -35,6 +35,18 @@ fn all_expands_to_every_agent_target_in_registry_order() {
 }
 
 #[test]
+fn all_with_an_invalid_value_fails_validation() {
+    assert_eq!(
+        parse_agent_targets(&["all".to_owned(), "nope".to_owned()]),
+        Err(DomainError::InvalidTarget("nope".to_owned()))
+    );
+    assert_eq!(
+        parse_agent_targets(&["nope".to_owned(), "all".to_owned()]),
+        Err(DomainError::InvalidTarget("nope".to_owned()))
+    );
+}
+
+#[test]
 fn named_agent_targets_parse_in_the_given_order() {
     assert_eq!(
         parse_agent_targets(&["zed".to_owned(), "kiro".to_owned()]),

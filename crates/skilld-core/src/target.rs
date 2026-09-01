@@ -73,6 +73,9 @@ pub enum GlobalTargetPath {
     Home(&'static str),
     ConfigHome(&'static str),
     ClaudeHome(&'static str),
+    OpenclawHome(&'static str),
+    HermesHome(&'static str),
+    KiroHome(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +84,14 @@ pub struct AgentTarget {
     pub display_name: &'static str,
     pub project_skills_dir: &'static str,
     pub global_skills_dir: GlobalTargetPath,
+}
+
+impl AgentTarget {
+    /// A bare project directory such as `skills` is a common first-party
+    /// path, so its existence alone must not select this target.
+    pub fn auto_detects_project_dir(&self) -> bool {
+        self.project_skills_dir.starts_with('.')
+    }
 }
 
 pub const AGENT_TARGETS: [AgentTarget; 19] = [
@@ -160,19 +171,19 @@ pub const AGENT_TARGETS: [AgentTarget; 19] = [
         id: AgentTargetId::Openclaw,
         display_name: "OpenClaw",
         project_skills_dir: "skills",
-        global_skills_dir: GlobalTargetPath::Home(".openclaw/skills"),
+        global_skills_dir: GlobalTargetPath::OpenclawHome("skills"),
     },
     AgentTarget {
         id: AgentTargetId::Hermes,
         display_name: "Hermes Agent",
         project_skills_dir: ".hermes/skills",
-        global_skills_dir: GlobalTargetPath::Home(".hermes/skills"),
+        global_skills_dir: GlobalTargetPath::HermesHome("skills"),
     },
     AgentTarget {
         id: AgentTargetId::Kiro,
         display_name: "Kiro CLI",
         project_skills_dir: ".kiro/skills",
-        global_skills_dir: GlobalTargetPath::Home(".kiro/skills"),
+        global_skills_dir: GlobalTargetPath::KiroHome("skills"),
     },
     AgentTarget {
         id: AgentTargetId::Kilo,
@@ -205,13 +216,19 @@ pub const ALL_AGENT_TARGETS: &str = "all";
 
 /// Parse `--agent` values. `all` expands to every known Agent target in registry order.
 pub fn parse_agent_targets(values: &[String]) -> Result<Vec<AgentTargetId>, DomainError> {
-    if values.iter().any(|value| value == ALL_AGENT_TARGETS) {
+    let mut parsed = Vec::with_capacity(values.len());
+    let mut expand_all = false;
+    for value in values {
+        if value == ALL_AGENT_TARGETS {
+            expand_all = true;
+            continue;
+        }
+        parsed.push(AgentTargetId::parse(value)?);
+    }
+    if expand_all {
         return Ok(AGENT_TARGETS.iter().map(|target| target.id).collect());
     }
-    values
-        .iter()
-        .map(|value| AgentTargetId::parse(value))
-        .collect()
+    Ok(parsed)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,6 +305,9 @@ mod tests {
                     GlobalTargetPath::Home(path) => format!("home:{path}"),
                     GlobalTargetPath::ConfigHome(path) => format!("config:{path}"),
                     GlobalTargetPath::ClaudeHome(path) => format!("claude:{path}"),
+                    GlobalTargetPath::OpenclawHome(path) => format!("openclaw:{path}"),
+                    GlobalTargetPath::HermesHome(path) => format!("hermes:{path}"),
+                    GlobalTargetPath::KiroHome(path) => format!("kiro:{path}"),
                 },
             })
             .collect::<Vec<_>>();

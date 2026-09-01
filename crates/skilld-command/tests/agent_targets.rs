@@ -168,6 +168,9 @@ fn every_new_agent_target_resolves_its_global_and_project_paths() {
             home.clone(),
             home.join(".config"),
             home.join(".claude"),
+            home.join(".openclaw"),
+            home.join(".hermes"),
+            home.join(".kiro"),
         ));
 
         for (scope, root, dir) in [
@@ -193,6 +196,83 @@ fn every_new_agent_target_resolves_its_global_and_project_paths() {
 }
 
 #[test]
+fn a_first_party_skills_directory_alone_does_not_select_openclaw() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("data");
+    fs::create_dir_all(project.join("skills/team-skill")).unwrap();
+    fs::write(project.join("skills/team-skill/SKILL.md"), "fixture").unwrap();
+    fs::create_dir_all(project.join(".cursor")).unwrap();
+    let source = source(temporary.path());
+    let host = LocalHost::new(project.clone(), data);
+
+    let names = host
+        .install_request(InstallRequest {
+            operation: InstallOperation::Install(InstallSource::Local(source)),
+            scope: InstallScope::Project,
+            targets: vec![],
+            mode: None,
+        })
+        .unwrap();
+
+    assert_eq!(names, ["example"]);
+    let skills = fs::read_dir(project.join("skills"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(skills, ["team-skill"]);
+    let view = host.view("example", InstallScope::Project).unwrap();
+    assert_eq!(view.skill.targets[0].agent, AgentTargetId::Cursor);
+}
+
+#[test]
+fn overridden_agent_homes_receive_global_installs_and_detection() {
+    for (agent, home_name) in [
+        (AgentTargetId::Openclaw, "openclaw-state"),
+        (AgentTargetId::Hermes, "hermes-home"),
+        (AgentTargetId::Kiro, "kiro-home"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let data = temporary.path().join("data");
+        let home = temporary.path().join("home");
+        let agent_home = temporary.path().join(home_name);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&agent_home).unwrap();
+        let host = LocalHost::new(project, data).with_target_roots(TargetRoots::new(
+            home.clone(),
+            home.join(".config"),
+            home.join(".claude"),
+            agent_home.clone(),
+            agent_home.clone(),
+            agent_home.clone(),
+        ));
+
+        host.install_request(InstallRequest {
+            operation: InstallOperation::Install(InstallSource::Local(source(temporary.path()))),
+            scope: InstallScope::Global,
+            targets: vec![],
+            mode: None,
+        })
+        .unwrap();
+
+        assert!(
+            agent_home.join("skills/example/SKILL.md").exists(),
+            "{}",
+            agent.as_str()
+        );
+        assert!(
+            !home
+                .join(format!(".{}/skills/example/SKILL.md", agent.as_str()))
+                .exists(),
+            "{}",
+            agent.as_str()
+        );
+    }
+}
+
+#[test]
 fn an_existing_global_target_directory_is_detected() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
@@ -205,6 +285,9 @@ fn an_existing_global_target_directory_is_detected() {
         home.clone(),
         home.join(".config"),
         home.join(".claude"),
+        home.join(".openclaw"),
+        home.join(".hermes"),
+        home.join(".kiro"),
     ));
 
     host.install_request(InstallRequest {

@@ -431,6 +431,57 @@ fn agent_all_installs_to_every_known_target() {
 }
 
 #[test]
+fn agent_home_overrides_relocate_the_global_target() {
+    for (agent, variable, default_directory) in [
+        ("hermes", "HERMES_HOME", ".hermes/skills"),
+        ("kiro", "KIRO_HOME", ".kiro/skills"),
+        ("openclaw", "OPENCLAW_STATE_DIR", ".openclaw/skills"),
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let data = temporary.path().join("data");
+        let home = temporary.path().join("home");
+        let override_home = temporary.path().join(format!("{agent}-home"));
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let mut command = Command::new(binary());
+        for signal in DETECTION_SIGNALS {
+            command.env_remove(signal);
+        }
+        let install = command
+            .current_dir(&project)
+            .env("SKILLD_DATA_DIR", &data)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env(variable, &override_home)
+            .args([
+                "install",
+                fixture().to_str().unwrap(),
+                "-g",
+                "--agent",
+                agent,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            install.status.success(),
+            "{agent}: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        assert!(
+            override_home.join("skills/local-skill/SKILL.md").exists(),
+            "{agent}"
+        );
+        assert!(
+            !home.join(default_directory).exists(),
+            "{agent}: default directory was created"
+        );
+    }
+}
+
+#[test]
 fn local_install_list_view_and_remove_use_project_state() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

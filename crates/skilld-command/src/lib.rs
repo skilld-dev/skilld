@@ -1065,14 +1065,27 @@ pub struct TargetRoots {
     pub home: PathBuf,
     pub config_home: PathBuf,
     pub claude_home: PathBuf,
+    pub openclaw_home: PathBuf,
+    pub hermes_home: PathBuf,
+    pub kiro_home: PathBuf,
 }
 
 impl TargetRoots {
-    pub fn new(home: PathBuf, config_home: PathBuf, claude_home: PathBuf) -> Self {
+    pub fn new(
+        home: PathBuf,
+        config_home: PathBuf,
+        claude_home: PathBuf,
+        openclaw_home: PathBuf,
+        hermes_home: PathBuf,
+        kiro_home: PathBuf,
+    ) -> Self {
         Self {
             home,
             config_home,
             claude_home,
+            openclaw_home,
+            hermes_home,
+            kiro_home,
         }
     }
 }
@@ -1127,6 +1140,9 @@ impl LocalHost {
                 home.clone(),
                 home.join(".config"),
                 home.join(".claude"),
+                home.join(".openclaw"),
+                home.join(".hermes"),
+                home.join(".kiro"),
             ),
             detection: DetectionEnvironment::default(),
             bundled_skill: None,
@@ -1195,6 +1211,13 @@ impl LocalHost {
                         GlobalTargetPath::ClaudeHome(path) => {
                             self.target_roots.claude_home.join(path)
                         }
+                        GlobalTargetPath::OpenclawHome(path) => {
+                            self.target_roots.openclaw_home.join(path)
+                        }
+                        GlobalTargetPath::HermesHome(path) => {
+                            self.target_roots.hermes_home.join(path)
+                        }
+                        GlobalTargetPath::KiroHome(path) => self.target_roots.kiro_home.join(path),
                     },
                 };
                 let root = absolute(&root)?;
@@ -1208,7 +1231,8 @@ impl LocalHost {
             .iter()
             .filter(|target| match scope {
                 InstallScope::Project => {
-                    self.project_root.join(target.project_skills_dir).exists()
+                    (target.auto_detects_project_dir()
+                        && self.project_root.join(target.project_skills_dir).exists())
                         || detects_environment(target.id, &self.detection)
                         || detects_project(target.id, &self.project_root)
                 }
@@ -3005,9 +3029,9 @@ fn detects_installed(agent: AgentTargetId, roots: &TargetRoots) -> bool {
         AgentTargetId::Opencode => roots.config_home.join("opencode").exists(),
         AgentTargetId::Roo => roots.home.join(".roo").exists(),
         AgentTargetId::Antigravity => roots.home.join(".gemini/antigravity").exists(),
-        AgentTargetId::Openclaw => roots.home.join(".openclaw").exists(),
-        AgentTargetId::Hermes => roots.home.join(".hermes").exists(),
-        AgentTargetId::Kiro => roots.home.join(".kiro").exists(),
+        AgentTargetId::Openclaw => roots.openclaw_home.exists(),
+        AgentTargetId::Hermes => roots.hermes_home.exists(),
+        AgentTargetId::Kiro => roots.kiro_home.exists(),
         AgentTargetId::Kilo => roots.home.join(".kilo").exists(),
         AgentTargetId::Droid => roots.home.join(".factory").exists(),
         AgentTargetId::Trae => roots.home.join(".trae").exists(),
@@ -3020,6 +3044,9 @@ fn global_target_root(path: GlobalTargetPath, roots: &TargetRoots) -> PathBuf {
         GlobalTargetPath::Home(path) => roots.home.join(path),
         GlobalTargetPath::ConfigHome(path) => roots.config_home.join(path),
         GlobalTargetPath::ClaudeHome(path) => roots.claude_home.join(path),
+        GlobalTargetPath::OpenclawHome(path) => roots.openclaw_home.join(path),
+        GlobalTargetPath::HermesHome(path) => roots.hermes_home.join(path),
+        GlobalTargetPath::KiroHome(path) => roots.kiro_home.join(path),
     }
 }
 

@@ -226,7 +226,23 @@ fn target_roots() -> TargetRoots {
     let claude_home = env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".claude"));
-    TargetRoots::new(home, config_home, claude_home)
+    let openclaw_home = env::var_os("OPENCLAW_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".openclaw"));
+    let hermes_home = env::var_os("HERMES_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".hermes"));
+    let kiro_home = env::var_os("KIRO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".kiro"));
+    TargetRoots::new(
+        home,
+        config_home,
+        claude_home,
+        openclaw_home,
+        hermes_home,
+        kiro_home,
+    )
 }
 
 fn detection_environment() -> DetectionEnvironment {
