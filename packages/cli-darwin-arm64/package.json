@@ -1,6 +1,6 @@
 {
   "name": "skilld-cli-darwin-arm64",
-  "version": "3.0.0-beta.3",
+  "version": "3.0.0-beta.4",
   "description": "macOS arm64 executable for the skilld CLI",
   "license": "MIT",
   "homepage": "https://skilld.dev",
