@@ -6,6 +6,7 @@ description: Generate or update an Agent Skill for an npm or local package using
 # Generate a package Skill
 
 Create a focused Skill that helps an Agent use one package correctly.
+This Skill is for maintainers who author a draft Skill they own.
 
 ## Inputs
 

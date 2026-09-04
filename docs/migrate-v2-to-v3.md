@@ -94,7 +94,7 @@ Search first, then run the returned selector:
 
 ```sh
 skilld search vue
-skilld run skilld:skilld-dev/skills/vue
+skilld run skilld:antfu/skills/vue
 ```
 
 Use the exact selector printed by your search result.
@@ -105,7 +105,7 @@ It writes no project files or lockfile state.
 Install the Skill only when you want to keep it:
 
 ```sh
-skilld install skilld:skilld-dev/skills/vue
+skilld install skilld:antfu/skills/vue
 ```
 
 An install writes project files and records lockfile state.

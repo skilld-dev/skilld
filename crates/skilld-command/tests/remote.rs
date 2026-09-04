@@ -2677,7 +2677,7 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
             .iter()
             .map(skilld_ui::Line::plain_text)
             .collect::<Vec<_>>(),
-        ["Verified Skill example."]
+        ["Verified the source of Skill example."]
     );
     let before = fs::read(project.join(".skills/example/SKILL.md")).unwrap();
     *provider.content.lock().unwrap() = b"---\nname: example\ndescription: second\n---\n".to_vec();

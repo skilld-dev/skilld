@@ -22,6 +22,11 @@ Every public export, command, error, route, and document uses these terms.
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
 | Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
 | Agent target | skilld CLI | published configuration | Agent | Agent target |
+| registry | skilld.dev | published surface | developer, Agent | registry |
+| curated | skilld.dev | published surface | developer | curated |
+| author | GitHub | external standard | skilld.dev, developer | author |
+| provenance | lockfile and protocol | published value | skilld CLI, developer | provenance |
+| lockfile | `.skills/skilld-lock.yaml` | published file | skilld CLI, CI | lockfile |
 | Curator | skilld.dev | published route | skilld.dev, skilld CLI | curator |
 | Collection | skilld.dev | published route | skilld.dev, skilld CLI | collection |
 | Multi-skill ref | `skilld run`, `skilld add` | published argument | developer, Agent | ref |
@@ -266,6 +271,56 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 **Never:** version check, drift report, health check.
 
 **Casing:** `Outdated Skill report` in prose, `outdated` in commands.
+
+### registry
+
+**Is:** the curated index of Skills that skilld.dev publishes and the skilld CLI searches.
+
+**Use for:** the skilld.dev catalogue as a whole and `skilld search` results.
+
+**Never:** marketplace, store, hub, directory.
+
+**Casing:** `registry` in sentences, `skilld registry` when the owner matters.
+
+### curated
+
+**Is:** admitted to the registry by a person, with a reason that person can state.
+
+**Use for:** the registry and the Skills it lists.
+
+**Never:** approved, certified, vetted, official.
+
+**Casing:** `curated` in sentences.
+
+### author
+
+**Is:** the GitHub account or person who wrote a Skill in their own Repository.
+
+**Use for:** the credited writer of one Skill on every surface.
+
+**Never:** creator, publisher, contributor, owner in customer copy.
+
+**Casing:** `author` in sentences, `Author` in headings.
+
+### provenance
+
+**Is:** the recorded facts about where a Skill came from: Repository, commit, author, Artifact attestation, and source status.
+
+**Use for:** what `skilld verify` and the source status describe.
+
+**Never:** trust, safety, reputation, security.
+
+**Casing:** `provenance` in sentences.
+
+### lockfile
+
+**Is:** the `.skills/skilld-lock.yaml` file that records each installed Skill, its source, commit, digest, and source status.
+
+**Use for:** the file `skilld install` writes and restores.
+
+**Never:** manifest, lock, state file, config.
+
+**Casing:** `lockfile` in prose, `skilld-lock.yaml` for the file name.
 
 ## Banned
 
