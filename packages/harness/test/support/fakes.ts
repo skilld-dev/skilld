@@ -2,7 +2,6 @@ import type {
   HarnessV1,
   HarnessV1NetworkSandboxSession,
   HarnessV1PromptTurnOptions,
-  HarnessV1Skill,
   HarnessV1StartOptions,
   HarnessV1StreamPart,
 } from '@ai-sdk/harness'
@@ -203,7 +202,3 @@ export function createFakeSandboxProvider() {
 }
 
 export const skillSource = (name: string, body = '# Instructions\n\nUse the package API.\n'): string => `---\nname: ${name}\ndescription: Use ${name} when working with its public API.\n---\n\n${body}`
-
-export function skillFromStart(skills: ReadonlyArray<HarnessV1Skill> | undefined, name: string): HarnessV1Skill | undefined {
-  return skills?.find(skill => skill.name === name)
-}
