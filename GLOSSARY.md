@@ -22,6 +22,9 @@ Every public export, command, error, route, and document uses these terms.
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
 | Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
 | Agent target | skilld CLI | published configuration | Agent | Agent target |
+| Curator | skilld.dev | published route | skilld.dev, skilld CLI | curator |
+| Collection | skilld.dev | published route | skilld.dev, skilld CLI | collection |
+| Multi-skill ref | `skilld run`, `skilld add` | published argument | developer, Agent | ref |
 
 | Identifier | Term |
 | --- | --- |
@@ -29,6 +32,8 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld run` | transient Skill load |
 | `skilld run --file` | supporting file read |
 | `skilld install` | Skill install |
+| `skilld add` | multi-skill install |
+| `skilld run gh:OWNER/REPOSITORY` | Skill index |
 | `skilld list` | installed Skills |
 | `skilld view` | Skill details |
 | `skilld remove` | Skill removal |
@@ -221,6 +226,36 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 **Never:** adapter, platform, destination type.
 
 **Casing:** `Agent target` in prose, `AgentTarget` in types.
+
+### Curator
+
+**Is:** a skilld.dev account that publishes collections at `/@LOGIN`.
+
+**Use for:** the `@LOGIN` ref and curator profile pages.
+
+**Never:** author, publisher, maintainer in this sense.
+
+**Casing:** `Curator` in headings, `curator` in sentences.
+
+### Collection
+
+**Is:** a curator's ordered, named list of Skills at `/@LOGIN/SLUG`.
+
+**Use for:** the `@LOGIN/SLUG` ref and collection pages.
+
+**Never:** pack, bundle, list, set.
+
+**Casing:** `Collection` in headings, `collection` in sentences.
+
+### Multi-skill ref
+
+**Is:** one `skilld run` or `skilld add` argument that names more than one Skill: `gh:OWNER/REPOSITORY`, `@LOGIN`, or `@LOGIN/SLUG`.
+
+**Use for:** the argument grammar and its index output.
+
+**Never:** bulk selector, group source, target.
+
+**Casing:** `multi-skill ref` in prose, `MultiSkillRef` in Rust.
 
 ### Outdated Skill report
 
