@@ -377,12 +377,11 @@ impl LocalStore {
             return self.rollback_error(error, known_targets);
         }
         for change in &changes {
-            if let Some(install) = &change.install {
-                if let Err(error) =
+            if let Some(install) = &change.install
+                && let Err(error) =
                     stage_target(install, &canonical, &canonical_stage, &transaction, &digest)
-                {
-                    return self.rollback_error(error, known_targets);
-                }
+            {
+                return self.rollback_error(error, known_targets);
             }
         }
         if hash_skill_tree(&canonical_stage)? != digest {
@@ -392,10 +391,10 @@ impl LocalStore {
             );
         }
 
-        if canonical_had_existing {
-            if let Err(error) = fs::rename(&canonical, &canonical_backup).map_err(fs_error) {
-                return self.rollback_error(error, known_targets);
-            }
+        if canonical_had_existing
+            && let Err(error) = fs::rename(&canonical, &canonical_backup).map_err(fs_error)
+        {
+            return self.rollback_error(error, known_targets);
         }
         if let Err(error) = fs::rename(&canonical_stage, &canonical).map_err(fs_error) {
             return self.rollback_error(error, known_targets);
@@ -403,10 +402,10 @@ impl LocalStore {
         for change in &changes {
             let destination = change.target.destination(&name);
             let backup = backup_path(&destination, &transaction)?;
-            if change.had_existing {
-                if let Err(error) = fs::rename(&destination, &backup).map_err(fs_error) {
-                    return self.rollback_error(error, known_targets);
-                }
+            if change.had_existing
+                && let Err(error) = fs::rename(&destination, &backup).map_err(fs_error)
+            {
+                return self.rollback_error(error, known_targets);
             }
             if change.install.is_some() {
                 let stage = stage_path(&destination, &transaction)?;
@@ -703,13 +702,12 @@ impl LocalStore {
         }
         for target in &targets {
             let destination = target.destination(name);
-            if path_exists(&destination)? {
-                if let Err(error) =
+            if path_exists(&destination)?
+                && let Err(error) =
                     fs::rename(&destination, backup_path(&destination, &transaction)?)
                         .map_err(fs_error)
-                {
-                    return self.rollback_error(error, known_targets);
-                }
+            {
+                return self.rollback_error(error, known_targets);
             }
         }
 

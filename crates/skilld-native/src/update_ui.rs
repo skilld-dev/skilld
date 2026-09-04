@@ -11,7 +11,7 @@ use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
@@ -1509,7 +1509,7 @@ impl TerminalLifecycle for NativeTerminalLifecycle {
             )
         })?;
         let mut stdout = io::stdout();
-        if execute!(stdout, EnterAlternateScreen, Hide).is_err() {
+        if execute!(stdout, EnterAlternateScreen, Clear(ClearType::All), Hide).is_err() {
             let _ = disable_raw_mode();
             return Err(InteractiveUpdateError::terminal(
                 "TERMINAL_UNAVAILABLE",
@@ -1540,7 +1540,6 @@ pub fn run_interactive_update<H: InteractiveUpdateHost>(
     with_restored_terminal(NativeTerminalLifecycle, || {
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend).map_err(terminal_lost)?;
-        terminal.clear().map_err(terminal_lost)?;
         run_event_loop(&mut terminal, host, color)
     })
 }

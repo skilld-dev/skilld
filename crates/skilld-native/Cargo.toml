@@ -28,21 +28,24 @@ tempfile.workspace = true
 
 terminal_size.workspace = true
 
-ureq = { version = "=3.1.4", default-features = false, features = [ "rustls" ] }
+ureq = { version = "=3.4.0", default-features = false, features = [ "rustls" ] }
 
 url.workspace = true
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
-crossterm = { version = "=0.28.1", default-features = false, features = [
+crossterm = { version = "=0.29.0", default-features = false, features = [
   "events",
   "windows",
 ] }
-ratatui = { version = "=0.29.0", default-features = false, features = [ "crossterm" ] }
+ratatui = { version = "=0.30.2", default-features = false, features = [
+  "crossterm_0_29",
+  "layout-cache",
+] }
 
 unicode-width.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
-nix = { version = "0.29.0", features = [ "term" ] }
+nix = { version = "0.31.3", features = [ "term" ] }
 
 [dev-dependencies]
 skilld-ui.workspace = true

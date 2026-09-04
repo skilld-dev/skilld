@@ -880,7 +880,7 @@ fn verify_ustar(
     archive: &[u8],
     declarations: &[ArtifactFile],
 ) -> Result<Vec<PreparedFile>, RemoteError> {
-    if archive.len() % 512 != 0 {
+    if !archive.len().is_multiple_of(512) {
         return Err(archive_error("the USTAR archive is truncated"));
     }
     let declarations = declarations

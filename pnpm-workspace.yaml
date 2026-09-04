@@ -1,12 +1,5 @@
 catalogMode: prefer
-
 minimumReleaseAgeExcludePrune: true
-minimumReleaseAgeExclude:
-  - '@ai-sdk/harness@1.0.77'
-  - '@ai-sdk/provider-utils@5.0.28'
-  - '@ai-sdk/gateway@4.0.56'
-  - ai@7.0.70
-
 trustPolicy: no-downgrade
 shellEmulator: true
 

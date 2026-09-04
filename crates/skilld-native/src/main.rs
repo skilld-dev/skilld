@@ -41,14 +41,14 @@ fn main() -> ExitCode {
 
     let args = env::args_os().collect::<Vec<_>>();
     let interactive = interactive_update_requested(args.clone()).is_ok_and(|requested| requested);
-    if interactive {
-        if let Err(error) = require_interactive_tty(
+    if interactive
+        && let Err(error) = require_interactive_tty(
             std::io::stdin().is_terminal(),
             std::io::stdout().is_terminal(),
-        ) {
-            eprintln!("{error}");
-            return ExitCode::from(2);
-        }
+        )
+    {
+        eprintln!("{error}");
+        return ExitCode::from(2);
     }
 
     let project_root = match env::current_dir() {
