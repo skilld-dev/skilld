@@ -128,6 +128,8 @@ It cannot restore a v2 lockfile.
 | v2 command | v3 replacement |
 | --- | --- |
 | `skilld add <source>` | Run `skilld search`, then `skilld run <selector>` to use it once, or `skilld install <selector>` to keep it |
+| `skilld add gh:OWNER/REPOSITORY`, `skilld add @LOGIN`, `skilld add @LOGIN/SLUG` | Unchanged. `skilld run` with the same ref lists the Skills first |
+| `skilld add npm:PACKAGE` | Not supported. Run `skilld search <package>`, then use the selector |
 | `skilld update [name]` | `skilld update [name]` |
 | `skilld info` | `skilld list`, then `skilld view <name>` |
 | `skilld login` | `skilld auth login` |

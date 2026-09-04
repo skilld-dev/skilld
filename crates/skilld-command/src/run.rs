@@ -11,7 +11,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use skilld_core::PreparedFile;
+use skilld_core::{PreparedFile, SkillListing};
 use skilld_ui::text::is_unsafe_terminal;
 
 use crate::CommandError;
@@ -112,6 +112,8 @@ pub enum FileContent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunOutcome {
     Load(Box<TransientSkill>),
+    /// A multi-skill ref: skilld names the Skills and loads none of them.
+    Index(SkillListing),
     Files {
         skill: String,
         origin: SkillOrigin,
