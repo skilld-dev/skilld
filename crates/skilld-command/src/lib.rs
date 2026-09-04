@@ -3,6 +3,7 @@ mod local_store;
 mod outdated;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
 mod output;
+mod provenance;
 mod remote;
 mod run;
 
@@ -21,6 +22,8 @@ pub use local_store::{
     TargetInstall, TransactionGate,
 };
 pub use output::{CommandPlatform, OutputContext};
+pub use provenance::RemoteProvenance;
+use provenance::source_status_caution;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider, PreparedRemoteSkill,
@@ -34,10 +37,9 @@ pub use run::{
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
     InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    MultiSkillRef, NotTrackedReason, RemoteSelector, SkillListing, SkillRef, SourceRef,
-    UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1,
-    UpdateRelation, UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets,
-    select_target_ids,
+    MultiSkillRef, NotTrackedReason, SkillListing, SkillRef, SourceRef, UpdateFailure,
+    UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets, select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
@@ -234,12 +236,28 @@ enum ConfigCommand {
     List,
 }
 
+/// One Skill an install wrote, with the source the lockfile now records.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstalledSkill {
+    pub name: String,
+    pub source: LockedSource,
+    /// `verified`, `local`, or `unverified`.
+    pub source_status: &'static str,
+}
+
 pub trait Host {
     fn list(&self, scope: InstallScope) -> Result<Vec<String>, CommandError>;
 
-    fn install(&self, source: InstallSource, scope: InstallScope) -> Result<String, CommandError>;
+    fn install(
+        &self,
+        source: InstallSource,
+        scope: InstallScope,
+    ) -> Result<InstalledSkill, CommandError>;
 
-    fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
+    fn install_request(
+        &self,
+        request: InstallRequest,
+    ) -> Result<Vec<InstalledSkill>, CommandError> {
         if !request.targets.is_empty() || request.mode.is_some() {
             return Err(CommandError::unsupported_host(
                 "Agent target selection is unavailable on this host",
@@ -250,7 +268,7 @@ pub trait Host {
                 "lockfile restore is unavailable",
             ));
         };
-        self.install(source, request.scope).map(|name| vec![name])
+        self.install(source, request.scope).map(|skill| vec![skill])
     }
 
     fn run_skill(
@@ -852,7 +870,7 @@ fn dispatch<H: Host>(
                     let listing = list_skills(host, &reference)?;
                     let mut lines = Vec::with_capacity(listing.items.len());
                     for (index, item) in listing.items.iter().enumerate() {
-                        let names = host
+                        let installed = host
                             .install_request(InstallRequest {
                                 operation: InstallOperation::Install(InstallSource::Remote(
                                     item.selector(),
@@ -869,11 +887,9 @@ fn dispatch<H: Host>(
                                 ),
                                 ..error
                             })?;
-                        lines.extend(
-                            names
-                                .into_iter()
-                                .map(|name| Line::success(format!("Installed Skill {name}."))),
-                        );
+                        for skill in &installed {
+                            lines.extend(render_installed(skill)?);
+                        }
                     }
                     Ok(CommandOutput::Screen(Screen::new(lines)))
                 }
@@ -1024,6 +1040,8 @@ fn dispatch<H: Host>(
                         name: result.name,
                         selector: selector.to_string(),
                         description: result.description,
+                        owner: result.source.owner,
+                        repository: result.source.repository,
                         stargazer_count: result.stargazer_count,
                     })
                 })
@@ -1118,18 +1136,15 @@ fn install<H: Host>(
             "install the skilld-maintained Skill with --global",
         ));
     }
-    let names = host.install_request(InstallRequest {
+    let installed = host.install_request(InstallRequest {
         operation,
         scope,
         targets: options.targets,
         mode: options.mode,
     })?;
-    let mut lines = names
-        .into_iter()
-        .map(|name| Line::success(format!("Installed Skill {name}.")))
-        .collect::<Vec<_>>();
-    if direct {
-        lines.push(Line::hint("Review the unverified Skill before use."));
+    let mut lines = Vec::new();
+    for skill in &installed {
+        lines.extend(render_installed(skill)?);
     }
     Ok(CommandOutput::Screen(Screen::new(lines)))
 }
@@ -1147,15 +1162,48 @@ fn list_skills<H: Host>(host: &H, reference: &MultiSkillRef) -> Result<SkillList
     Ok(listing)
 }
 
-fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
-    let source = match view.skill.source {
-        LockedSource::Local { path } => Line::field("Source", format!("local {path}")),
-        LockedSource::BundledSkilld => Line::field("Source", "skilld-maintained Skill"),
-        LockedSource::Remote { source, .. } => {
-            let selector = RemoteSelector::parse(&source).map_err(CommandError::remote)?;
-            Line::linked_field("Source", selector.canonical(), github_url(&selector)?)
+/// Say who published the Skill, where its bytes came from, and what the
+/// status means. Every status gets its meaning; a remote source gets the
+/// exact SKILL.md on GitHub.
+fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
+    let provenance = RemoteProvenance::from_locked(&skill.source)?;
+    let mut lines = vec![Line::success(format!("Installed Skill {}.", skill.name))];
+    if let Some(provenance) = &provenance {
+        lines.push(Line::item(provenance.headline(&skill.name)));
+    }
+    lines.push(source_line(&skill.source, provenance.as_ref()));
+    lines.push(Line::field("Source status", skill.source_status));
+    lines.extend(
+        source_status_caution(skill.source_status)
+            .lines()
+            .map(Line::hint),
+    );
+    if let Some(provenance) = &provenance {
+        lines.push(Line::linked_field(
+            "Read it first",
+            provenance.source_url.clone(),
+            provenance.source_url.clone(),
+        ));
+    }
+    Ok(lines)
+}
+
+/// The `Source` row. A remote source links to its exact SKILL.md when the
+/// terminal supports hyperlinks.
+fn source_line(source: &LockedSource, provenance: Option<&RemoteProvenance>) -> Line {
+    match (source, provenance) {
+        (LockedSource::Local { path }, _) => Line::field("Source", format!("local {path}")),
+        (LockedSource::BundledSkilld, _) => Line::field("Source", "skilld-maintained Skill"),
+        (LockedSource::Remote { source, .. }, Some(provenance)) => {
+            Line::linked_field("Source", source, provenance.source_url.clone())
         }
-    };
+        (LockedSource::Remote { source, .. }, None) => Line::field("Source", source),
+    }
+}
+
+fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
+    let provenance = RemoteProvenance::from_locked(&view.skill.source)?;
+    let source = source_line(&view.skill.source, provenance.as_ref());
     let targets = if view.skill.targets.is_empty() {
         "none".to_owned()
     } else {
@@ -1173,17 +1221,6 @@ fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
         Line::field("Source status", view.skill.source_status.as_str()),
         Line::field("Agent targets", targets),
     ])
-}
-
-/// Build a GitHub repository URL from a parsed remote selector.
-fn github_url(selector: &RemoteSelector) -> Result<String, CommandError> {
-    let mut url = url::Url::parse("https://github.com/")
-        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?;
-    url.path_segments_mut()
-        .map_err(|_| CommandError::service("the GitHub Repository URL could not be built"))?
-        .push(&selector.source().owner)
-        .push(&selector.source().repository);
-    Ok(url.into())
 }
 
 fn scope(global: bool) -> InstallScope {
@@ -1475,7 +1512,7 @@ impl LocalHost {
         scope: InstallScope,
         targets: &[TargetInstall],
         known: &[ResolvedTarget],
-    ) -> Result<String, CommandError> {
+    ) -> Result<InstalledSkill, CommandError> {
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
         let prepared = self
             .remote_provider()?
@@ -1492,7 +1529,25 @@ impl LocalHost {
                 known,
             )
             .map_err(CommandError::store)?;
-        Ok(name.to_string())
+        self.installed(scope, &name, known)
+    }
+
+    /// Read back what the lockfile recorded for one installed Skill.
+    fn installed(
+        &self,
+        scope: InstallScope,
+        name: &skilld_core::SkillName,
+        known: &[ResolvedTarget],
+    ) -> Result<InstalledSkill, CommandError> {
+        let view = self
+            .store(scope)
+            .view(name, known)
+            .map_err(CommandError::store)?;
+        Ok(InstalledSkill {
+            name: view.name,
+            source: view.skill.source,
+            source_status: view.skill.source_status.as_str(),
+        })
     }
 
     fn run_remote(
@@ -1557,6 +1612,12 @@ impl LocalHost {
         ))
         .map_err(CommandError::remote)?
         .canonical();
+        let provenance = RemoteProvenance::new(
+            locked_selector.source().owner.as_str(),
+            locked_selector.source().repository.as_str(),
+            skill_path.as_str(),
+            revision.as_str(),
+        )?;
         let source_status = prepared.source_status.as_str();
         let (name, _, files) =
             skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
@@ -1565,6 +1626,7 @@ impl LocalHost {
             source: selector.canonical(),
             exact_source,
             direct,
+            provenance: Box::new(provenance),
         };
         if !wanted.is_empty() {
             return Ok(RunOutcome::Files {
@@ -1650,7 +1712,11 @@ impl LocalHost {
         })))
     }
 
-    fn restore(&self, request: &InstallRequest, direct: bool) -> Result<Vec<String>, CommandError> {
+    fn restore(
+        &self,
+        request: &InstallRequest,
+        direct: bool,
+    ) -> Result<Vec<InstalledSkill>, CommandError> {
         let (targets, known) = if request.targets.is_empty() {
             (None, self.known_targets(request.scope)?)
         } else {
@@ -1772,7 +1838,7 @@ impl LocalHost {
                         .map_err(CommandError::store)?;
                 }
             }
-            restored.push(name);
+            restored.push(self.installed(request.scope, &skill_name, &known)?);
         }
         Ok(restored)
     }
@@ -1784,7 +1850,11 @@ impl Host for LocalHost {
         self.store(scope).list(&known).map_err(CommandError::store)
     }
 
-    fn install(&self, source: InstallSource, scope: InstallScope) -> Result<String, CommandError> {
+    fn install(
+        &self,
+        source: InstallSource,
+        scope: InstallScope,
+    ) -> Result<InstalledSkill, CommandError> {
         self.install_request(InstallRequest {
             operation: InstallOperation::Install(source),
             scope,
@@ -1796,7 +1866,10 @@ impl Host for LocalHost {
         .ok_or_else(|| CommandError::service("Skill install returned no result"))
     }
 
-    fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
+    fn install_request(
+        &self,
+        request: InstallRequest,
+    ) -> Result<Vec<InstalledSkill>, CommandError> {
         let source = match request.operation.clone() {
             InstallOperation::Restore => return self.restore(&request, false),
             InstallOperation::DirectRestore => return self.restore(&request, true),
@@ -1806,17 +1879,17 @@ impl Host for LocalHost {
         match source {
             InstallSource::Remote(source) => self
                 .install_remote(&source, false, request.scope, &targets, &known)
-                .map(|name| vec![name]),
+                .map(|skill| vec![skill]),
             InstallSource::DirectRemote(source) => self
                 .install_remote(&source, true, request.scope, &targets, &known)
-                .map(|name| vec![name]),
+                .map(|skill| vec![skill]),
             source => {
                 let (source, locked_source) = self.resolve_source(source)?;
                 let name = self
                     .store(request.scope)
                     .install_from(&source, locked_source, &targets, &known)
                     .map_err(CommandError::store)?;
-                Ok(vec![name.to_string()])
+                Ok(vec![self.installed(request.scope, &name, &known)?])
             }
         }
     }
@@ -3261,20 +3334,31 @@ mod tests {
             &self,
             source: InstallSource,
             scope: InstallScope,
-        ) -> Result<String, CommandError> {
+        ) -> Result<InstalledSkill, CommandError> {
             assert_eq!(source, InstallSource::BundledSkilld);
             assert_eq!(scope, InstallScope::Global);
-            Ok("skilld".to_owned())
+            Ok(bundled_skilld())
         }
 
-        fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
             assert_eq!(
                 request.operation,
                 InstallOperation::Install(InstallSource::BundledSkilld)
             );
             assert_eq!(request.scope, InstallScope::Global);
             assert_eq!(request.targets, [AgentTargetId::Codex]);
-            Ok(vec!["skilld".to_owned()])
+            Ok(vec![bundled_skilld()])
+        }
+    }
+
+    fn bundled_skilld() -> InstalledSkill {
+        InstalledSkill {
+            name: "skilld".to_owned(),
+            source: LockedSource::BundledSkilld,
+            source_status: "local",
         }
     }
 
@@ -3306,18 +3390,30 @@ mod tests {
             &self,
             _source: InstallSource,
             _scope: InstallScope,
-        ) -> Result<String, CommandError> {
+        ) -> Result<InstalledSkill, CommandError> {
             unreachable!("add installs through install_request")
         }
 
-        fn install_request(&self, request: InstallRequest) -> Result<Vec<String>, CommandError> {
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
             let InstallOperation::Install(InstallSource::Remote(source)) = &request.operation
             else {
                 panic!("expected a hosted install: {:?}", request.operation);
             };
             let name = source.rsplit('/').next().unwrap().to_owned();
+            let installed = InstalledSkill {
+                name: name.clone(),
+                source: LockedSource::Remote {
+                    source: source.clone(),
+                    commit_sha: "a".repeat(40),
+                    skill_path: format!("skills/{name}"),
+                },
+                source_status: "verified",
+            };
             self.installs.lock().unwrap().push(request);
-            Ok(vec![name])
+            Ok(vec![installed])
         }
 
         fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
@@ -3450,7 +3546,25 @@ mod tests {
         );
 
         assert_eq!(exit, 0, "{stderr}");
-        assert_eq!(stdout, "Installed Skill vue.\nInstalled Skill nuxt.\n");
+        assert_eq!(
+            stdout,
+            concat!(
+                "Installed Skill vue.\n",
+                "vue · skilld-dev/skills @ aaaaaaa\n",
+                "Source: skilld:skilld-dev/skills/vue\n",
+                "Source status: verified\n",
+                "skilld checked where this Skill came from, not what it asks you to do.\n",
+                "Read it before you follow it.\n",
+                "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
+                "Installed Skill nuxt.\n",
+                "nuxt · skilld-dev/skills @ aaaaaaa\n",
+                "Source: skilld:skilld-dev/skills/nuxt\n",
+                "Source status: verified\n",
+                "skilld checked where this Skill came from, not what it asks you to do.\n",
+                "Read it before you follow it.\n",
+                "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",
+            )
+        );
         let requests = host.requests();
         assert_eq!(requests.len(), 2);
         for (request, selector) in requests.iter().zip([
@@ -3474,7 +3588,18 @@ mod tests {
             run_plain(&host, &["skilld", "add", "skilld:skilld-dev/skills/vue"]);
 
         assert_eq!(exit, 0, "{stderr}");
-        assert_eq!(stdout, "Installed Skill vue.\n");
+        assert_eq!(
+            stdout,
+            concat!(
+                "Installed Skill vue.\n",
+                "vue · skilld-dev/skills @ aaaaaaa\n",
+                "Source: skilld:skilld-dev/skills/vue\n",
+                "Source status: verified\n",
+                "skilld checked where this Skill came from, not what it asks you to do.\n",
+                "Read it before you follow it.\n",
+                "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
+            )
+        );
         assert_eq!(
             host.requests()[0].operation,
             InstallOperation::Install(InstallSource::Remote(
@@ -3544,7 +3669,12 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(
             String::from_utf8(stdout).unwrap(),
-            "Installed Skill skilld.\n"
+            concat!(
+                "Installed Skill skilld.\n",
+                "Source: skilld-maintained Skill\n",
+                "Source status: local\n",
+                "Read this Skill before you follow it.\n",
+            )
         );
         assert!(stderr.is_empty());
     }

@@ -4,7 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use skilld_command::{CommandError, Host};
+use skilld_command::{CommandError, Host, InstalledSkill};
 use skilld_core::{
     CommitAuthor, CommitHistory, CommitSha, CommitSummary as CoreCommitSummary, InstallScope,
     InstallSource, SkillName, UpdateFailure, UpdatePlan, UpdatePlanItem, UpdatePlanV1,
@@ -410,7 +410,7 @@ impl Host for PlanHost {
         &self,
         _source: InstallSource,
         _scope: InstallScope,
-    ) -> Result<String, CommandError> {
+    ) -> Result<InstalledSkill, CommandError> {
         unreachable!("install is outside this test")
     }
 

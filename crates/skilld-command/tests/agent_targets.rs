@@ -71,7 +71,15 @@ fn every_project_signal_selects_the_matching_agent_target() {
             })
             .unwrap();
 
-        assert_eq!(names, ["example"], "{}", agent.as_str());
+        assert_eq!(
+            names
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            ["example"],
+            "{}",
+            agent.as_str()
+        );
         assert!(
             project.join(skills_dir).join("example/SKILL.md").exists(),
             "{}",
@@ -215,6 +223,7 @@ fn a_first_party_skills_directory_alone_does_not_select_openclaw() {
         })
         .unwrap();
 
+    let names: Vec<&str> = names.iter().map(|skill| skill.name.as_str()).collect();
     assert_eq!(names, ["example"]);
     let skills = fs::read_dir(project.join("skills"))
         .unwrap()

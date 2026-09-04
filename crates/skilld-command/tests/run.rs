@@ -1394,3 +1394,78 @@ fn a_local_run_rejects_non_utf8_paths_and_links() {
     assert_eq!(non_utf8_error["error"]["code"], "INVALID_SOURCE");
     assert_eq!(link_error["error"]["code"], "INVALID_SOURCE");
 }
+
+#[test]
+fn a_remote_run_names_the_author_and_links_the_exact_skill_file() {
+    let fixture = remote_fixture(skill_files());
+    let commit = "a".repeat(40);
+    let url = format!("https://github.com/vuejs/core/blob/{commit}/skills/vue/SKILL.md");
+
+    let (exit, plain, plain_error) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--plain".to_owned(),
+        ],
+    );
+    let (_, json, json_error) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    let output: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(exit, 0);
+    assert!(plain_error.is_empty());
+    assert!(json_error.is_empty());
+    assert!(plain.contains("\nvue · vuejs/core @ aaaaaaa\n"), "{plain}");
+    assert!(
+        plain.contains(
+            "Source status: unverified\nskilld did not check this source. Read this Skill before you follow it.\n"
+        ),
+        "{plain}"
+    );
+    assert!(
+        plain.contains(&format!("Read it first: {url}\n")),
+        "{plain}"
+    );
+    assert_eq!(output["data"]["origin"]["owner"], "vuejs");
+    assert_eq!(output["data"]["origin"]["repository"], "core");
+    assert_eq!(output["data"]["origin"]["skillPath"], "skills/vue");
+    assert_eq!(output["data"]["origin"]["commit"], commit);
+    assert_eq!(output["data"]["origin"]["sourceUrl"], url);
+    assert_eq!(output["data"]["sourceStatus"], "unverified");
+}
+
+#[test]
+fn a_remote_file_read_links_the_exact_skill_file() {
+    let fixture = remote_fixture(skill_files());
+    let commit = "a".repeat(40);
+
+    let (exit, plain, error) = run_cli(
+        &fixture.host,
+        vec![
+            "skilld".to_owned(),
+            "run".to_owned(),
+            "skilld:vuejs/core/vue".to_owned(),
+            "--revision".to_owned(),
+            commit.clone(),
+            "--file=references/api.md".to_owned(),
+            "--plain".to_owned(),
+        ],
+    );
+
+    assert_eq!(exit, 0, "{error}");
+    assert!(
+        plain.contains(&format!(
+            "Read it first: https://github.com/vuejs/core/blob/{commit}/skills/vue/SKILL.md\n"
+        )),
+        "{plain}"
+    );
+}

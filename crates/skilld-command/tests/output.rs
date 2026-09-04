@@ -1,4 +1,6 @@
-use skilld_command::{CommandError, CommandPlatform, Host, OutputContext, run_with_output};
+use skilld_command::{
+    CommandError, CommandPlatform, Host, InstalledSkill, OutputContext, run_with_output,
+};
 use skilld_core::{
     InstallScope, InstallSource, RemoteError, SearchResponse, SearchResult, SourceProvider,
     SourceRequest, SourceSelector,
@@ -20,7 +22,7 @@ impl Host for SearchHost {
         &self,
         _source: InstallSource,
         _scope: InstallScope,
-    ) -> Result<String, CommandError> {
+    ) -> Result<InstalledSkill, CommandError> {
         unreachable!("install is outside this test")
     }
 
@@ -118,6 +120,8 @@ fn json_search_returns_one_versioned_document() {
                     "name": "grill-me",
                     "selector": "skilld:mattpocock/skills/grill-me",
                     "description": "A focused Skill description that wraps cleanly on a narrow terminal.",
+                    "owner": "mattpocock",
+                    "repository": "skills",
                     "stargazerCount": 227068
                 }],
                 "total": 14
@@ -189,7 +193,7 @@ fn help_explains_primary_flow_remote_file_revisions_and_direct_delivery() {
 #[test]
 fn non_terminal_and_ci_output_are_stable_plain_records() {
     let expected = concat!(
-        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\t",
+        "grill-me\tskilld:mattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
         "A focused Skill description that wraps cleanly on a narrow terminal.\n"
     );
 
@@ -231,7 +235,7 @@ fn active_agent_terminal_is_plain_without_an_explicit_machine_flag() {
         (
             0,
             concat!(
-                "grill-me\tskilld:mattpocock/skills/grill-me\t227068\t",
+                "grill-me\tskilld:mattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
                 "A focused Skill description that wraps cleanly on a narrow terminal.\n"
             )
             .to_owned(),
@@ -251,7 +255,7 @@ fn explicit_plain_overrides_a_human_terminal() {
     assert_eq!(
         stdout,
         concat!(
-            "grill-me\tskilld:mattpocock/skills/grill-me\t227068\t",
+            "grill-me\tskilld:mattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
             "A focused Skill description that wraps cleanly on a narrow terminal.\n"
         )
     );
@@ -278,7 +282,7 @@ fn plain_search_escapes_record_delimiters() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "grill-me\tskilld:mattpocock/skills/grill-me\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\n"
+        "grill-me\tskilld:mattpocock/skills/grill-me\tmattpocock/skills\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\n"
     );
 }
 
@@ -292,6 +296,7 @@ fn human_search_is_polished_and_respects_terminal_width() {
     assert!(stderr.is_empty());
     assert!(stdout.contains("Skill search"));
     assert!(stdout.contains("1 of 14 Skills"));
+    assert!(stdout.contains("mattpocock/skills"));
     assert!(stdout.contains("227,068 stars"));
     assert!(stdout.contains("skilld:mattpocock/skills/grill-me"));
     assert!(stdout.contains("skilld run"));

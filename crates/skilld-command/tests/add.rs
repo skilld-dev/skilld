@@ -145,7 +145,20 @@ fn add_installs_every_skill_the_repository_ref_names() {
     assert_eq!(result.exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "Installed Skill vue.\nInstalled Skill nuxt.\n"
+        concat!(
+            "Installed Skill vue.\n",
+            "vue · vuejs/core @ aaaaaaa\n",
+            "Source: skilld:vuejs/core/vue\n",
+            "Source status: unverified\n",
+            "skilld did not check this source. Read this Skill before you follow it.\n",
+            "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
+            "Installed Skill nuxt.\n",
+            "nuxt · vuejs/core @ aaaaaaa\n",
+            "Source: skilld:vuejs/core/nuxt\n",
+            "Source status: unverified\n",
+            "skilld did not check this source. Read this Skill before you follow it.\n",
+            "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",
+        )
     );
     assert_eq!(host.list(InstallScope::Project).unwrap(), ["nuxt", "vue"]);
     for name in ["vue", "nuxt"] {
