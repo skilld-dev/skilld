@@ -31,17 +31,13 @@ url.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { workspace = true, features = [
-  "crypto-rust",
-  "linux-native-sync-persistent",
-  "vendored",
-] }
+keyring.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { workspace = true, features = [ "apple-native" ] }
+keyring.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { workspace = true, features = [ "windows-native" ] }
+keyring.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

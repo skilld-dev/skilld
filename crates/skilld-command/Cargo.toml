@@ -12,7 +12,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-base64 = "0.22.1"
+base64.workspace = true
 
 clap.workspace = true
 
@@ -30,13 +30,13 @@ tempfile.workspace = true
 
 unicode-width.workspace = true
 
-url = "2.5.7"
+url.workspace = true
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 fs4.workspace = true
 
 [dev-dependencies]
-ed25519-dalek = "2.2.0"
+ed25519-dalek.workspace = true
 
 [lib]
 path = "src/lib.rs"
