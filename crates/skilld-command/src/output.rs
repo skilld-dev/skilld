@@ -1,6 +1,6 @@
 use clap::error::ErrorKind;
 use serde::Serialize;
-use skilld_core::UpdatePlanV1;
+use skilld_core::{ListedSkill, SkillListing, UpdatePlanV1};
 use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
@@ -422,6 +422,17 @@ pub(crate) fn render_run(outcome: &RunOutcome, mode: OutputMode) -> Result<Vec<u
             files_json(skill, origin, source_status, revision.as_deref(), files),
             "Skill run output could not be encoded",
         ),
+        (RunOutcome::Index(listing), OutputMode::JsonV1) => render_json_success(
+            "run",
+            index_json(listing),
+            "Skill run output could not be encoded",
+        ),
+        (RunOutcome::Index(listing), OutputMode::Plain { .. }) => {
+            Ok(render_index_plain(listing).into_bytes())
+        }
+        (RunOutcome::Index(listing), OutputMode::Human { color, .. }) => {
+            Ok(render_index(listing, color).into_bytes())
+        }
         (RunOutcome::Load(skill), _) => {
             Ok(render_load(skill, colored(mode), command_platform(mode)).into_bytes())
         }
@@ -454,6 +465,106 @@ const fn command_platform(mode: OutputMode) -> CommandPlatform {
     match mode {
         OutputMode::Human { platform, .. } | OutputMode::Plain { platform } => platform,
         OutputMode::JsonV1 => unreachable!(),
+    }
+}
+
+/// One line per Skill: the run command, then the description.
+fn render_index(listing: &SkillListing, color: bool) -> String {
+    let reference = sanitize(&listing.reference.canonical());
+    let count = listing.items.len();
+    let noun = if count == 1 { "Skill" } else { "Skills" };
+    let mut out = String::new();
+    out.push_str(&paint(
+        &format!("{reference} names {count} {noun}. skilld loaded none of them."),
+        Role::Emphasis,
+        color,
+    ));
+    out.push_str("\n\n");
+    for item in &listing.items {
+        out.push_str(&paint(&run_command(item), Role::Emphasis, color));
+        if let Some(description) = &item.description {
+            out.push_str("  ");
+            out.push_str(&paint(&sanitize(description), Role::Dim, color));
+        }
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str("Run one command above to load that Skill for this session.\n");
+    out.push_str(&format!(
+        "Install every Skill listed here with {}.\n",
+        paint(
+            &format!("npx skilld add {reference}"),
+            Role::Emphasis,
+            color
+        )
+    ));
+    out
+}
+
+/// Tab separated: name, owner/repository, description, run command.
+fn render_index_plain(listing: &SkillListing) -> String {
+    let mut out = String::new();
+    for item in &listing.items {
+        out.push_str(&escape_plain(&item.name));
+        out.push('\t');
+        out.push_str(&escape_plain(&format!(
+            "{}/{}",
+            item.owner, item.repository
+        )));
+        out.push('\t');
+        out.push_str(&escape_plain(
+            item.description.as_deref().unwrap_or_default(),
+        ));
+        out.push('\t');
+        out.push_str(&escape_plain(&run_command(item)));
+        out.push('\n');
+    }
+    out
+}
+
+fn run_command(item: &ListedSkill) -> String {
+    format!("npx skilld run {}", item.selector())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonIndexedSkill {
+    name: String,
+    owner: String,
+    repository: String,
+    description: Option<String>,
+    selector: String,
+    run_argv: Vec<String>,
+}
+
+fn index_json(listing: &SkillListing) -> JsonRunData {
+    JsonRunData::Index {
+        reference: listing.reference.canonical(),
+        kind: listing.reference.kind(),
+        wrote_skill_files: false,
+        items: listing
+            .items
+            .iter()
+            .map(|item| JsonIndexedSkill {
+                name: item.name.clone(),
+                owner: item.owner.clone(),
+                repository: item.repository.clone(),
+                description: item.description.clone(),
+                selector: item.selector(),
+                run_argv: vec![
+                    "skilld".to_owned(),
+                    "run".to_owned(),
+                    item.selector(),
+                    "--json".to_owned(),
+                ],
+            })
+            .collect(),
+        total: listing.items.len(),
+        add_argv: vec![
+            "skilld".to_owned(),
+            "add".to_owned(),
+            listing.reference.canonical(),
+        ],
     }
 }
 
@@ -836,6 +947,14 @@ enum JsonRunData {
         revision: Option<String>,
         wrote_skill_files: bool,
         files: Vec<JsonPulledFile>,
+    },
+    Index {
+        reference: String,
+        kind: &'static str,
+        wrote_skill_files: bool,
+        items: Vec<JsonIndexedSkill>,
+        total: usize,
+        add_argv: Vec<String>,
     },
 }
 
