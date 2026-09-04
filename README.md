@@ -39,8 +39,6 @@ The `skilld` CLI searches, runs, installs, updates, verifies, and removes Skills
 It contains no Skill generation logic and no Agent runtime.
 Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and the optional [Harness](#harness).
 
-See how skilld compares with skills.sh and Context7: [skilld.dev/vs/skills-sh](https://skilld.dev/vs/skills-sh).
-
 ## Get Started
 
 Install the CLI:
@@ -52,8 +50,8 @@ npm install --global skilld
 Find a Skill, then run it for this session:
 
 ```sh
-skilld search find-skill
-skilld run skilld:skilld-dev/skills/find-skill
+skilld search vue
+skilld run skilld:antfu/skills/vue
 ```
 
 `skilld run` prints `SKILL.md` to stdout and writes no file.
@@ -63,7 +61,7 @@ If you run it yourself, pass the output to your Agent.
 Install the Skill when you want it in every session:
 
 ```sh
-skilld install skilld:skilld-dev/skills/find-skill
+skilld install skilld:antfu/skills/vue
 ```
 
 An install writes files. If an Agent runs the install, it asks you first.
@@ -96,7 +94,7 @@ skilld names the supporting files a Skill carries and prints none of them.
 Read one when the instructions call for it:
 
 ```sh
-skilld run skilld:skilld-dev/skills/find-skill --revision <commit> --file references/api.md
+skilld run skilld:skilld-dev/skills/find-skill --revision <commit> --file agents/openai.yaml
 ```
 
 Use the revision and file-read command from the initial output.
@@ -118,6 +116,14 @@ skilld run <selector> --revision <commit> --file <path>
 # Install a Skill in the current project, or restore the lockfile
 skilld install <selector>
 skilld install
+
+# List every Skill a Repository, curator, or collection names
+skilld run gh:anthropics/skills
+skilld run @harlan-zw
+skilld run @harlan-zw/agent-workflow-stack
+
+# Install every Skill one of those refs names
+skilld add @harlan-zw/agent-workflow-stack
 
 # Inspect installed Skills
 skilld list
@@ -156,6 +162,10 @@ The skilld-maintained Skills:
 
 Direct Skill runs stay user reviewed.
 The instructions and changes stay visible to you.
+
+`skilld run` with a Repository, curator, or collection ref prints an index.
+The index has one line per Skill with its run command. It loads no Skill.
+`skilld add` installs every Skill the same ref names. It accepts the `skilld install` flags.
 
 ## Artifact delivery
 

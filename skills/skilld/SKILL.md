@@ -1,6 +1,6 @@
 ---
 name: skilld
-description: Operate skilld CLI for Skill discovery, use, installation, inspection, updates, authentication, configuration, restoration, and removal.
+description: Operate skilld CLI for Skill discovery, use, installation, inspection, updates, authentication, configuration, restoration, and removal, including Repository, curator, and collection refs.
 ---
 
 # Use skilld CLI
@@ -75,6 +75,25 @@ A `verified` status covers where the Skill came from.
 It does not cover what the instructions ask you to do.
 If the status is `unverified`, tell the user before you follow the Skill.
 
+## List the Skills a Repository, curator, or collection names
+
+skilld.dev prints refs that name several Skills:
+
+- `gh:OWNER/REPOSITORY` names every Skill in one Repository.
+- `@LOGIN` names every Skill in one curator's collections.
+- `@LOGIN/SLUG` names every Skill in one collection.
+
+Run one of these refs to list its Skills:
+
+```sh
+skilld run @LOGIN/SLUG --json
+```
+
+The command prints an index and loads no Skill.
+Read `data.items` for each Skill's `name`, `owner`, `repository`, `description`, and `selector`.
+Run the `data.items[].runArgv` array to load one Skill.
+Pick the Skills the current task needs. Do not run every Skill in the index.
+
 ## Choose the source
 
 Prefer the exact `skilld:` selector returned by Skill search.
@@ -128,6 +147,18 @@ Install this skilld-maintained Skill globally:
 ```sh
 skilld install skilld --global
 ```
+
+Install every Skill a Repository, curator, or collection names:
+
+```sh
+skilld add gh:OWNER/REPOSITORY
+skilld add @LOGIN/SLUG --global
+```
+
+`skilld add` accepts `--global`, `--agent`, and `--mode` like `skilld install`.
+It prints one `Installed Skill` line per Skill.
+Run `skilld run` with the same ref first, then confirm the list with the user.
+`skilld add` with one Skill selector installs that Skill like `skilld install`.
 
 Always use the source selector shown by `skilld search`.
 After installation, report the Skill name, scope, Agent targets, and source status.

@@ -18,9 +18,10 @@ use skilld_command::{
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
     CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, LockedSource, PreparedFile, RemoteError,
-    RemoteSelector, RepositoryVisibility, ResolvedSource, SearchResponse, SignatureAlgorithm,
-    SourceProvider, SourceStatus, TrustedRootPin, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    InstallRequest, InstallScope, InstallSource, ListedSkill, LockedSource, MultiSkillRef,
+    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
+    SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
+    UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -386,6 +387,426 @@ fn search_remote(http: Arc<FakeHttp>) -> SkilldRemote {
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep))
+}
+
+fn listed(owner: &str, repository: &str, name: &str, description: Option<&str>) -> ListedSkill {
+    ListedSkill {
+        name: name.to_owned(),
+        owner: owner.to_owned(),
+        repository: repository.to_owned(),
+        description: description.map(str::to_owned),
+    }
+}
+
+fn registry_page(rows: &[(&str, &str, &str, Option<&str>)]) -> HttpResponse {
+    let items = rows
+        .iter()
+        .map(|(owner, repo, name, description)| {
+            json!({
+                "name": name,
+                "owner": owner,
+                "repo": repo,
+                "description": description,
+                "stars": 12,
+                "registryPath": format!("/gh/{owner}/{repo}/{name}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    response(
+        200,
+        serde_json::to_vec(&json!({ "items": items, "total": items.len(), "page": 1 })).unwrap(),
+    )
+}
+
+fn request_paths(http: &FakeHttp) -> Vec<String> {
+    http.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| {
+            request
+                .url
+                .trim_start_matches("http://127.0.0.1:8787")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_repository_ref_lists_that_repository_from_the_owner_index() {
+    let http = Arc::new(FakeHttp::with([registry_page(&[
+        (
+            "vuejs",
+            "core",
+            "vue",
+            Some("Build Vue interfaces.\nSecond line."),
+        ),
+        ("vuejs", "core", "Not A Skill", Some("dropped: no selector")),
+        ("vuejs", "router", "vue-router", None),
+        ("vuejs", "core", "composition", None),
+    ])]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "composition", None),
+            listed("vuejs", "core", "vue", Some("Build Vue interfaces.")),
+        ]
+    );
+    assert_eq!(request_paths(&http), ["/api/skills?owner=vuejs&limit=200"]);
+}
+
+#[test]
+fn an_owner_index_past_page_one_is_merged_into_the_listing() {
+    let page_one = response(
+        200,
+        serde_json::to_vec(&json!({
+            "items": [{
+                "name": "padding",
+                "owner": "big",
+                "repo": "other",
+                "description": null,
+                "stars": 1,
+                "registryPath": "/gh/big/other/padding",
+            }],
+            "total": 300,
+            "page": 1,
+            "pages": 2,
+        }))
+        .unwrap(),
+    );
+    let page_two = registry_page(&[
+        ("big", "wanted", "zulu", None),
+        ("big", "wanted", "alpha", Some("On page two.")),
+    ]);
+    let http = Arc::new(FakeHttp::with([page_one, page_two]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "big".to_owned(),
+            repository: "wanted".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("big", "wanted", "alpha", Some("On page two.")),
+            listed("big", "wanted", "zulu", None),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/skills?owner=big&limit=200",
+            "/api/skills?owner=big&limit=200&page=2",
+        ]
+    );
+}
+
+/// Serves the same full page for every owner index request, whatever `page`
+/// names, so only a client side page cap can end the listing.
+#[derive(Default)]
+struct RunawayOwnerIndexHttp {
+    requests: Mutex<Vec<String>>,
+}
+
+const RUNAWAY_PAGE_ROWS: usize = 200;
+const RUNAWAY_REQUEST_LIMIT: usize = 25;
+
+impl HttpAdapter for RunawayOwnerIndexHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.url.to_string());
+        assert!(
+            requests.len() <= RUNAWAY_REQUEST_LIMIT,
+            "the owner index kept paging: {} requests issued",
+            requests.len()
+        );
+        let mut page = json!({
+            "items": (0..RUNAWAY_PAGE_ROWS)
+                .map(|_| json!({
+                    "name": "wanted",
+                    "owner": "big",
+                    "repo": "wanted",
+                    "description": null,
+                    "stars": 1,
+                    "registryPath": "/gh/big/wanted/wanted",
+                }))
+                .collect::<Vec<_>>(),
+            "total": 20_000_000,
+        });
+        if requests.len() == 1 {
+            page["pages"] = json!(u64::MAX);
+        }
+        Ok(response(200, serde_json::to_vec(&page).unwrap()))
+    }
+}
+
+#[test]
+fn a_runaway_owner_index_stops_paging_and_lists_each_skill_once() {
+    let http = Arc::new(RunawayOwnerIndexHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "big".to_owned(),
+            repository: "wanted".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [listed("big", "wanted", "wanted", None)]);
+    assert_eq!(http.requests.lock().unwrap().len(), RUNAWAY_REQUEST_LIMIT);
+}
+
+#[test]
+fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "authorLogin": "harlan-zw",
+                "slug": "nuxt",
+                "skills": [
+                    { "position": 0, "owner": "vuejs", "repo": "core", "name": "vue", "reason": "The reactive core." },
+                    { "position": 1, "owner": "nuxt", "repo": "skills", "name": null, "reason": null },
+                    { "position": 2, "owner": "vuejs", "repo": "core", "name": "vue", "reason": "Listed twice." },
+                ]
+            }))
+            .unwrap(),
+        ),
+        registry_page(&[
+            ("nuxt", "skills", "nuxt", Some("Build Nuxt apps.")),
+            ("nuxt", "other", "ignored", None),
+        ]),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "nuxt".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "vue", Some("The reactive core.")),
+            listed("nuxt", "skills", "nuxt", Some("Build Nuxt apps.")),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/collections/by-author/harlan-zw/nuxt",
+            "/api/skills?owner=nuxt&limit=200",
+        ]
+    );
+}
+
+#[test]
+fn a_curator_ref_lists_every_collection_once() {
+    let collection = |name: &str| {
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "skills": [
+                    { "position": 0, "owner": "vuejs", "repo": "core", "name": name, "reason": null },
+                    { "position": 1, "owner": "vuejs", "repo": "core", "name": "shared", "reason": null },
+                ]
+            }))
+            .unwrap(),
+        )
+    };
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "login": "harlan-zw",
+                "collections": [
+                    { "slug": "vue", "name": "Vue", "itemCount": 2 },
+                    { "slug": "nuxt", "name": "Nuxt", "itemCount": 2 },
+                ]
+            }))
+            .unwrap(),
+        ),
+        collection("vue"),
+        collection("nuxt"),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Curator {
+            login: "harlan-zw".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "vue", None),
+            listed("vuejs", "core", "shared", None),
+            listed("vuejs", "core", "nuxt", None),
+        ]
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/curators/harlan-zw",
+            "/api/collections/by-author/harlan-zw/vue",
+            "/api/collections/by-author/harlan-zw/nuxt",
+        ]
+    );
+}
+
+/// Serves a curator payload with 100 collections, answers every collection
+/// detail with one name-less Repository entry, and serves a runaway owner
+/// index to every owner, so only client side caps and memoization can end
+/// the listing.
+#[derive(Default)]
+struct RunawayCuratorHttp {
+    requests: Mutex<Vec<String>>,
+}
+
+const RUNAWAY_CURATOR_COLLECTIONS: usize = 100;
+const RUNAWAY_CURATOR_PAGE_CAP: usize = 25;
+
+/// One curator payload, the capped collection details, and one memoized
+/// owner index fetch for the repeated entry spanning the capped pages.
+const RUNAWAY_CURATOR_REQUEST_LIMIT: usize = 1 + 2 * RUNAWAY_CURATOR_PAGE_CAP;
+
+impl HttpAdapter for RunawayCuratorHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.url.clone());
+        assert!(
+            requests.len() <= RUNAWAY_CURATOR_REQUEST_LIMIT,
+            "the curator listing kept issuing requests: {} requests issued",
+            requests.len()
+        );
+        if request.url.contains("/api/curators/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "login": "curator",
+                    "collections": (0..RUNAWAY_CURATOR_COLLECTIONS)
+                        .map(|index| {
+                            json!({
+                                "slug": format!("collection-{index}"),
+                                "name": format!("Collection {index}"),
+                                "itemCount": 1,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                }))
+                .unwrap(),
+            ));
+        }
+        if request.url.contains("/api/collections/by-author/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "skills": [{
+                        "position": 0,
+                        "owner": "big",
+                        "repo": "wanted",
+                        "name": null,
+                        "reason": null,
+                    }]
+                }))
+                .unwrap(),
+            ));
+        }
+        let page = json!({
+            "items": (0..RUNAWAY_PAGE_ROWS)
+                .map(|_| json!({
+                    "name": "wanted",
+                    "owner": "big",
+                    "repo": "wanted",
+                    "description": null,
+                    "stars": 1,
+                    "registryPath": "/gh/big/wanted/wanted",
+                }))
+                .collect::<Vec<_>>(),
+            "total": 20_000_000,
+            "pages": u64::MAX,
+        });
+        Ok(response(200, serde_json::to_vec(&page).unwrap()))
+    }
+}
+
+#[test]
+fn a_runaway_curator_stops_fanning_out_and_fetches_one_repository_once() {
+    let http = Arc::new(RunawayCuratorHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Curator {
+            login: "curator".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [listed("big", "wanted", "wanted", None)]);
+    assert_eq!(
+        http.requests.lock().unwrap().len(),
+        RUNAWAY_CURATOR_REQUEST_LIMIT
+    );
+}
+
+#[test]
+fn a_missing_collection_is_a_source_not_found_error() {
+    let http = Arc::new(FakeHttp::with([response(
+        404,
+        br#"{"error":true,"statusCode":404,"message":"Collection not found"}"#.to_vec(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "missing".to_owned(),
+        })
+        .unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(
+        error.message,
+        "skilld.dev has no collection @harlan-zw/missing"
+    );
 }
 
 fn skilld_selector() -> RemoteSelector {

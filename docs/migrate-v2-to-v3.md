@@ -93,8 +93,8 @@ It writes project state to `.skills/skilld-lock.yaml`.
 Search first, then run the returned selector:
 
 ```sh
-skilld search find-skill
-skilld run skilld:skilld-dev/skills/find-skill
+skilld search vue
+skilld run skilld:antfu/skills/vue
 ```
 
 Use the exact selector printed by your search result.
@@ -105,7 +105,7 @@ It writes no project files or lockfile state.
 Install the Skill only when you want to keep it:
 
 ```sh
-skilld install skilld:skilld-dev/skills/find-skill
+skilld install skilld:antfu/skills/vue
 ```
 
 An install writes project files and records lockfile state.
@@ -128,6 +128,8 @@ It cannot restore a v2 lockfile.
 | v2 command | v3 replacement |
 | --- | --- |
 | `skilld add <source>` | Run `skilld search`, then `skilld run <selector>` to use it once, or `skilld install <selector>` to keep it |
+| `skilld add gh:OWNER/REPOSITORY`, `skilld add @LOGIN`, `skilld add @LOGIN/SLUG` | Unchanged. `skilld run` with the same ref lists the Skills first |
+| `skilld add npm:PACKAGE` | Not supported. Run `skilld search <package>`, then use the selector |
 | `skilld update [name]` | `skilld update [name]` |
 | `skilld info` | `skilld list`, then `skilld view <name>` |
 | `skilld login` | `skilld auth login` |
