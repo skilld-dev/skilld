@@ -1746,6 +1746,60 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
 }
 
 #[test]
+fn a_public_grant_may_serve_content_from_a_service_subdomain() {
+    let (pin, mut responses) = verified_remote_responses();
+    let mut grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
+    grant["contentUrl"] = json!("https://artifacts.skilld.dev/sha256/example");
+    responses[2] = response(200, serde_json::to_vec(&grant).unwrap());
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("https://skilld.dev")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+
+    let prepared = remote.prepare(&selector, false).unwrap();
+
+    assert!(matches!(
+        prepared.source_status,
+        SourceStatus::Verified { .. }
+    ));
+    let requests = http.requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[3].url,
+        "https://artifacts.skilld.dev/sha256/example"
+    );
+}
+
+#[test]
+fn a_public_grant_on_an_unrelated_origin_is_rejected_before_download() {
+    let (pin, mut responses) = verified_remote_responses();
+    let mut grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
+    grant["contentUrl"] = json!("https://example.com/sha256/example");
+    responses[2] = response(200, serde_json::to_vec(&grant).unwrap());
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("https://skilld.dev")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+
+    let error = remote.prepare(&selector, false).unwrap_err();
+
+    assert_eq!(error.code, "REMOTE_ORIGIN_REJECTED");
+    assert_eq!(http.requests.lock().unwrap().len(), 3);
+}
+
+#[test]
 fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
     let (pin, mut responses) = verified_remote_responses();
     let public_grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
