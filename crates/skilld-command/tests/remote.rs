@@ -1872,7 +1872,11 @@ fn a_direct_github_rate_limit_names_github_and_the_reset_wait() {
     let error = remote.prepare(&selector, true).unwrap_err();
 
     assert_eq!(error.code, "RATE_LIMITED");
-    assert!(error.message.starts_with("GitHub rate limited this request. Retry after "));
+    assert!(
+        error
+            .message
+            .starts_with("GitHub rate limited this request. Retry after ")
+    );
     assert_eq!(http.requests.lock().unwrap().len(), 1);
 }
 
