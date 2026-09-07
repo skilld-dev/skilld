@@ -852,7 +852,10 @@ impl SkilldRemote {
                 continue;
             }
             if !(200..300).contains(&response.status) {
-                return Err(problem_error(&response));
+                return Err(match allowed {
+                    AllowedOrigin::Github => github_error(&response),
+                    AllowedOrigin::Service(_) => problem_error(&response),
+                });
             }
             return Ok(response);
         }
@@ -2484,6 +2487,19 @@ fn problem_error(response: &HttpResponse) -> RemoteError {
             RemoteError::new(problem_code(&problem.code), detail)
         },
     )
+}
+
+fn github_error(response: &HttpResponse) -> RemoteError {
+    if !is_rate_limited(response) {
+        return service_unavailable_error(response);
+    }
+    let detail = match bounded_rate_limit_wait(response) {
+        Some(seconds) => {
+            format!("GitHub rate limited this request. Retry after {seconds} seconds.")
+        }
+        None => "GitHub rate limited this request. Retry in a minute.".to_owned(),
+    };
+    RemoteError::new("RATE_LIMITED", detail)
 }
 
 fn service_unavailable_error(response: &HttpResponse) -> RemoteError {

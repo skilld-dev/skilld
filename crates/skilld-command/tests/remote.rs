@@ -1847,6 +1847,36 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
 }
 
 #[test]
+fn a_direct_github_rate_limit_names_github_and_the_reset_wait() {
+    let reset = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    let mut limited = response(403, br#"{"message":"API rate limit exceeded"}"#.to_vec());
+    limited
+        .headers
+        .insert("x-ratelimit-remaining".to_owned(), "0".to_owned());
+    limited
+        .headers
+        .insert("x-ratelimit-reset".to_owned(), reset.to_string());
+    let http = Arc::new(FakeHttp::with([limited]));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse("github:skilld-dev/skills/skills/example").unwrap();
+
+    let error = remote.prepare(&selector, true).unwrap_err();
+
+    assert_eq!(error.code, "RATE_LIMITED");
+    assert!(error.message.starts_with("GitHub rate limited this request. Retry after "));
+    assert_eq!(http.requests.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn prepare_exact_rejects_a_conflicting_selector_commit_before_http() {
     let selector_commit = "0123456789abcdef0123456789abcdef01234567";
     let expected_commit = CommitSha::parse("ffffffffffffffffffffffffffffffffffffffff").unwrap();
