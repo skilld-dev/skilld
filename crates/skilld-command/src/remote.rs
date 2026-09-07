@@ -2409,9 +2409,7 @@ fn validate_url(url: &Url, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
     }
     let allowed = match allowed {
         AllowedOrigin::Service(base) => same_origin(url, base),
-        AllowedOrigin::Artifact(base) => {
-            same_origin(url, base) || is_https_subdomain_of(url, base)
-        }
+        AllowedOrigin::Artifact(base) => same_origin(url, base) || is_https_subdomain_of(url, base),
         AllowedOrigin::Github => {
             url.scheme() == "https"
                 && url.host_str() == Some("api.github.com")
