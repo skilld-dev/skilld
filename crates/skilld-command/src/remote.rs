@@ -1098,7 +1098,7 @@ impl SkilldRemote {
             body: vec![],
             response_limit: limit,
         };
-        self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))
+        self.execute(request, AllowedOrigin::Artifact(self.endpoint.clone()))
             .map(|response| response.body)
     }
 
@@ -2371,7 +2371,27 @@ fn invalid_update_response() -> RemoteError {
 #[derive(Clone)]
 enum AllowedOrigin {
     Service(Url),
+    /// Artifact bytes come from the service origin or from one of its
+    /// subdomains, such as `artifacts.skilld.dev` for `skilld.dev`.
+    Artifact(Url),
     Github,
+}
+
+fn same_origin(url: &Url, base: &Url) -> bool {
+    url.scheme() == base.scheme()
+        && url.host_str() == base.host_str()
+        && url.port_or_known_default() == base.port_or_known_default()
+}
+
+fn is_https_subdomain_of(url: &Url, base: &Url) -> bool {
+    let (Some(host), Some(base_host)) = (url.host_str(), base.host_str()) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.port().is_none()
+        && host
+            .strip_suffix(base_host)
+            .is_some_and(|prefix| prefix.len() > 1 && prefix.ends_with('.'))
 }
 
 fn validate_request_url(value: &str, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
@@ -2388,11 +2408,8 @@ fn validate_url(url: &Url, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
         ));
     }
     let allowed = match allowed {
-        AllowedOrigin::Service(base) => {
-            url.scheme() == base.scheme()
-                && url.host_str() == base.host_str()
-                && url.port_or_known_default() == base.port_or_known_default()
-        }
+        AllowedOrigin::Service(base) => same_origin(url, base),
+        AllowedOrigin::Artifact(base) => same_origin(url, base) || is_https_subdomain_of(url, base),
         AllowedOrigin::Github => {
             url.scheme() == "https"
                 && url.host_str() == Some("api.github.com")
