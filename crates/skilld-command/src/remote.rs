@@ -854,7 +854,9 @@ impl SkilldRemote {
             if !(200..300).contains(&response.status) {
                 return Err(match allowed {
                     AllowedOrigin::Github => github_error(&response),
-                    AllowedOrigin::Service(_) => problem_error(&response),
+                    AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => {
+                        problem_error(&response)
+                    }
                 });
             }
             return Ok(response);

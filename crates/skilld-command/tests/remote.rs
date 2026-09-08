@@ -1777,6 +1777,49 @@ fn a_public_grant_may_serve_content_from_a_service_subdomain() {
 }
 
 #[test]
+fn artifact_download_errors_preserve_problem_details_and_http_fallbacks() {
+    for (body, code, message) in [
+        (
+            serde_json::to_vec(&json!({
+                "type": "about:blank",
+                "title": "Artifact revoked",
+                "status": 410,
+                "code": "ARTIFACT_REVOKED",
+                "detail": "The artifact was revoked."
+            }))
+            .unwrap(),
+            "ARTIFACT_REVOKED",
+            "The artifact was revoked.",
+        ),
+        (
+            b"Gone".to_vec(),
+            "SERVICE_UNAVAILABLE",
+            "the remote service returned HTTP 410",
+        ),
+    ] {
+        let (pin, mut responses) = verified_remote_responses();
+        let mut grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
+        grant["contentUrl"] = json!("https://artifacts.skilld.dev/sha256/example");
+        responses[2] = response(200, serde_json::to_vec(&grant).unwrap());
+        responses[3] = response(410, body);
+        let remote = SkilldRemote::new(
+            Arc::new(FakeHttp::with(responses)),
+            Arc::new(NoTokenProvider),
+            NativeRemoteConfig::Pinned(pin),
+        )
+        .with_endpoint("https://skilld.dev")
+        .unwrap()
+        .with_sleeper(Arc::new(NoSleep));
+
+        let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+        let error = remote.prepare(&selector, false).unwrap_err();
+
+        assert_eq!(error.code, code);
+        assert_eq!(error.message, message);
+    }
+}
+
+#[test]
 fn a_public_grant_on_an_unrelated_origin_is_rejected_before_download() {
     let (pin, mut responses) = verified_remote_responses();
     let mut grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
