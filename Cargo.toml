@@ -18,7 +18,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 base64 = "0.23.1"
 clap = { version = "4.6.6", features = [ "derive" ] }
-ed25519-dalek = "3.0.1"
+ed25519-dalek = "3.0.0"
 fs4 = "1.1.0"
 getrandom = "0.4.3"
 keyring = { version = "4.2.0", default-features = false, features = [ "v1" ] }
