@@ -94,8 +94,14 @@ pub enum UpgradeWorker {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpgradeNotice {
-    Available { version: String, command: String },
-    Installing { version: String },
+    Available {
+        version: String,
+        command: String,
+    },
+    Installing {
+        version: String,
+        last_error: Option<String>,
+    },
 }
 
 impl UpgradeNotice {
@@ -104,7 +110,17 @@ impl UpgradeNotice {
             Self::Available { version, command } => {
                 format!("skilld {version} is available. Run {command} to upgrade.")
             }
-            Self::Installing { version } => format!(
+            Self::Installing {
+                version,
+                last_error: Some(code),
+            } => format!(
+                "The last upgrade attempt failed: {code}. \
+                 Retrying skilld {version} in the background. Restart skilld to use it."
+            ),
+            Self::Installing {
+                version,
+                last_error: None,
+            } => format!(
                 "Upgrading skilld to {version} in the background. Restart skilld to use it."
             ),
         }
@@ -148,7 +164,8 @@ pub fn plan_upgrade(
             }),
         },
         InstallChannel::Standalone => {
-            let waiting = state.attempted_version.as_deref() == Some(latest)
+            let retry = state.attempted_version.as_deref() == Some(latest);
+            let waiting = retry
                 && state.attempted_at.is_some_and(|attempted| {
                     attempted <= now && now - attempted < RETRY_INTERVAL_SECONDS
                 });
@@ -161,6 +178,11 @@ pub fn plan_upgrade(
                 }),
                 notice: Some(UpgradeNotice::Installing {
                     version: latest.to_owned(),
+                    last_error: if retry {
+                        state.last_error.clone()
+                    } else {
+                        None
+                    },
                 }),
             }
         }

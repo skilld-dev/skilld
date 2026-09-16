@@ -254,6 +254,41 @@ fn the_install_worker_records_a_failed_verification() {
 }
 
 #[test]
+fn a_retry_after_a_failed_upgrade_names_the_previous_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let executable = installed(directory.path());
+    let state = UpgradeState {
+        checked_at: 1_000,
+        latest: Some("3.2.0".to_owned()),
+        attempted_version: Some("3.2.0".to_owned()),
+        attempted_at: Some(1_000),
+        last_error: Some("UPGRADE_DOWNLOAD_FAILED".to_owned()),
+    };
+    fs::write(
+        data.path().join("upgrade.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+
+    let notice = before_command(
+        data.path(),
+        &executable,
+        InstallChannel::Standalone,
+        "3.0.0",
+        5_000,
+    );
+
+    let message = notice
+        .expect("an overdue retry still plans an upgrade")
+        .message();
+    assert!(
+        message.contains("UPGRADE_DOWNLOAD_FAILED"),
+        "the notice must name the previous failure: {message}"
+    );
+}
+
+#[test]
 fn a_known_npm_upgrade_prints_its_notice_without_a_worker() {
     let data = tempfile::tempdir().unwrap();
     let state = UpgradeState {

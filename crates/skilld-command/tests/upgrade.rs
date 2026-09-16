@@ -118,6 +118,43 @@ fn a_recent_failed_upgrade_waits_before_it_retries() {
 }
 
 #[test]
+fn a_retry_after_a_failed_upgrade_names_the_failure_in_its_notice() {
+    let mut failed = state(NOW - 60, Some("3.1.0"));
+    failed.attempted_version = Some("3.1.0".to_owned());
+    failed.attempted_at = Some(NOW - DAY);
+    failed.last_error = Some("UPGRADE_DOWNLOAD_FAILED".to_owned());
+
+    let plan = plan_upgrade("3.0.0", &InstallChannel::Standalone, &failed, NOW);
+
+    assert_eq!(
+        plan.notice.map(|notice| notice.message()),
+        Some(
+            "The last upgrade attempt failed: UPGRADE_DOWNLOAD_FAILED. \
+             Retrying skilld 3.1.0 in the background. Restart skilld to use it."
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_first_install_ignores_a_failure_from_another_version() {
+    let mut failed = state(NOW - 60, Some("3.2.0"));
+    failed.attempted_version = Some("3.1.0".to_owned());
+    failed.attempted_at = Some(NOW - DAY);
+    failed.last_error = Some("UPGRADE_DOWNLOAD_FAILED".to_owned());
+
+    let plan = plan_upgrade("3.0.0", &InstallChannel::Standalone, &failed, NOW);
+
+    assert_eq!(
+        plan.notice,
+        Some(UpgradeNotice::Installing {
+            version: "3.2.0".to_owned(),
+            last_error: None,
+        })
+    );
+}
+
+#[test]
 fn versions_compare_by_number_and_never_downgrade() {
     let channel = InstallChannel::Npm(PackageRunner::Npm);
     for (current, latest, newer) in [
