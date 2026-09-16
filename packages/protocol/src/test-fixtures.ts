@@ -7,7 +7,6 @@
 import type {
   AuditEntry,
   ChangeEntry,
-  CliEventInput,
   CollectionManifest,
   CollectionSummary,
   DevicePollInput,
@@ -104,29 +103,6 @@ export const fixtures = {
       },
     },
   },
-  telemetry: {
-    installEvent: {
-      event: 'install',
-      surface: 'cli:add',
-      sourceKind: 'npm',
-      slug: 'vue',
-      cliVersion: '2.0.0',
-      agent: 'claude-code',
-    },
-    auditFailEvent: {
-      event: 'audit-fail',
-      surface: 'cli:pull',
-      sourceKind: 'gh',
-      slug: 'antfu/skills',
-      cliVersion: '2.0.0',
-    },
-    authFlowEvent: {
-      event: 'auth-flow',
-      surface: 'cli:auth',
-      cliVersion: '2.0.0',
-      flow: 'pkce',
-    },
-  },
   collections: {
     manifest: {
       name: 'My Vue stack',
@@ -196,7 +172,6 @@ export const fixtures = {
     pollPending: DevicePollResponse
     pollAuthorized: DevicePollResponse
   }
-  telemetry: { installEvent: CliEventInput, auditFailEvent: CliEventInput, authFlowEvent: CliEventInput }
   collections: {
     manifest: CollectionManifest
     summary: CollectionSummary

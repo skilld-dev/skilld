@@ -8,7 +8,6 @@ import { fixtures } from '../src/test-fixtures.ts'
 import {
   AuditEntrySchema,
   ChangeEntrySchema,
-  CliEventInputSchema,
   CollectionManifestSchema,
   CollectionSummarySchema,
   DevicePollInputSchema,
@@ -35,9 +34,6 @@ describe('fixture round-trip', () => {
     ['device.startResponse', DeviceStartResponseSchema, fixtures.device.startResponse],
     ['device.pollPending', DevicePollResponseSchema, fixtures.device.pollPending],
     ['device.pollAuthorized', DevicePollResponseSchema, fixtures.device.pollAuthorized],
-    ['telemetry.installEvent', CliEventInputSchema, fixtures.telemetry.installEvent],
-    ['telemetry.auditFailEvent', CliEventInputSchema, fixtures.telemetry.auditFailEvent],
-    ['telemetry.authFlowEvent', CliEventInputSchema, fixtures.telemetry.authFlowEvent],
     ['collections.manifest', CollectionManifestSchema, fixtures.collections.manifest],
     ['collections.summary', CollectionSummarySchema, fixtures.collections.summary],
     ['collections.change', ChangeEntrySchema, fixtures.collections.change],
