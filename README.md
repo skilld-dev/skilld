@@ -41,30 +41,42 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Get Started
 
-Install the CLI:
+Run a Skill once. You need no install and no project files:
 
 ```sh
-npm install --global skilld
-```
-
-Find a Skill, then run it for this session:
-
-```sh
-skilld search vue
-skilld run skilld:antfu/skills/vue
+npx skilld search vue
+npx skilld run skilld:antfu/skills/vue
 ```
 
 `skilld run` prints `SKILL.md` to stdout and writes no file.
 Ask your Agent to run the command and follow the printed instructions.
 If you run it yourself, pass the output to your Agent.
 
-Install the Skill when you want it in every session:
+Install a Skill only when you want it in every session:
 
 ```sh
-skilld install skilld:antfu/skills/vue
+npx skilld install skilld:antfu/skills/vue
 ```
 
 An install writes files. If an Agent runs the install, it asks you first.
+
+### Run or install?
+
+| | `skilld run` | `skilld install` |
+| --- | --- | --- |
+| Use it for | The task in front of you | Every session in this project |
+| Files written | None | `.skills`, the lockfile, and Agent targets |
+| Cleanup | None | `skilld remove` |
+| Updates | Loads the source each time | `skilld update` |
+| Skill scripts | Never printed or executed | On disk for the Skill to use |
+
+Start with `skilld run`. Install when you reach for the same Skill again.
+
+If you use skilld often, install the CLI globally:
+
+```sh
+npm install --global skilld
+```
 
 Teach your Agent the CLI with the skilld-maintained `skilld` Skill:
 
@@ -128,7 +140,7 @@ See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
 # Find a Skill
 skilld search <query>
 
-# Run a Skill for this session only
+# Run a Skill for this session only (start here)
 skilld run <selector>
 
 # Read one supporting file that Skill carries
