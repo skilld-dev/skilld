@@ -1,6 +1,6 @@
 {
   "name": "skilld-cli-win32-arm64-msvc",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Windows arm64 executable for the skilld CLI",
   "license": "MIT",
   "homepage": "https://skilld.dev",
