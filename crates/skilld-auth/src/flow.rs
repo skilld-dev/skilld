@@ -369,16 +369,28 @@ fn exchange_login_token(
 const DEVICE_LABEL_MAX_CHARS: usize = 64;
 
 /// Keeps printable characters and trims the label to the length skilld.dev stores.
+///
+/// skilld.dev caps `device_label` at 64 UTF-16 code units, the length a
+/// JavaScript string counts. Truncate by those units, never splitting a
+/// character.
 fn device_label(value: &str) -> Option<String> {
     let label: String = value
         .chars()
         .filter(|character| !character.is_control())
         .collect::<String>()
         .trim()
-        .chars()
-        .take(DEVICE_LABEL_MAX_CHARS)
-        .collect();
-    let label = label.trim_end().to_owned();
+        .to_owned();
+    let mut end = 0;
+    let mut units = 0;
+    for (index, character) in label.char_indices() {
+        let character_units = character.len_utf16();
+        if units + character_units > DEVICE_LABEL_MAX_CHARS {
+            break;
+        }
+        units += character_units;
+        end = index + character.len_utf8();
+    }
+    let label = label[..end].trim_end().to_owned();
     (!label.is_empty()).then_some(label)
 }
 

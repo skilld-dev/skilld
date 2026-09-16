@@ -888,6 +888,14 @@ fn login_limits_the_device_label_to_64_characters() {
 }
 
 #[test]
+fn login_limits_the_device_label_to_64_utf16_units() {
+    let body = token_body_for_label(&"\u{1f600}".repeat(33));
+    let label = body["device_label"].as_str().expect("device label");
+
+    assert!(label.encode_utf16().count() <= 64);
+}
+
+#[test]
 fn login_omits_a_device_label_with_no_printable_characters() {
     let body = token_body_for_label(" \u{1b}\t");
 
