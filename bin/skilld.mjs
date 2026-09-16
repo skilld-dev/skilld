@@ -3,8 +3,9 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { constants } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { detectLibc, selectArtifact } from '../loader/resolve-artifact.mjs'
+import { detectLauncher, detectLibc, selectArtifact } from '../loader/resolve-artifact.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -33,7 +34,13 @@ async function main() {
 
   const child = spawn(artifact.executable, process.argv.slice(2), {
     cwd: process.cwd(),
-    env: process.env,
+    env: {
+      ...process.env,
+      SKILLD_LAUNCHER: detectLauncher({
+        scriptPath: fileURLToPath(import.meta.url),
+        userAgent: process.env.npm_config_user_agent,
+      }),
+    },
     shell: false,
     stdio: 'inherit',
   })

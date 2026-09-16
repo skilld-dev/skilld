@@ -35,3 +35,21 @@ export async function selectArtifact(runtime, resolvePackage) {
     message: `UNSUPPORTED_HOST: no skilld CLI artifact is installed for ${runtime.platform} ${runtime.arch}`,
   }
 }
+
+/**
+ * Names the package runner that launched the loader, so the CLI prints the
+ * matching upgrade command. `SKILLD_LAUNCHER` only changes that wording.
+ */
+export function detectLauncher({ scriptPath, userAgent }) {
+  const path = scriptPath.replaceAll('\\', '/')
+  if (path.includes('/_npx/'))
+    return 'npx'
+  const agent = userAgent?.split('/')[0]
+  if (agent === 'pnpm' || path.includes('/pnpm/') || path.includes('/.pnpm/'))
+    return 'pnpm'
+  if (agent === 'bun' || path.includes('/.bun/'))
+    return 'bun'
+  if (agent === 'yarn' || path.includes('/yarn/'))
+    return 'yarn'
+  return 'npm'
+}

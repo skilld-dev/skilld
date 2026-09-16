@@ -30,6 +30,8 @@ Every public export, command, error, route, and document uses these terms.
 | Curator | skilld.dev | published route | skilld.dev, skilld CLI | curator |
 | Collection | skilld.dev | published route | skilld.dev, skilld CLI | collection |
 | Multi-skill ref | `skilld run`, `skilld add` | published argument | developer, Agent | ref |
+| CLI upgrade | skilld CLI | published behavior | developer | upgrade |
+| release manifest | GitHub release | published file | skilld CLI, install script | release manifest |
 
 | Identifier | Term |
 | --- | --- |
@@ -321,6 +323,26 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 **Never:** manifest, lock, state file, config.
 
 **Casing:** `lockfile` in prose, `skilld-lock.yaml` for the file name.
+
+### CLI upgrade
+
+**Is:** replacing the skilld CLI executable with a newer release of the skilld CLI.
+
+**Use for:** the upgrade notice, the standalone background upgrade, and `SKILLD_NO_UPGRADE`.
+
+**Never:** update, self-update. `update` means a Skill update.
+
+**Casing:** `upgrade` in sentences.
+
+### release manifest
+
+**Is:** the signed `skilld-release.txt` file that names one skilld CLI version and the SHA-256 digest of each release binary.
+
+**Use for:** what the skilld CLI and `install.sh` verify before they install a release binary.
+
+**Never:** checksums file, SHA256SUMS, lockfile.
+
+**Casing:** `release manifest` in sentences, `skilld-release.txt` for the file name.
 
 ## Banned
 

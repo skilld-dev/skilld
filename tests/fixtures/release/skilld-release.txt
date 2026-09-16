@@ -1,0 +1,4 @@
+skilld-release-v1
+version 9.0.0
+fe8b0aab94144ae78f44154ea2d6e1d1c473ff46ab6c8d4c1e0dd5436da98029  skilld-cli-linux-x64-gnu
+340d600392818df2413382dc7d8325c360d83ea49a262d31760348484bbc10b5  skilld-cli-win32-x64-msvc.exe

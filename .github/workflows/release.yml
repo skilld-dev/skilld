@@ -12,6 +12,7 @@ on:
 env:
   SKILLD_ROOT_KEY_ID: ${{ vars.SKILLD_ROOT_KEY_ID }}
   SKILLD_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_ROOT_PUBLIC_KEY }}
+  SKILLD_RELEASE_PUBLIC_KEY: ${{ vars.SKILLD_RELEASE_PUBLIC_KEY }}
 
 jobs:
   release-plan:
@@ -32,6 +33,10 @@ jobs:
           }
           test -n "$SKILLD_ROOT_PUBLIC_KEY" || {
             echo 'SKILLD_ROOT_PUBLIC_KEY is required.' >&2
+            exit 1
+          }
+          test -n "$SKILLD_RELEASE_PUBLIC_KEY" || {
+            echo 'SKILLD_RELEASE_PUBLIC_KEY is required. Run node scripts/release/release-signing.mjs generate-key.' >&2
             exit 1
           }
       - id: matrix
@@ -143,9 +148,26 @@ jobs:
           test "$actual" = "$expected"
       - name: Pack the root CLI
         run: pnpm pack --pack-destination artifacts
+      - name: Stage signed standalone release
+        env:
+          SKILLD_RELEASE_SIGNING_KEY: ${{ secrets.SKILLD_RELEASE_SIGNING_KEY }}
+        run: node scripts/release/release-signing.mjs stage packages release-assets
       - run: npx changelogithub
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload standalone release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Binaries first: a client treats a release as ready once its signed manifest exists.
+          find release-assets -type f -name 'skilld-cli-*' -print0 \
+            | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            release-assets/skilld-release.txt release-assets/skilld-release.sig
+          sed "s/__SKILLD_RELEASE_PUBLIC_KEY__/$SKILLD_RELEASE_PUBLIC_KEY/" install.sh >release-assets/install.sh
+          grep -q "RELEASE_PUBLIC_KEY=\"$SKILLD_RELEASE_PUBLIC_KEY\"" release-assets/install.sh
+          gh release upload "$GITHUB_REF_NAME" --clobber release-assets/install.sh install.ps1
       - name: Publish native packages
         shell: bash
         run: |

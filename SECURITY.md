@@ -25,6 +25,30 @@ For every Artifact from skilld.dev, the CLI checks:
 If no trusted root key exists, the CLI fails with `TRUSTED_ROOT_UNCONFIGURED`.
 If any check fails, the CLI installs nothing.
 
+## How the CLI upgrades itself
+
+The release workflow signs a release manifest with an Ed25519 release key.
+The release manifest names the CLI version and the SHA-256 digest of each release binary.
+The public release key is compiled into the CLI.
+The private release key exists only as a GitHub Actions secret, in the one step that signs.
+
+A standalone install upgrades itself in the background. Before it replaces the executable, the CLI checks:
+
+- the release manifest signature against the compiled release key
+- that the signed version is the requested version and is newer than the running version
+- the SHA-256 digest of the downloaded binary against the release manifest
+- that the verified binary reports the signed version
+
+If any check fails, the CLI keeps the current executable.
+If the CLI has no compiled release key, it never upgrades itself.
+Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
+
+`install.sh` checks the same signature when OpenSSL supports Ed25519.
+Otherwise, `install.sh` and `install.ps1` trust the HTTPS download and the SHA-256 digest for the first install.
+npm installs never upgrade themselves. They print the upgrade command instead.
+
+## Account credentials
+
 The CLI stores account credentials in the operating system keychain.
 It never writes tokens to environment variables or plain text files.
 

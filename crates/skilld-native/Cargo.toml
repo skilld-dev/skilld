@@ -24,6 +24,8 @@ skilld-core.workspace = true
 
 skilld-ui.workspace = true
 
+serde_json.workspace = true
+
 tempfile.workspace = true
 
 terminal_size.workspace = true
@@ -48,4 +50,10 @@ unicode-width.workspace = true
 nix = { version = "0.31.3", features = [ "term" ] }
 
 [dev-dependencies]
+base64.workspace = true
+
+ed25519-dalek.workspace = true
+
+sha2.workspace = true
+
 skilld-ui.workspace = true

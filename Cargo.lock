@@ -1937,9 +1937,13 @@ dependencies = [
 name = "skilld-native"
 version = "3.0.0"
 dependencies = [
+ "base64",
  "crossterm",
+ "ed25519-dalek",
  "nix",
  "ratatui",
+ "serde_json",
+ "sha2",
  "skilld-auth",
  "skilld-command",
  "skilld-core",

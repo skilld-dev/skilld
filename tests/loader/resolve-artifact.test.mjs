@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'vitest'
 
-import { detectLibc, nativePackage, selectArtifact } from '../../loader/resolve-artifact.mjs'
+import { detectLauncher, detectLibc, nativePackage, selectArtifact } from '../../loader/resolve-artifact.mjs'
 
 it('maps every supported host to one native package', () => {
   assert.deepEqual([
@@ -53,4 +53,15 @@ it('reports a tagged failure without a JavaScript fallback', async () => {
     _tag: 'Unavailable',
     message: 'UNSUPPORTED_HOST: no skilld CLI artifact is installed for linux riscv64',
   })
+})
+
+it('names the package runner that launched the loader', () => {
+  const launcher = (scriptPath, userAgent) => detectLauncher({ scriptPath, userAgent })
+
+  assert.equal(launcher('/home/me/.npm/_npx/1a2b/node_modules/skilld/bin/skilld.mjs', 'npm/11.0.0 node/v24'), 'npx')
+  assert.equal(launcher('C:\\Users\\me\\AppData\\Local\\npm-cache\\_npx\\1a2b\\node_modules\\skilld\\bin\\skilld.mjs'), 'npx')
+  assert.equal(launcher('/home/me/.local/share/pnpm/global/5/node_modules/skilld/bin/skilld.mjs'), 'pnpm')
+  assert.equal(launcher('/home/me/.bun/install/global/node_modules/skilld/bin/skilld.mjs'), 'bun')
+  assert.equal(launcher('/usr/local/lib/node_modules/skilld/bin/skilld.mjs', 'yarn/4.0.0'), 'yarn')
+  assert.equal(launcher('/usr/local/lib/node_modules/skilld/bin/skilld.mjs'), 'npm')
 })

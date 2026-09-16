@@ -101,6 +101,27 @@ Use the revision and file-read command from the initial output.
 skilld never prints executable or binary files.
 A Skill that must run its own script needs an install.
 
+## Install without Node.js
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://github.com/skilld-dev/skilld/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/skilld-dev/skilld/releases/latest/download/install.ps1 | iex
+```
+
+The script installs one native binary to `~/.skilld/bin`.
+That install upgrades itself in the background after it verifies the signed release manifest.
+Restart skilld to use the new version.
+An npm install prints the upgrade command instead.
+Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
+See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
+
 ## Commands
 
 ```sh
