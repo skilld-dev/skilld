@@ -20,7 +20,7 @@ pub enum SkillRef {
 /// A ref that names a set of Skills.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MultiSkillRef {
-    /// Every Skill one GitHub Repository carries: `gh:OWNER/REPOSITORY`.
+    /// Every Skill one GitHub Repository carries: `OWNER/REPOSITORY`.
     Repository { owner: String, repository: String },
     /// Every Skill one curator's collections name: `@LOGIN`.
     Curator { login: String },
@@ -40,7 +40,7 @@ pub struct ListedSkill {
 impl ListedSkill {
     /// The hosted selector `skilld run` and `skilld install` accept.
     pub fn selector(&self) -> String {
-        format!("skilld:{}/{}/{}", self.owner, self.repository, self.name)
+        format!("{}/{}/{}", self.owner, self.repository, self.name)
     }
 }
 
@@ -62,17 +62,28 @@ impl SkillRef {
             return parse_handle(rest).map(Self::Many);
         }
         if let Some(rest) = value.strip_prefix("gh:") {
-            return parse_repository(rest, true).map(Self::Many);
+            return parse_repository(rest, "gh:").map(Self::Many);
         }
         if let Some(rest) = value.strip_prefix("github:")
             && rest.matches('/').count() == 1
         {
-            return parse_repository(rest, false).map(Self::Many);
+            return parse_repository(rest, "github:").map(Self::Many);
         }
         if value.starts_with("npm:") {
             return Err(invalid(
-                "npm: references are not supported. Use gh:OWNER/REPOSITORY for a Repository, or skilld:OWNER/REPOSITORY/SKILL for one Skill.",
+                "npm: references are not supported. Use OWNER/REPOSITORY for a Repository, or OWNER/REPOSITORY/SKILL for one Skill.",
             ));
+        }
+        if is_bare_remote(value)
+            && value
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .split('/')
+                .count()
+                == 2
+        {
+            return parse_repository(value, "").map(Self::Many);
         }
         Ok(Self::Skill(value.to_owned()))
     }
@@ -91,7 +102,7 @@ impl MultiSkillRef {
     /// The shortest form that parses back to this ref.
     pub fn canonical(&self) -> String {
         match self {
-            Self::Repository { owner, repository } => format!("gh:{owner}/{repository}"),
+            Self::Repository { owner, repository } => format!("{owner}/{repository}"),
             Self::Curator { login } => format!("@{login}"),
             Self::Collection { login, slug } => format!("@{login}/{slug}"),
         }
@@ -128,9 +139,19 @@ fn parse_handle(rest: &str) -> Result<MultiSkillRef, RemoteError> {
     }
 }
 
-fn parse_repository(rest: &str, short_prefix: bool) -> Result<MultiSkillRef, RemoteError> {
+/// Whether a value uses the bare `OWNER/REPOSITORY[/SKILL]` form: no scheme prefix,
+/// no local path, and no curator handle.
+pub(crate) fn is_bare_remote(value: &str) -> bool {
+    let head = value.split('#').next().unwrap_or_default();
+    value.contains('/')
+        && !head.contains(':')
+        && !head.contains('\\')
+        && !value.starts_with(['.', '/', '@', '~'])
+}
+
+fn parse_repository(rest: &str, prefix: &str) -> Result<MultiSkillRef, RemoteError> {
     const GUIDANCE: &str =
-        "Use gh:OWNER/REPOSITORY for a Repository, or skilld:OWNER/REPOSITORY/SKILL for one Skill.";
+        "Use OWNER/REPOSITORY for a Repository, or OWNER/REPOSITORY/SKILL for one Skill.";
     if rest.contains('#') {
         return Err(invalid(format!(
             "a Repository reference takes no #reference. {GUIDANCE}"
@@ -143,7 +164,6 @@ fn parse_repository(rest: &str, short_prefix: bool) -> Result<MultiSkillRef, Rem
         .map(|value| value.trim_end_matches(".git"))
         .unwrap_or_default();
     if parts.next().is_some() {
-        let prefix = if short_prefix { "gh:" } else { "github:" };
         return Err(invalid(format!(
             "{prefix}OWNER/REPOSITORY names every Skill in a Repository. {GUIDANCE}"
         )));
@@ -189,6 +209,7 @@ mod tests {
             owner: "skilld-dev".to_owned(),
             repository: "skills".to_owned(),
         };
+        assert_eq!(many("skilld-dev/skills"), repository);
         assert_eq!(many("gh:skilld-dev/skills"), repository);
         assert_eq!(many("gh:skilld-dev/skills.git"), repository);
         assert_eq!(many("github:skilld-dev/skills"), repository);
@@ -210,6 +231,7 @@ mod tests {
     #[test]
     fn single_skill_forms_pass_through_unchanged() {
         for value in [
+            "skilld-dev/skills/vue",
             "skilld:skilld-dev/skills/vue",
             "github:skilld-dev/skilld/skills/skilld",
             "github:skilld-dev/skilld/skills/skilld#branch:main",
@@ -233,6 +255,8 @@ mod tests {
                 "names every Skill in a Repository",
             ),
             ("gh:skilld-dev", "owner or name is invalid"),
+            ("skilld-dev/skills#branch:main", "takes no #reference"),
+            ("-bad/skills", "owner or name is invalid"),
             ("gh:skilld-dev/skills#branch:main", "takes no #reference"),
             (
                 "github:skilld-dev/skills#branch:main",
@@ -259,9 +283,10 @@ mod tests {
 
     #[test]
     fn canonical_forms_round_trip() {
-        for value in ["gh:skilld-dev/skills", "@harlan-zw", "@harlan-zw/nuxt"] {
+        for value in ["skilld-dev/skills", "@harlan-zw", "@harlan-zw/nuxt"] {
             assert_eq!(many(value).canonical(), value);
         }
-        assert_eq!(many("github:a/b").canonical(), "gh:a/b");
+        assert_eq!(many("github:a/b").canonical(), "a/b");
+        assert_eq!(many("gh:a/b").canonical(), "a/b");
     }
 }

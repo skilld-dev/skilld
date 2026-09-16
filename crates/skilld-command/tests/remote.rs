@@ -810,7 +810,7 @@ fn a_missing_collection_is_a_source_not_found_error() {
 }
 
 fn skilld_selector() -> RemoteSelector {
-    RemoteSelector::parse("skilld:skilld-dev/skilld/skilld").unwrap()
+    RemoteSelector::parse("skilld-dev/skilld/skilld").unwrap()
 }
 
 #[test]
@@ -1536,7 +1536,7 @@ fn an_unknown_pending_stage_does_not_abort_the_resolution() {
     .unwrap()
     .with_sleeper(Arc::new(NoSleep))
     .with_progress(progress.clone());
-    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
 
     let prepared = remote.prepare(&selector, false).unwrap();
 
@@ -1727,7 +1727,7 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep));
-    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
 
     let prepared = remote.prepare(&selector, false).unwrap();
 
@@ -1760,7 +1760,7 @@ fn a_public_grant_may_serve_content_from_a_service_subdomain() {
     .with_endpoint("https://skilld.dev")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep));
-    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
 
     let prepared = remote.prepare(&selector, false).unwrap();
 
@@ -1811,7 +1811,7 @@ fn artifact_download_errors_preserve_problem_details_and_http_fallbacks() {
         .unwrap()
         .with_sleeper(Arc::new(NoSleep));
 
-        let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+        let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
         let error = remote.prepare(&selector, false).unwrap_err();
 
         assert_eq!(error.code, code);
@@ -1834,7 +1834,7 @@ fn a_public_grant_on_an_unrelated_origin_is_rejected_before_download() {
     .with_endpoint("https://skilld.dev")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep));
-    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
 
     let error = remote.prepare(&selector, false).unwrap_err();
 
@@ -1870,7 +1870,7 @@ fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
 
     remote
         .prepare(
-            &RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap(),
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
             false,
         )
         .unwrap();
@@ -2073,7 +2073,7 @@ fn direct_install_error_gives_an_agent_an_exact_recovery() {
         Arc::new(NoTokenProvider),
         NativeRemoteConfig::Unconfigured,
     );
-    let selector = RemoteSelector::parse("skilld:skilld-dev/skills/example").unwrap();
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
 
     let error = remote.prepare(&selector, true).unwrap_err();
 
@@ -2464,7 +2464,7 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
     for name in ["alpha", "beta"] {
         host.install_request(InstallRequest {
             operation: InstallOperation::Install(InstallSource::Remote(format!(
-                "skilld:skilld-dev/skills/{name}"
+                "skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
@@ -2514,7 +2514,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
     for name in ["alpha", "beta"] {
         host.install_request(InstallRequest {
             operation: InstallOperation::Install(InstallSource::Remote(format!(
-                "skilld:skilld-dev/skills/{name}"
+                "skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
@@ -2559,7 +2559,7 @@ fn plain_update_rejects_a_source_that_moved_behind() {
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
         operation: InstallOperation::Install(InstallSource::Remote(
-            "skilld:skilld-dev/skills/alpha".to_owned(),
+            "skilld-dev/skills/alpha".to_owned(),
         )),
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
@@ -2611,7 +2611,7 @@ fn selected_skill_update_commits_only_the_exact_subset() {
     for name in ["alpha", "beta", "gamma"] {
         host.install_request(InstallRequest {
             operation: InstallOperation::Install(InstallSource::Remote(format!(
-                "skilld:skilld-dev/skills/{name}"
+                "skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
@@ -2689,7 +2689,7 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
     for name in ["alpha", "beta", "gamma"] {
         host.install_request(InstallRequest {
             operation: InstallOperation::Install(InstallSource::Remote(format!(
-                "skilld:skilld-dev/skills/{name}"
+                "skilld-dev/skills/{name}"
             ))),
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
@@ -2730,7 +2730,7 @@ fn selected_skill_update_rejects_a_head_that_changed_after_review() {
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
         operation: InstallOperation::Install(InstallSource::Remote(
-            "skilld:skilld-dev/skills/alpha".to_owned(),
+            "skilld-dev/skills/alpha".to_owned(),
         )),
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
@@ -2762,7 +2762,7 @@ fn verify_reports_changed_bytes_and_stale_sources() {
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
         operation: InstallOperation::Install(InstallSource::Remote(
-            "skilld:skilld-dev/skills/example".to_owned(),
+            "skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
@@ -2794,7 +2794,7 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
     let host = LocalHost::new(project.clone(), data).with_remote_provider(provider.clone());
     let request = InstallRequest {
         operation: InstallOperation::Install(InstallSource::Remote(
-            "skilld:skilld-dev/skills/example".to_owned(),
+            "skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
@@ -2839,7 +2839,7 @@ fn update_check_carries_the_exact_comparison_and_commit_history() {
         .with_remote_provider(provider.clone());
     host.install_request(InstallRequest {
         operation: InstallOperation::Install(InstallSource::Remote(
-            "skilld:skilld-dev/skills/example".to_owned(),
+            "skilld-dev/skills/example".to_owned(),
         )),
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
@@ -2926,7 +2926,7 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
         [
             "skilld",
             "install",
-            "skilld:skilld-dev/skills/example",
+            "skilld-dev/skills/example",
             "--agent",
             "codex",
         ],
@@ -2941,7 +2941,7 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
         concat!(
             "Installed Skill example.\n",
             "example · skilld-dev/skills @ 0123456\n",
-            "Source: skilld:skilld-dev/skills/example\n",
+            "Source: skilld-dev/skills/example\n",
             "Source status: verified\n",
             "skilld checked where this Skill came from, not what it asks you to do.\n",
             "Read it before you follow it.\n",
@@ -3129,7 +3129,7 @@ fn cli_verified_restore_keeps_artifact_delivery() {
             [
                 "skilld",
                 "install",
-                "skilld:skilld-dev/skills/example",
+                "skilld-dev/skills/example",
                 "--agent",
                 "codex",
             ],
@@ -3158,7 +3158,7 @@ fn cli_verified_restore_keeps_artifact_delivery() {
         concat!(
             "Installed Skill example.\n",
             "example · skilld-dev/skills @ 0123456\n",
-            "Source: skilld:skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
+            "Source: skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
             "Source status: verified\n",
             "skilld checked where this Skill came from, not what it asks you to do.\n",
             "Read it before you follow it.\n",
@@ -3169,9 +3169,9 @@ fn cli_verified_restore_keeps_artifact_delivery() {
     assert_eq!(
         *provider.prepares.lock().unwrap(),
         [
-            ("skilld:skilld-dev/skills/example".to_owned(), false),
+            ("skilld-dev/skills/example".to_owned(), false),
             (
-                "skilld:skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567"
+                "skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567"
                     .to_owned(),
                 false
             )
@@ -3182,4 +3182,64 @@ fn cli_verified_restore_keeps_artifact_delivery() {
         view.skill.source_status,
         SourceStatus::Verified { .. }
     ));
+}
+
+#[test]
+fn cli_restores_a_lockfile_that_records_the_legacy_skilld_prefix() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = provider("---\nname: example\ndescription: verified\n---\n");
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run(
+            [
+                "skilld",
+                "install",
+                "skilld-dev/skills/example",
+                "--agent",
+                "codex"
+            ],
+            &host,
+            &mut stdout,
+            &mut stderr,
+        )
+        .exit_code,
+        0
+    );
+    // A 3.0 lockfile spells the same source with the skilld: prefix.
+    let lockfile = project.join(".skills/skilld-lock.yaml");
+    let legacy = fs::read_to_string(&lockfile).unwrap().replace(
+        "\"skilld-dev/skills/example",
+        "\"skilld:skilld-dev/skills/example",
+    );
+    assert!(legacy.contains("\"skilld:skilld-dev/skills/example"));
+    fs::write(&lockfile, legacy).unwrap();
+    fs::remove_dir_all(project.join(".skills/example")).unwrap();
+    fs::remove_dir_all(project.join(".agents")).unwrap();
+    stdout.clear();
+    stderr.clear();
+
+    let restored = run(
+        ["skilld", "install", "--agent", "codex"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(
+        restored.exit_code,
+        0,
+        "{}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(project.join(".skills/example/SKILL.md").is_file());
+    assert!(
+        String::from_utf8(stdout)
+            .unwrap()
+            .contains("Source: skilld-dev/skills/example#commit:")
+    );
 }

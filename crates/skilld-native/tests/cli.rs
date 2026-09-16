@@ -155,9 +155,7 @@ fn active_agent_signal_uses_plain_output_in_a_terminal() {
     let output = run_output_probe_in_pty(("AGENT_SESSION_ID", "test-session"), 40);
 
     assert!(
-        output.contains(
-            "output-probe\tskilld:skilld-dev/skilld/output-probe\tskilld-dev/skilld\t1\t"
-        )
+        output.contains("output-probe\tskilld-dev/skilld/output-probe\tskilld-dev/skilld\t1\t")
     );
     assert!(!output.contains("Skill search"));
 }
@@ -168,7 +166,7 @@ fn config_directory_alone_keeps_human_output_in_a_terminal() {
     let output = run_output_probe_in_pty(("CLAUDE_CONFIG_DIR", "/tmp/claude-config"), 40);
 
     assert!(output.contains("Skill search output"));
-    assert!(output.contains("skilld run skilld:skilld-dev/skilld/output-probe"));
+    assert!(output.contains("skilld run skilld-dev/skilld/output-probe"));
     assert!(
         output
             .lines()
@@ -199,7 +197,7 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
     assert!(output.stderr.is_empty());
     let help = String::from_utf8(output.stdout).unwrap();
     for guidance in [
-        "skilld:OWNER/REPOSITORY/SKILL",
+        "OWNER/REPOSITORY/SKILL",
         "github:OWNER/REPOSITORY/SKILL_PATH",
         "github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH",
         "github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG",
@@ -218,7 +216,7 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "A direct install records the unverified source status.",
         "Run skilld install without SOURCE to restore .skills/skilld-lock.yaml.",
         "Verified remote Skills restore the exact locked Git commit.",
-        "skilld install skilld:skilld-dev/skills/find-skill --agent codex",
+        "skilld install skilld-dev/skills/find-skill --agent codex",
         "skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex",
     ] {
         assert!(help.contains(guidance), "missing help guidance: {guidance}");
@@ -278,7 +276,7 @@ fn direct_hosted_source_error_gives_an_agent_an_exact_recovery() {
         &home,
         &[
             "install",
-            "skilld:skilld-dev/skills/find-skill",
+            "skilld-dev/skills/find-skill",
             "--direct",
             "--agent",
             "codex",

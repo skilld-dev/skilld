@@ -45,7 +45,7 @@ Run a Skill once. You need no install and no project files:
 
 ```sh
 npx skilld search vue
-npx skilld run skilld:antfu/skills/vue
+npx skilld run antfu/skills/vue
 ```
 
 `skilld run` prints `SKILL.md` to stdout and writes no file.
@@ -55,7 +55,7 @@ If you run it yourself, pass the output to your Agent.
 Install a Skill only when you want it in every session:
 
 ```sh
-npx skilld install skilld:antfu/skills/vue
+npx skilld install antfu/skills/vue
 ```
 
 An install writes files. If an Agent runs the install, it asks you first.
@@ -96,8 +96,10 @@ skilld install skilld -g --agent all
 
 ### Selectors
 
-`skilld:OWNER/REPOSITORY/SKILL` names one Skill in the registry.
+`OWNER/REPOSITORY/SKILL` names one Skill in the registry.
+`OWNER/REPOSITORY` names every Skill in one Repository.
 `skilld search` prints the selector for each result.
+skilld 3.0 printed `skilld:OWNER/REPOSITORY/SKILL` and `gh:OWNER/REPOSITORY`. The CLI still accepts both.
 `skilld-dev/skills` is the Repository; `find-skill` is the Skill directory inside it.
 
 ### Supporting files
@@ -106,7 +108,7 @@ skilld names the supporting files a Skill carries and prints none of them.
 Read one when the instructions call for it:
 
 ```sh
-skilld run skilld:skilld-dev/skills/find-skill --revision <commit> --file agents/openai.yaml
+skilld run skilld-dev/skills/find-skill --revision <commit> --file agents/openai.yaml
 ```
 
 Use the revision and file-read command from the initial output.
@@ -151,7 +153,7 @@ skilld install <selector>
 skilld install
 
 # List every Skill a Repository, curator, or collection names
-skilld run gh:anthropics/skills
+skilld run anthropics/skills
 skilld run @harlan-zw
 skilld run @harlan-zw/agent-workflow-stack
 

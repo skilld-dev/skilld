@@ -76,8 +76,8 @@ enum Command {
     Search { query: Vec<String> },
     /// Install a Skill, or restore the Skills in your lockfile.
     #[command(
-        long_about = "Install a Skill, or restore the Skills in your lockfile.\n\nGive SOURCE as:\n  skilld:OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
-        after_long_help = "Examples:\n  skilld install skilld:skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
+        long_about = "Install a Skill, or restore the Skills in your lockfile.\n\nGive SOURCE as:\n  OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
+        after_long_help = "Examples:\n  skilld install skilld-dev/skills/find-skill --agent codex\n  skilld install github:skilld-dev/skilld/skills/skilld --direct --agent codex\n  skilld install"
     )]
     Install {
         /// The Skill source to install. Omit SOURCE to restore .skills/skilld-lock.yaml.
@@ -109,8 +109,8 @@ enum Command {
     },
     /// Install every Skill a Repository, curator, or collection names.
     #[command(
-        long_about = "Install every Skill a Repository, curator, or collection names.\n\nGive REF as:\n  gh:OWNER/REPOSITORY\n      Install every Skill the Repository carries.\n  @LOGIN\n      Install every Skill the curator's collections name.\n  @LOGIN/SLUG\n      Install every Skill one collection names.\n  Any SOURCE skilld install accepts\n      Install that one Skill.\n\nEach Skill installs through the same hosted Artifact path skilld install uses.\nRun skilld run REF first to see the Skills a ref names.",
-        after_long_help = "Examples:\n  npx skilld add gh:skilld-dev/skills\n  npx skilld add @harlan-zw/nuxt --agent codex\n  npx skilld add skilld:skilld-dev/skills/vue --global"
+        long_about = "Install every Skill a Repository, curator, or collection names.\n\nGive REF as:\n  OWNER/REPOSITORY\n      Install every Skill the Repository carries.\n  @LOGIN\n      Install every Skill the curator's collections name.\n  @LOGIN/SLUG\n      Install every Skill one collection names.\n  Any SOURCE skilld install accepts\n      Install that one Skill.\n\nEach Skill installs through the same hosted Artifact path skilld install uses.\nRun skilld run REF first to see the Skills a ref names.",
+        after_long_help = "Examples:\n  npx skilld add skilld-dev/skills\n  npx skilld add @harlan-zw/nuxt --agent codex\n  npx skilld add skilld-dev/skills/vue --global"
     )]
     Add {
         /// The Repository, curator, collection, or Skill source to install.
@@ -141,8 +141,8 @@ enum Command {
     },
     /// Load a Skill for this session without installing it.
     #[command(
-        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.\n\nGive a ref that names several Skills to list them instead:\n  gh:OWNER/REPOSITORY, @LOGIN, or @LOGIN/SLUG\nskilld prints one line per Skill with its run command and loads none of them.",
-        after_long_help = "Examples:\n  npx skilld run skilld:skilld-dev/skills/find-skill\n  npx skilld run gh:skilld-dev/skills\n  npx skilld run @harlan-zw/nuxt\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
+        long_about = "Load a Skill for this session without installing it.\n\nskilld run prints SKILL.md so the calling Agent follows it now.\nA remote run retains no Skill files. It creates no lockfile entry, Agent target,\nor project file.\n\nskilld names the supporting files and prints none of them.\nUse --file to read one. Remote file reads also require the returned --revision.\nUse skilld install to put supporting files on disk.\n\nGive SOURCE in the same forms skilld install accepts.\n\nGive a ref that names several Skills to list them instead:\n  OWNER/REPOSITORY, @LOGIN, or @LOGIN/SLUG\nskilld prints one line per Skill with its run command and loads none of them.",
+        after_long_help = "Examples:\n  npx skilld run skilld-dev/skills/find-skill\n  npx skilld run skilld-dev/skills\n  npx skilld run @harlan-zw/nuxt\n  skilld run ./skills/my-skill --file references/api.md\n  skilld run github:skilld-dev/skilld/skills/skilld --direct\n  skilld run ./skills/my-skill"
     )]
     Run {
         /// The Skill source to load, or a ref that names several Skills.
@@ -3517,8 +3517,8 @@ mod tests {
         assert_eq!(exit, 0, "{stderr}");
         assert_eq!(
             stdout,
-            "vue\tskilld-dev/skills\tBuild Vue interfaces.\tnpx skilld run skilld:skilld-dev/skills/vue\n\
-             nuxt\tskilld-dev/skills\t\tnpx skilld run skilld:skilld-dev/skills/nuxt\n"
+            "vue\tskilld-dev/skills\tBuild Vue interfaces.\tnpx skilld run skilld-dev/skills/vue\n\
+             nuxt\tskilld-dev/skills\t\tnpx skilld run skilld-dev/skills/nuxt\n"
         );
         assert!(host.requests().is_empty(), "run must install nothing");
     }
@@ -3526,24 +3526,23 @@ mod tests {
     #[test]
     fn run_index_json_names_every_skill_and_its_run_command() {
         let host = ListingHost::new();
-        let (exit, stdout, _) =
-            run_plain(&host, &["skilld", "run", "gh:skilld-dev/skills", "--json"]);
+        let (exit, stdout, _) = run_plain(&host, &["skilld", "run", "skilld-dev/skills", "--json"]);
 
         assert_eq!(exit, 0);
         let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         assert_eq!(json["command"], "run");
         assert_eq!(json["data"]["_tag"], "index");
         assert_eq!(json["data"]["kind"], "repository");
-        assert_eq!(json["data"]["reference"], "gh:skilld-dev/skills");
+        assert_eq!(json["data"]["reference"], "skilld-dev/skills");
         assert_eq!(json["data"]["wroteSkillFiles"], false);
         assert_eq!(json["data"]["total"], 2);
         assert_eq!(
             json["data"]["items"][0]["selector"],
-            "skilld:skilld-dev/skills/vue"
+            "skilld-dev/skills/vue"
         );
         assert_eq!(
             json["data"]["items"][0]["runArgv"],
-            serde_json::json!(["skilld", "run", "skilld:skilld-dev/skills/vue", "--json"])
+            serde_json::json!(["skilld", "run", "skilld-dev/skills/vue", "--json"])
         );
         assert_eq!(
             json["data"]["items"][1]["description"],
@@ -3551,7 +3550,7 @@ mod tests {
         );
         assert_eq!(
             json["data"]["addArgv"],
-            serde_json::json!(["skilld", "add", "gh:skilld-dev/skills"])
+            serde_json::json!(["skilld", "add", "skilld-dev/skills"])
         );
     }
 
@@ -3576,11 +3575,11 @@ mod tests {
             empty: true,
             ..ListingHost::new()
         };
-        let (exit, stdout, stderr) = run_plain(&empty, &["skilld", "run", "gh:skilld-dev/empty"]);
+        let (exit, stdout, stderr) = run_plain(&empty, &["skilld", "run", "skilld-dev/empty"]);
         assert_eq!((exit, stdout.as_str()), (1, ""));
         assert_eq!(
             stderr,
-            "SOURCE_NOT_FOUND: gh:skilld-dev/empty names no Skills that skilld.dev lists\n"
+            "SOURCE_NOT_FOUND: skilld-dev/empty names no Skills that skilld.dev lists\n"
         );
     }
 
@@ -3592,7 +3591,7 @@ mod tests {
             &[
                 "skilld",
                 "add",
-                "gh:skilld-dev/skills",
+                "skilld-dev/skills",
                 "--global",
                 "--agent",
                 "codex",
@@ -3607,14 +3606,14 @@ mod tests {
             concat!(
                 "Installed Skill vue.\n",
                 "vue · skilld-dev/skills @ aaaaaaa\n",
-                "Source: skilld:skilld-dev/skills/vue\n",
+                "Source: skilld-dev/skills/vue\n",
                 "Source status: verified\n",
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
                 "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
                 "Installed Skill nuxt.\n",
                 "nuxt · skilld-dev/skills @ aaaaaaa\n",
-                "Source: skilld:skilld-dev/skills/nuxt\n",
+                "Source: skilld-dev/skills/nuxt\n",
                 "Source status: verified\n",
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
@@ -3623,10 +3622,10 @@ mod tests {
         );
         let requests = host.requests();
         assert_eq!(requests.len(), 2);
-        for (request, selector) in requests.iter().zip([
-            "skilld:skilld-dev/skills/vue",
-            "skilld:skilld-dev/skills/nuxt",
-        ]) {
+        for (request, selector) in requests
+            .iter()
+            .zip(["skilld-dev/skills/vue", "skilld-dev/skills/nuxt"])
+        {
             assert_eq!(
                 request.operation,
                 InstallOperation::Install(InstallSource::Remote(selector.to_owned()))
@@ -3640,8 +3639,7 @@ mod tests {
     #[test]
     fn add_with_one_skill_source_installs_like_install() {
         let host = ListingHost::new();
-        let (exit, stdout, stderr) =
-            run_plain(&host, &["skilld", "add", "skilld:skilld-dev/skills/vue"]);
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "add", "skilld-dev/skills/vue"]);
 
         assert_eq!(exit, 0, "{stderr}");
         assert_eq!(
@@ -3649,7 +3647,7 @@ mod tests {
             concat!(
                 "Installed Skill vue.\n",
                 "vue · skilld-dev/skills @ aaaaaaa\n",
-                "Source: skilld:skilld-dev/skills/vue\n",
+                "Source: skilld-dev/skills/vue\n",
                 "Source status: verified\n",
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
@@ -3658,9 +3656,7 @@ mod tests {
         );
         assert_eq!(
             host.requests()[0].operation,
-            InstallOperation::Install(InstallSource::Remote(
-                "skilld:skilld-dev/skills/vue".to_owned()
-            ))
+            InstallOperation::Install(InstallSource::Remote("skilld-dev/skills/vue".to_owned()))
         );
     }
 

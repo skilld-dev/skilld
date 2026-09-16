@@ -79,7 +79,7 @@ If the status is `unverified`, tell the user before you follow the Skill.
 
 skilld.dev prints refs that name several Skills:
 
-- `gh:OWNER/REPOSITORY` names every Skill in one Repository.
+- `OWNER/REPOSITORY` names every Skill in one Repository.
 - `@LOGIN` names every Skill in one curator's collections.
 - `@LOGIN/SLUG` names every Skill in one collection.
 
@@ -96,7 +96,7 @@ Pick the Skills the current task needs. Do not run every Skill in the index.
 
 ## Choose the source
 
-Prefer the exact `skilld:` selector returned by Skill search.
+Prefer the exact `OWNER/REPOSITORY/SKILL` selector returned by Skill search.
 Hosted selectors use immutable artifact delivery from an exact Git commit.
 
 Use a local path only for a Skill the user already controls:
@@ -151,7 +151,7 @@ skilld install skilld --global
 Install every Skill a Repository, curator, or collection names:
 
 ```sh
-skilld add gh:OWNER/REPOSITORY
+skilld add OWNER/REPOSITORY
 skilld add @LOGIN/SLUG --global
 ```
 

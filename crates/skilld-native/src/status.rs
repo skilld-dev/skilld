@@ -422,9 +422,9 @@ mod tests {
         assert_eq!(status_label(args), None);
         let args = ["skilld", "search", "hi"];
         assert_eq!(status_label(args), Some("Searching"));
-        let args = ["skilld", "install", "skilld:owner/repo/skill"];
+        let args = ["skilld", "install", "owner/repo/skill"];
         assert_eq!(status_label(args), Some("Installing"));
-        let args = ["skilld", "run", "skilld:owner/repo/skill"];
+        let args = ["skilld", "run", "owner/repo/skill"];
         assert_eq!(status_label(args), Some("Loading"));
         let args = ["skilld", "list"];
         assert_eq!(status_label(args), None);

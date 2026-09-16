@@ -40,7 +40,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld run --file` | supporting file read |
 | `skilld install` | Skill install |
 | `skilld add` | multi-skill install |
-| `skilld run gh:OWNER/REPOSITORY` | Skill index |
+| `skilld run OWNER/REPOSITORY` | Skill index |
 | `skilld list` | installed Skills |
 | `skilld view` | Skill details |
 | `skilld remove` | Skill removal |
@@ -256,7 +256,7 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 
 ### Multi-skill ref
 
-**Is:** one `skilld run` or `skilld add` argument that names more than one Skill: `gh:OWNER/REPOSITORY`, `@LOGIN`, or `@LOGIN/SLUG`.
+**Is:** one `skilld run` or `skilld add` argument that names more than one Skill: `OWNER/REPOSITORY`, `@LOGIN`, or `@LOGIN/SLUG`.
 
 **Use for:** the argument grammar and its index output.
 

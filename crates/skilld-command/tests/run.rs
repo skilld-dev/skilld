@@ -44,7 +44,7 @@ impl StubRemote {
         PreparedRemoteSkill {
             files: self.files.clone(),
             locked_source: LockedSource::Remote {
-                source: "skilld:vuejs/core/vue".to_owned(),
+                source: "vuejs/core/vue".to_owned(),
                 commit_sha,
                 skill_path: self.skill_path.clone(),
             },
@@ -194,7 +194,7 @@ fn run_cli_on<H: Host>(
 fn load(host: &LocalHost) -> Box<skilld_command::TransientSkill> {
     match host
         .run_skill(
-            InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
+            InstallSource::Remote("vuejs/core/vue".to_owned()),
             &[],
             None,
         )
@@ -212,7 +212,7 @@ fn pull(host: &LocalHost, wanted: &[&str]) -> Vec<skilld_command::PulledFile> {
         .collect::<Vec<_>>();
     match host
         .run_skill(
-            InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
+            InstallSource::Remote("vuejs/core/vue".to_owned()),
             &wanted,
             Some(&CommitSha::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap()),
         )
@@ -266,7 +266,7 @@ fn a_remote_run_names_supporting_files_without_printing_them() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -333,7 +333,7 @@ fn pulling_an_unknown_file_fails() {
     let error = fixture
         .host
         .run_skill(
-            InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
+            InstallSource::Remote("vuejs/core/vue".to_owned()),
             &["references/nope.md".to_owned()],
             Some(&CommitSha::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap()),
         )
@@ -639,7 +639,7 @@ fn skill_md_is_not_a_pullable_file() {
     let error = fixture
         .host
         .run_skill(
-            InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
+            InstallSource::Remote("vuejs/core/vue".to_owned()),
             &["SKILL.md".to_owned()],
             Some(&CommitSha::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap()),
         )
@@ -656,7 +656,7 @@ fn generated_file_read_uses_the_loaded_remote_revision() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -756,7 +756,7 @@ fn remote_file_read_without_revision_fails_before_fetch() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--file".to_owned(),
             "references/api.md".to_owned(),
             "--json".to_owned(),
@@ -777,7 +777,7 @@ fn remote_file_read_without_revision_fails_before_fetch() {
     let error = fixture
         .host
         .run_skill(
-            InstallSource::Remote("skilld:vuejs/core/vue".to_owned()),
+            InstallSource::Remote("vuejs/core/vue".to_owned()),
             &["references/api.md".to_owned()],
             None,
         )
@@ -796,7 +796,7 @@ fn remote_run_rejects_a_hash_in_the_attested_skill_path() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -816,7 +816,7 @@ fn json_run_is_compact_typed_and_uses_argument_arrays() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -869,7 +869,7 @@ fn remote_install_guidance_pins_the_reviewed_path_and_commit() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
         ],
     );
     let (_, json, json_error) = run_cli(
@@ -1091,7 +1091,7 @@ fn plain_run_removes_terminal_formatting_but_json_preserves_text() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
         ],
     );
     let (_, pulled_plain, _) = run_cli(
@@ -1099,7 +1099,7 @@ fn plain_run_removes_terminal_formatting_but_json_preserves_text() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             "--file".to_owned(),
@@ -1111,7 +1111,7 @@ fn plain_run_removes_terminal_formatting_but_json_preserves_text() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -1121,7 +1121,7 @@ fn plain_run_removes_terminal_formatting_but_json_preserves_text() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             "--file".to_owned(),
@@ -1155,7 +1155,7 @@ fn a_plain_file_read_reports_provenance_and_unverified_status() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             "--file".to_owned(),
@@ -1164,7 +1164,7 @@ fn a_plain_file_read_reports_provenance_and_unverified_status() {
     );
 
     assert!(stderr.is_empty());
-    assert!(stdout.contains("Source: skilld:vuejs/core/vue\n"));
+    assert!(stdout.contains("Source: vuejs/core/vue\n"));
     assert!(stdout.contains(&format!("Revision: {}\n", "a".repeat(40))));
     assert!(stdout.contains("Source status: unverified\n"));
     assert!(stdout.contains("skilld did not check this source."));
@@ -1179,7 +1179,7 @@ fn duplicate_file_requests_fail_before_remote_content_is_loaded() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--file".to_owned(),
             "references/api.md".to_owned(),
             "--file".to_owned(),
@@ -1204,7 +1204,7 @@ fn remote_file_requests_reject_c1_control_characters_before_fetch() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "a".repeat(40),
             "--file=references/api\u{0085}forged.md".to_owned(),
@@ -1229,7 +1229,7 @@ fn remote_file_requests_reject_bidi_formatting_before_fetch() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             "a".repeat(40),
             "--file=references/api\u{202e}forged.md".to_owned(),
@@ -1406,7 +1406,7 @@ fn a_remote_run_names_the_author_and_links_the_exact_skill_file() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--plain".to_owned(),
         ],
     );
@@ -1415,7 +1415,7 @@ fn a_remote_run_names_the_author_and_links_the_exact_skill_file() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--json".to_owned(),
         ],
     );
@@ -1453,7 +1453,7 @@ fn a_remote_file_read_links_the_exact_skill_file() {
         vec![
             "skilld".to_owned(),
             "run".to_owned(),
-            "skilld:vuejs/core/vue".to_owned(),
+            "vuejs/core/vue".to_owned(),
             "--revision".to_owned(),
             commit.clone(),
             "--file=references/api.md".to_owned(),
