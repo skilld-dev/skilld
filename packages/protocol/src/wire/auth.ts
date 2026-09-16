@@ -22,6 +22,7 @@ export const OauthTokenInputSchema = z.object({
   code: z.string().min(16),
   code_verifier: z.string().min(32).max(256),
   redirect_uri: z.string().url(),
+  device_label: z.string().trim().min(1).max(64).optional(),
 })
 
 export const OauthRefreshInputSchema = z.object({

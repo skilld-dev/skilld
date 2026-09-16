@@ -69,6 +69,7 @@ export const fixtures = {
       code: 'auth-code-1234567890abcdef',
       code_verifier: 'verifier-32-bytes-or-more-padding-here',
       redirect_uri: 'http://127.0.0.1:50123/',
+      device_label: 'work-laptop',
     },
     oauthRefreshInput: {
       refresh_token: 'r-32-bytes-base64url',

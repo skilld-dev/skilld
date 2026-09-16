@@ -329,12 +329,15 @@ fn exchange_login_token(
 ) -> Result<StoredCredential, AuthError> {
     check_cancelled(&options.cancellation)?;
     let redirect_uri = format!("http://127.0.0.1:{port}/");
-    let body = serde_json::to_vec(&json!({
+    let mut request = json!({
         "code": code.expose_secret(),
         "code_verifier": verifier.expose_secret(),
         "redirect_uri": redirect_uri,
-    }))
-    .map_err(|_| {
+    });
+    if let Some(label) = options.device_label.as_deref().and_then(device_label) {
+        request["device_label"] = label.into();
+    }
+    let body = serde_json::to_vec(&request).map_err(|_| {
         AuthError::new(
             AuthErrorKind::InvalidResponse,
             "The token request could not be encoded.",
@@ -361,6 +364,22 @@ fn exchange_login_token(
         ));
     }
     parse_token_response(&response, dependencies.clock.now_unix_seconds(), true)
+}
+
+const DEVICE_LABEL_MAX_CHARS: usize = 64;
+
+/// Keeps printable characters and trims the label to the length skilld.dev stores.
+fn device_label(value: &str) -> Option<String> {
+    let label: String = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(DEVICE_LABEL_MAX_CHARS)
+        .collect();
+    let label = label.trim_end().to_owned();
+    (!label.is_empty()).then_some(label)
 }
 
 fn parse_token_response(
