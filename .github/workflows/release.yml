@@ -152,22 +152,30 @@ jobs:
         env:
           SKILLD_RELEASE_SIGNING_KEY: ${{ secrets.SKILLD_RELEASE_SIGNING_KEY }}
         run: node scripts/release/release-signing.mjs stage packages release-assets
-      - run: npx changelogithub
+      - name: Create draft release
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Immutable releases reject assets after publication, so assets go on a draft first.
+          if state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if test "$state" = false; then
+              echo "Release $GITHUB_REF_NAME is already published and immutable. Tag a new version." >&2
+              exit 1
+            fi
+          else
+            npx changelogithub --draft
+          fi
       - name: Upload standalone release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Binaries first: a client treats a release as ready once its signed manifest exists.
-          find release-assets -type f -name 'skilld-cli-*' -print0 \
-            | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
-          gh release upload "$GITHUB_REF_NAME" --clobber \
-            release-assets/skilld-release.txt release-assets/skilld-release.sig
           sed "s/__SKILLD_RELEASE_PUBLIC_KEY__/$SKILLD_RELEASE_PUBLIC_KEY/" install.sh >release-assets/install.sh
           grep -q "RELEASE_PUBLIC_KEY=\"$SKILLD_RELEASE_PUBLIC_KEY\"" release-assets/install.sh
-          gh release upload "$GITHUB_REF_NAME" --clobber release-assets/install.sh install.ps1
+          find release-assets -type f -print0 \
+            | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
+          gh release upload "$GITHUB_REF_NAME" --clobber install.ps1
       - name: Publish native packages
         shell: bash
         run: |
@@ -191,3 +199,8 @@ jobs:
       - name: Publish independent protocol
         if: steps.protocol_release.outputs.publish == 'true'
         run: pnpm --dir packages/protocol publish --access public --no-git-checks
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
