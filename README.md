@@ -261,11 +261,12 @@ The CLI does not store tokens in environment variables or plain text files.
 
 ## Privacy
 
-The skilld CLI sends no telemetry, analytics, or machine identifiers.
+The skilld CLI sends no telemetry or analytics.
 It makes network requests only for these reasons:
 
 - `skilld search`, `skilld run`, and `skilld install` of a hosted Skill call the skilld.dev API.
 - If you signed in, those requests carry your account token.
+- `skilld auth login` sends your computer hostname to name the sign-in. Only you see it on skilld.dev.
 - `--direct` fetches public Skills from GitHub.
 - `skilld update` compares commits through skilld.dev or the GitHub API.
 - At a terminal, the CLI checks GitHub Releases or the npm registry for a new version once a day.

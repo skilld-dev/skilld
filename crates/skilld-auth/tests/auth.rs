@@ -316,6 +316,7 @@ fn login_uses_the_site_pkce_contract_and_persists_the_account() {
     assert_eq!(requests[0].url, "https://skilld.dev/api/cli/oauth/token");
     let body: Value = serde_json::from_slice(&requests[0].body).expect("token body");
     assert_eq!(body["redirect_uri"], format!("http://127.0.0.1:{PORT}/"));
+    assert!(body.get("device_label").is_none());
     assert_eq!(
         fixture
             .callbacks
@@ -854,4 +855,49 @@ fn credential(access: &str, refresh: &str, expires_at: u64) -> StoredCredential 
         expires_at,
         scopes: Some("cli".to_owned()),
     }
+}
+
+fn token_body_for_label(label: &str) -> Value {
+    let fixture = Fixture::login_with(vec![Ok(token_response(
+        ACCESS_ONE,
+        REFRESH_ONE,
+        NOW + 3600,
+        "harlan",
+    ))]);
+    let options = LoginOptions {
+        device_label: Some(label.to_owned()),
+        ..LoginOptions::new("3.0.0")
+    };
+    login(&fixture.dependencies(), &options).expect("login");
+    let requests = fixture.http.requests();
+    serde_json::from_slice(&requests[0].body).expect("token body")
+}
+
+#[test]
+fn login_sends_a_printable_device_label() {
+    let body = token_body_for_label("  work\u{7}-laptop\n");
+
+    assert_eq!(body["device_label"], "work-laptop");
+}
+
+#[test]
+fn login_limits_the_device_label_to_64_characters() {
+    let body = token_body_for_label(&"é".repeat(80));
+
+    assert_eq!(body["device_label"], "é".repeat(64));
+}
+
+#[test]
+fn login_limits_the_device_label_to_64_utf16_units() {
+    let body = token_body_for_label(&"\u{1f600}".repeat(33));
+    let label = body["device_label"].as_str().expect("device label");
+
+    assert!(label.encode_utf16().count() <= 64);
+}
+
+#[test]
+fn login_omits_a_device_label_with_no_printable_characters() {
+    let body = token_body_for_label(" \u{1b}\t");
+
+    assert!(body.get("device_label").is_none());
 }

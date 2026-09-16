@@ -329,12 +329,15 @@ fn exchange_login_token(
 ) -> Result<StoredCredential, AuthError> {
     check_cancelled(&options.cancellation)?;
     let redirect_uri = format!("http://127.0.0.1:{port}/");
-    let body = serde_json::to_vec(&json!({
+    let mut request = json!({
         "code": code.expose_secret(),
         "code_verifier": verifier.expose_secret(),
         "redirect_uri": redirect_uri,
-    }))
-    .map_err(|_| {
+    });
+    if let Some(label) = options.device_label.as_deref().and_then(device_label) {
+        request["device_label"] = label.into();
+    }
+    let body = serde_json::to_vec(&request).map_err(|_| {
         AuthError::new(
             AuthErrorKind::InvalidResponse,
             "The token request could not be encoded.",
@@ -361,6 +364,34 @@ fn exchange_login_token(
         ));
     }
     parse_token_response(&response, dependencies.clock.now_unix_seconds(), true)
+}
+
+const DEVICE_LABEL_MAX_CHARS: usize = 64;
+
+/// Keeps printable characters and trims the label to the length skilld.dev stores.
+///
+/// skilld.dev caps `device_label` at 64 UTF-16 code units, the length a
+/// JavaScript string counts. Truncate by those units, never splitting a
+/// character.
+fn device_label(value: &str) -> Option<String> {
+    let label: String = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    let mut end = 0;
+    let mut units = 0;
+    for (index, character) in label.char_indices() {
+        let character_units = character.len_utf16();
+        if units + character_units > DEVICE_LABEL_MAX_CHARS {
+            break;
+        }
+        units += character_units;
+        end = index + character.len_utf8();
+    }
+    let label = label[..end].trim_end().to_owned();
+    (!label.is_empty()).then_some(label)
 }
 
 fn parse_token_response(

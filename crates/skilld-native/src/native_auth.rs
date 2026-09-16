@@ -179,7 +179,11 @@ impl AccountProvider for NativeAccount {
     }
 
     fn login(&self) -> Result<(), CommandError> {
-        login(&self.dependencies(), &LoginOptions::new(VERSION))
+        let options = LoginOptions {
+            device_label: gethostname::gethostname().into_string().ok(),
+            ..LoginOptions::new(VERSION)
+        };
+        login(&self.dependencies(), &options)
             .map(|_| ())
             .map_err(command_auth_error)
     }

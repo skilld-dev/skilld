@@ -345,6 +345,8 @@ pub struct AuthDependencies<'a> {
 #[derive(Clone, Debug)]
 pub struct LoginOptions {
     pub cli_version: String,
+    /// Names this sign-in on the skilld.dev devices page. Only the account owner sees it.
+    pub device_label: Option<String>,
     pub callback_timeout: Duration,
     pub http_timeout: Duration,
     pub cancellation: CancellationToken,
@@ -355,6 +357,7 @@ impl LoginOptions {
     pub fn new(cli_version: impl Into<String>) -> Self {
         Self {
             cli_version: cli_version.into(),
+            device_label: None,
             callback_timeout: Duration::from_secs(300),
             http_timeout: Duration::from_secs(30),
             cancellation: CancellationToken::new(),

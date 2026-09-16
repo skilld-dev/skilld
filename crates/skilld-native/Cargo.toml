@@ -16,6 +16,8 @@ name = "skilld"
 path = "src/main.rs"
 
 [dependencies]
+gethostname.workspace = true
+
 skilld-auth.workspace = true
 
 skilld-command.workspace = true
