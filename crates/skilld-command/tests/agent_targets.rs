@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use skilld_command::{DetectionEnvironment, Host, LocalHost, TargetRoots};
-use skilld_core::{AgentTargetId, InstallOperation, InstallRequest, InstallScope, InstallSource};
+use skilld_core::{
+    AgentTargetId, InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource,
+};
 
 fn source(root: &Path) -> std::path::PathBuf {
     let source = root.join("source/example");
@@ -308,4 +310,50 @@ fn an_existing_global_target_directory_is_detected() {
     .unwrap();
 
     assert!(home.join(".agents/skills/example/SKILL.md").exists());
+}
+
+/// A global symlink install writes the link into the Agent's own skills
+/// directory, and the link resolves from there.
+///
+/// The link is relative, so its depth has to match the distance from the Agent
+/// target directory to the Skill store. A wrong depth still creates a link and
+/// still reports success, and the Agent then enumerates a directory of dead
+/// entries, so the test reads SKILL.md back through the link.
+#[test]
+fn a_global_symlink_install_resolves_from_the_agent_skills_directory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let data = temporary.path().join("home/.skilld");
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&project).unwrap();
+    let source = source(temporary.path());
+    let host = LocalHost::new(project, data).with_target_roots(TargetRoots::new(
+        home.clone(),
+        home.join(".config"),
+        home.join(".claude"),
+        home.join(".openclaw"),
+        home.join(".hermes"),
+        home.join(".kiro"),
+    ));
+
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::Local(source)),
+        scope: InstallScope::Global,
+        targets: vec![AgentTargetId::ClaudeCode],
+        mode: Some(InstallMode::Symlink),
+    })
+    .unwrap();
+
+    let installed = home.join(".claude/skills/example");
+    assert!(
+        fs::symlink_metadata(&installed)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(fs::read_link(&installed).unwrap().is_relative());
+    assert_eq!(
+        fs::read_to_string(installed.join("SKILL.md")).unwrap(),
+        "---\nname: example\ndescription: Test fixture.\n---\n\nfixture\n"
+    );
 }
