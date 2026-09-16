@@ -1,5 +1,7 @@
 import { defineConfig } from 'bumpp'
 
+import { syncCargoVersion } from './scripts/release/cargo-version.mjs'
+
 export default defineConfig({
   commit: 'chore(release): prepare {tag}',
   files: [
@@ -13,8 +15,8 @@ export default defineConfig({
     'packages/cli-linux-x64-musl/package.json',
     'packages/cli-win32-arm64-msvc/package.json',
     'packages/cli-win32-x64-msvc/package.json',
-    'Cargo.toml',
-    'Cargo.lock',
   ],
+  // Cargo files stay out of `files`: a text replace also rewrites matching dependency versions.
+  execute: syncCargoVersion,
   noGitCheck: true,
 })
