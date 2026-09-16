@@ -843,7 +843,13 @@ impl LocalStore {
         }
         let bytes = fs::read(&path).map_err(fs_error)?;
         let mut document: LockDocument = serde_json::from_slice(&bytes).map_err(|_| {
-            StoreError::InvalidLockfile("the Skill lockfile is not valid JSON".to_owned())
+            if bytes.trim_ascii_start().starts_with(b"{") {
+                StoreError::InvalidLockfile("the Skill lockfile is not valid JSON".to_owned())
+            } else {
+                StoreError::InvalidLockfile(
+                    "the Skill lockfile uses the skilld v2 format. Move the .skills directory to a backup path, then install your Skills again. See https://github.com/skilld-dev/skilld/blob/main/docs/migrate-v2-to-v3.md".to_owned(),
+                )
+            }
         })?;
         if document.version != 1 {
             return Err(StoreError::InvalidLockfile(format!(

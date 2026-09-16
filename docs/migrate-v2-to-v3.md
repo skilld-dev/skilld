@@ -35,7 +35,7 @@ They are your rollback copy.
 Install the v3 CLI:
 
 ```sh
-npm install --global skilld@3.0.0-beta.1
+npm install --global skilld@3
 skilld --version
 ```
 
@@ -131,11 +131,11 @@ It cannot restore a v2 lockfile.
 | `skilld add gh:OWNER/REPOSITORY`, `skilld add @LOGIN`, `skilld add @LOGIN/SLUG` | Unchanged. `skilld run` with the same ref lists the Skills first |
 | `skilld add npm:PACKAGE` | Not supported. Run `skilld search <package>`, then use the selector |
 | `skilld update [name]` | `skilld update [name]` |
-| `skilld info` | `skilld list`, then `skilld view <name>` |
-| `skilld login` | `skilld auth login` |
-| `skilld whoami` | `skilld auth status` |
-| `skilld logout` | `skilld auth logout` |
-| `skilld prepare` | Run `skilld install` explicitly in CI |
+| `skilld info` | Still works as `skilld list`. Run `skilld view <name>` for details |
+| `skilld login` | Still works as `skilld auth login` |
+| `skilld whoami` | Still works as `skilld auth status` |
+| `skilld logout` | Still works as `skilld auth logout` |
+| `skilld prepare` | Still works as `skilld install`, which restores the v3 lockfile |
 | `skilld author package` | Run `generate-package-skill` with an Agent, or use Harness `PackageSkill` |
 | `skilld author validate` | Run `review-skill` with an Agent, or use Harness `ReviewSkill` |
 | `skilld author assemble` | Apply approved Agent changes, or let Harness promote checked output |
@@ -144,6 +144,11 @@ It cannot restore a v2 lockfile.
 
 The v2 `watch`, `unwatch`, `cache`, `changes`, `setup`, `uninstall`, and `pull` commands are removed.
 v3 has no one for one replacements for them.
+They exit with `REMOVED_COMMAND` and a link to this guide.
+The `author` subcommands also exit with `REMOVED_COMMAND`.
+
+A v2 lockfile makes v3 exit with `INVALID_LOCKFILE`.
+The message tells you to move `.skills` to a backup path first.
 
 ## Choose direct Agent use or Harness
 
