@@ -851,7 +851,10 @@ fn verify_signature(
     )
 }
 
-fn verifying_key(value: &str, message: &'static str) -> Result<VerifyingKey, RemoteError> {
+pub(crate) fn verifying_key(
+    value: &str,
+    message: &'static str,
+) -> Result<VerifyingKey, RemoteError> {
     let bytes = decode_base64url(value, 32)?;
     let bytes: [u8; 32] = bytes
         .try_into()
@@ -859,7 +862,7 @@ fn verifying_key(value: &str, message: &'static str) -> Result<VerifyingKey, Rem
     VerifyingKey::from_bytes(&bytes).map_err(|_| RemoteError::new("TRUSTED_ROOT_INVALID", message))
 }
 
-fn verify_ed25519(
+pub(crate) fn verify_ed25519(
     key: &VerifyingKey,
     domain: &[u8],
     statement: &[u8],
@@ -1141,7 +1144,7 @@ fn parse_utc_timestamp(value: &str) -> Result<OffsetDateTime, RemoteError> {
         .map_err(|_| RemoteError::new("INVALID_TIMESTAMP", "a protocol timestamp is invalid"))
 }
 
-fn decode_base64url(value: &str, maximum: usize) -> Result<Vec<u8>, RemoteError> {
+pub(crate) fn decode_base64url(value: &str, maximum: usize) -> Result<Vec<u8>, RemoteError> {
     let decoded = URL_SAFE_NO_PAD
         .decode(value)
         .map_err(|_| RemoteError::new("INVALID_BASE64URL", "a protocol value is not base64url"))?;

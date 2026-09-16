@@ -6,6 +6,7 @@ mod output;
 mod provenance;
 mod remote;
 mod run;
+pub mod upgrade;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;

@@ -1,5 +1,6 @@
 mod lock;
 mod reference;
+mod release;
 mod remote;
 mod target;
 mod update;
@@ -11,6 +12,9 @@ pub use lock::{
     LockDocument, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES, SourceStatus,
 };
 pub use reference::{ListedSkill, MultiSkillRef, SkillListing, SkillRef};
+pub use release::{
+    ReleasePin, VerifiedRelease, is_release_version, verify_release_asset, verify_release_manifest,
+};
 pub use remote::{
     ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
     PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,

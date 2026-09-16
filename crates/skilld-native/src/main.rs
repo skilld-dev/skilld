@@ -10,19 +10,23 @@ use std::sync::Arc;
 
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
+use skilld_command::upgrade::{InstallChannel, UpgradeNotice};
 use skilld_command::{
     CommandError, CommandPlatform, DetectionEnvironment, Host, InstalledSkill, LocalHost,
     NativeRemoteConfig, OutputContext, SkilldRemote, TargetRoots, interactive_update_requested,
     run_stdio_probe, run_with_output,
 };
 use skilld_core::{
-    InstallScope, InstallSource, SearchResponse, SearchResult, SourceProvider, SourceRequest,
-    SourceSelector, TrustedRootPin,
+    InstallScope, InstallSource, ReleasePin, SearchResponse, SearchResult, SourceProvider,
+    SourceRequest, SourceSelector, TrustedRootPin, VERSION,
 };
 use skilld_native::NativeHttpAdapter;
 use skilld_native::update_ui::{
     CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
     write_static_summary,
+};
+use skilld_native::upgrade::{
+    self as cli_upgrade, InstallTarget, LAUNCHER_VARIABLE, NativeReleaseFetcher, WORKER_VARIABLE,
 };
 use status::StatusLine;
 use terminal_size::Width;
@@ -38,6 +42,12 @@ fn main() -> ExitCode {
     if env::var_os("SKILLD_PROBE_SEARCH_OUTPUT").as_deref() == Some(std::ffi::OsStr::new("1")) {
         return run_search_output_probe();
     }
+
+    if let Ok(worker) = env::var(WORKER_VARIABLE) {
+        run_upgrade_worker(&worker);
+        return ExitCode::SUCCESS;
+    }
+    let upgrade_notice = start_upgrade();
 
     let args = env::args_os().collect::<Vec<_>>();
     let interactive = interactive_update_requested(args.clone()).is_ok_and(|requested| requested);
@@ -125,6 +135,7 @@ fn main() -> ExitCode {
                     );
                     ExitCode::from(2)
                 } else {
+                    print_upgrade_notice(upgrade_notice.as_ref());
                     ExitCode::from(exit_code)
                 }
             }
@@ -140,7 +151,83 @@ fn main() -> ExitCode {
     let mut gated = status::GatedStderr::new(&mut stderr, status);
     let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
     gated.finish_status();
+    print_upgrade_notice(upgrade_notice.as_ref());
     ExitCode::from(result.exit_code)
+}
+
+fn release_pin() -> Option<ReleasePin> {
+    option_env!("SKILLD_RELEASE_PUBLIC_KEY").map(|public_key| ReleasePin {
+        public_key: public_key.to_owned(),
+    })
+}
+
+/// The install channel. A standalone build without a release key or a known
+/// release asset cannot verify an upgrade, so it never attempts one.
+fn upgrade_channel(executable: &std::path::Path) -> InstallChannel {
+    match cli_upgrade::install_channel(executable, env::var_os(LAUNCHER_VARIABLE)) {
+        InstallChannel::Standalone
+            if release_pin().is_none() || cli_upgrade::current_release_asset().is_none() =>
+        {
+            InstallChannel::Unmanaged
+        }
+        channel => channel,
+    }
+}
+
+/// Starts background upgrade work for a person at a terminal.
+fn start_upgrade() -> Option<UpgradeNotice> {
+    if environment_enabled("CI")
+        || environment_present("SKILLD_NO_UPGRADE")
+        || active_agent_detected()
+        || !std::io::stderr().is_terminal()
+    {
+        return None;
+    }
+    let executable = env::current_exe().ok()?;
+    let channel = upgrade_channel(&executable);
+    #[cfg(windows)]
+    if channel == InstallChannel::Standalone {
+        // An earlier upgrade left the replaced executable here; it is safe to lose.
+        let _ = std::fs::remove_file(cli_upgrade::previous_executable(&executable));
+    }
+    cli_upgrade::before_command(
+        &global_root(),
+        &executable,
+        channel,
+        VERSION,
+        cli_upgrade::unix_now(),
+    )
+}
+
+fn run_upgrade_worker(value: &str) {
+    let Ok(executable) = env::current_exe() else {
+        return;
+    };
+    let channel = upgrade_channel(&executable);
+    let pin = release_pin();
+    let target = match (channel, &pin, cli_upgrade::current_release_asset()) {
+        (InstallChannel::Standalone, Some(pin), Some(asset)) => Some(InstallTarget {
+            executable: &executable,
+            current_version: VERSION,
+            asset,
+            pin,
+        }),
+        _ => None,
+    };
+    cli_upgrade::run_worker(
+        value,
+        &global_root(),
+        channel,
+        &NativeReleaseFetcher::new(VERSION),
+        target,
+        cli_upgrade::unix_now(),
+    );
+}
+
+fn print_upgrade_notice(notice: Option<&UpgradeNotice>) {
+    if let Some(notice) = notice {
+        eprintln!("{}", notice.message());
+    }
 }
 
 fn run_search_output_probe() -> ExitCode {

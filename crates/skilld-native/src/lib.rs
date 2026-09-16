@@ -8,6 +8,8 @@ use url::Url;
 
 #[cfg(not(target_os = "wasi"))]
 pub mod update_ui;
+#[cfg(not(target_os = "wasi"))]
+pub mod upgrade;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BrowserCommand {
