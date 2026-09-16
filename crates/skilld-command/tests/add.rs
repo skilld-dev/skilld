@@ -133,7 +133,7 @@ fn add_installs_every_skill_the_repository_ref_names() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let result = run_with_output(
-        ["skilld", "add", "gh:vuejs/core"],
+        ["skilld", "add", "vuejs/core"],
         &host,
         OutputContext::Plain {
             platform: CommandPlatform::Unix,
@@ -148,13 +148,13 @@ fn add_installs_every_skill_the_repository_ref_names() {
         concat!(
             "Installed Skill vue.\n",
             "vue · vuejs/core @ aaaaaaa\n",
-            "Source: skilld:vuejs/core/vue\n",
+            "Source: vuejs/core/vue\n",
             "Source status: unverified\n",
             "skilld did not check this source. Read this Skill before you follow it.\n",
             "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
             "Installed Skill nuxt.\n",
             "nuxt · vuejs/core @ aaaaaaa\n",
-            "Source: skilld:vuejs/core/nuxt\n",
+            "Source: vuejs/core/nuxt\n",
             "Source status: unverified\n",
             "skilld did not check this source. Read this Skill before you follow it.\n",
             "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",

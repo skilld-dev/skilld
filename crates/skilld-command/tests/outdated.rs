@@ -300,7 +300,7 @@ fn outdated_reports_current_and_stale_project_skills() {
     ));
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
-    install_project(&host, "skilld:skilld-dev/skills/example");
+    install_project(&host, "skilld-dev/skills/example");
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -499,7 +499,7 @@ fn outdated_all_reports_a_stale_global_skill_with_the_global_update() {
     ));
     let host = LocalHost::new(project, temporary.path().join("data"))
         .with_remote_provider(provider.clone());
-    install_global(&host, "skilld:skilld-dev/skills/example");
+    install_global(&host, "skilld-dev/skills/example");
     *provider.stale.lock().unwrap() = true;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -541,7 +541,7 @@ fn outdated_all_links_unmanaged_skills_to_a_repository() {
     assert_eq!(result.exit_code, 0);
     let output = String::from_utf8(stdout).unwrap();
     let expected = format!(
-        "Unmanaged Skill vue-testing (claude-code). Candidate source skilld:acme/skills/vue-testing, 0 stars.\nDelete {}, then run skilld install skilld:acme/skills/vue-testing --global --agent claude-code.\n",
+        "Unmanaged Skill vue-testing (claude-code). Candidate source acme/skills/vue-testing, 0 stars.\nDelete {}, then run skilld install acme/skills/vue-testing --global --agent claude-code.\n",
         home.join(".claude/skills/vue-testing").display()
     );
     assert_eq!(output, expected);
@@ -665,7 +665,7 @@ fn outdated_all_reports_a_managed_skill_once() {
     ));
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider);
-    install_project(&host, "skilld:skilld-dev/skills/example");
+    install_project(&host, "skilld-dev/skills/example");
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -713,7 +713,7 @@ fn update_global_updates_a_global_skill() {
         "---\nname: example\ndescription: first\n---\n",
     ));
     let host = LocalHost::new(project, data.clone()).with_remote_provider(provider.clone());
-    install_global(&host, "skilld:skilld-dev/skills/example");
+    install_global(&host, "skilld-dev/skills/example");
     *provider.content.lock().unwrap() = b"---\nname: example\ndescription: second\n---\n".to_vec();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -747,7 +747,7 @@ fn outdated_survives_a_source_state_failure() {
     *provider.fail_state.lock().unwrap() = true;
     let host = LocalHost::new(project, temporary.path().join("data"))
         .with_remote_provider(provider.clone());
-    install_project(&host, "skilld:skilld-dev/skills/example");
+    install_project(&host, "skilld-dev/skills/example");
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
@@ -770,7 +770,7 @@ fn outdated_source_state_failures_are_single_line_and_terminal_safe() {
     ));
     let host = LocalHost::new(project, temporary.path().join("data"))
         .with_remote_provider(provider.clone());
-    install_project(&host, "skilld:skilld-dev/skills/example");
+    install_project(&host, "skilld-dev/skills/example");
     *provider.fail_state.lock().unwrap() = true;
     *provider.state_failure_message.lock().unwrap() =
         "request\u{1b}[31m\u{0085}\u{202e}\rforged\nline".to_owned();

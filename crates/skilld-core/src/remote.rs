@@ -63,7 +63,27 @@ impl RemoteSelector {
             ));
         }
         let value = value.trim();
-        if let Some(rest) = value.strip_prefix("skilld:") {
+        // `skilld:` is the 3.0 spelling. Lockfiles written by 3.0 still carry it.
+        let named = value
+            .strip_prefix("skilld:")
+            .or_else(|| crate::reference::is_bare_remote(value).then_some(value));
+        if let Some(rest) = named {
+            if rest
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .split('/')
+                .count()
+                == 2
+            {
+                let repository = rest.split('#').next().unwrap_or_default();
+                return Err(RemoteError::new(
+                    "INVALID_SOURCE",
+                    format!(
+                        "{repository} names a Repository. Run skilld add {repository}, or name one Skill as {repository}/SKILL."
+                    ),
+                ));
+            }
             let (source, reference) = rest
                 .split_once('#')
                 .map_or((rest, None), |(source, value)| {
@@ -111,7 +131,7 @@ impl RemoteSelector {
         let prefix = if self.is_explicit_github() {
             "github:"
         } else {
-            "skilld:"
+            ""
         };
         let selector = match &source.selector {
             SourceSelector::Path { path } | SourceSelector::NamedSkill { name: path } => path,
@@ -1212,14 +1232,25 @@ mod tests {
     #[test]
     fn parses_canonical_skilld_and_github_selectors() {
         let skilld = RemoteSelector::parse("skilld:skilld-dev/skills/vue-testing").unwrap();
-        assert_eq!(skilld.canonical(), "skilld:skilld-dev/skills/vue-testing");
+        assert_eq!(skilld.canonical(), "skilld-dev/skills/vue-testing");
+        assert_eq!(
+            RemoteSelector::parse("skilld-dev/skills/vue-testing").unwrap(),
+            skilld,
+            "the bare form and the legacy skilld: form name the same Skill"
+        );
+        let error = RemoteSelector::parse("skilld-dev/skills").unwrap_err();
+        assert!(
+            error.message.contains("skilld add skilld-dev/skills"),
+            "{}",
+            error.message
+        );
         let exact_skilld = RemoteSelector::parse(
             "skilld:skilld-dev/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567",
         )
         .unwrap();
         assert_eq!(
             exact_skilld.canonical(),
-            "skilld:skilld-dev/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567"
+            "skilld-dev/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567"
         );
         let github = RemoteSelector::parse(
             "github:skilld-dev/skills/skills/vue-testing#commit:0123456789abcdef0123456789abcdef01234567",
@@ -1247,7 +1278,7 @@ mod tests {
         assert_eq!(response.total, 1);
         assert_eq!(
             response.items[0].selector().unwrap().canonical(),
-            "skilld:skilld-dev/skills/vue-testing"
+            "skilld-dev/skills/vue-testing"
         );
     }
 

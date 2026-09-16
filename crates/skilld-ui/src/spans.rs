@@ -91,11 +91,11 @@ mod tests {
     #[test]
     fn commands_tokenize_like_code() {
         assert_eq!(
-            command_spans("skilld install skilld:owner/repo/x --agent codex"),
+            command_spans("skilld install owner/repo/x --agent codex"),
             vec![
                 Span::Styled("skilld".to_owned(), Role::Brand),
                 Span::Styled("install".to_owned(), Role::Emphasis),
-                Span::Text("skilld:owner/repo/x".to_owned()),
+                Span::Text("owner/repo/x".to_owned()),
                 Span::Styled("--agent".to_owned(), Role::Dim),
                 Span::Text("codex".to_owned()),
             ]
