@@ -259,6 +259,20 @@ skilld config list
 Native builds store account credentials in the operating system keychain.
 The CLI does not store tokens in environment variables or plain text files.
 
+## Privacy
+
+The skilld CLI sends no telemetry, analytics, or machine identifiers.
+It makes network requests only for these reasons:
+
+- `skilld search`, `skilld run`, and `skilld install` of a hosted Skill call the skilld.dev API.
+- If you signed in, those requests carry your account token.
+- `--direct` fetches public Skills from GitHub.
+- `skilld update` compares commits through skilld.dev or the GitHub API.
+- At a terminal, the CLI checks GitHub Releases or the npm registry for a new version once a day.
+
+The upgrade check never runs in CI or inside an Agent.
+Set `SKILLD_NO_UPGRADE=1` to turn it off.
+
 ## Harness
 
 Use [`skilld-harness`](./packages/harness) when an application or CI needs strict output checks.
