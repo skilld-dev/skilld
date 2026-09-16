@@ -27,6 +27,18 @@ fn public_remote_selectors_reject_control_characters_in_branch_and_tag_refs() {
 }
 
 #[test]
+fn a_v2_bare_package_name_points_to_skill_search() {
+    let error = RemoteSelector::parse("vue").unwrap_err();
+
+    assert_eq!(error.code, "INVALID_SOURCE");
+    assert!(
+        error.message.contains("skilld search vue"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn public_remote_selectors_reject_bidi_formatting_characters() {
     for selector in [
         "github:skilld-dev/skills/skills/\u{202e}example",

@@ -581,6 +581,15 @@ where
     } else {
         resolve_mode(requested_json, requested_plain, context)
     };
+    let args = match v2_command(args) {
+        V2Command::Current(args) => args,
+        V2Command::Removed(error) => {
+            let _ = stderr.write_all(&render_error(&error, requested_mode));
+            return CommandResult {
+                exit_code: error.exit_code(),
+            };
+        }
+    };
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
@@ -722,6 +731,52 @@ where
             }
         }
     }
+}
+
+const MIGRATION_GUIDE: &str =
+    "https://github.com/skilld-dev/skilld/blob/main/docs/migrate-v2-to-v3.md";
+
+enum V2Command {
+    Current(Vec<OsString>),
+    Removed(CommandError),
+}
+
+/// Maps a skilld v2 command to its v3 replacement, or names why v3 removed it.
+fn v2_command(mut args: Vec<OsString>) -> V2Command {
+    let Some(index) = args
+        .iter()
+        .skip(1)
+        .position(|argument| !argument.to_string_lossy().starts_with('-'))
+        .map(|position| position + 1)
+    else {
+        return V2Command::Current(args);
+    };
+    let replacement: &[&str] = match args[index].to_str() {
+        Some("login") => &["auth", "login"],
+        Some("logout") => &["auth", "logout"],
+        Some("whoami") => &["auth", "status"],
+        Some("info") => &["list"],
+        Some("prepare") => &["install"],
+        Some("author") => {
+            return V2Command::Removed(CommandError::usage(
+                "REMOVED_COMMAND",
+                format!(
+                    "skilld v3 has no author command. Ask your Agent to run the generate-package-skill or review-skill Skill, or use skilld-harness. See {MIGRATION_GUIDE}"
+                ),
+            ));
+        }
+        Some(
+            command @ ("watch" | "unwatch" | "cache" | "changes" | "setup" | "uninstall" | "pull"),
+        ) => {
+            return V2Command::Removed(CommandError::usage(
+                "REMOVED_COMMAND",
+                format!("skilld v3 removed the {command} command. See {MIGRATION_GUIDE}"),
+            ));
+        }
+        _ => return V2Command::Current(args),
+    };
+    args.splice(index..=index, replacement.iter().map(OsString::from));
+    V2Command::Current(args)
 }
 
 fn terminal_safe_clap_text(args: &[OsString], expected_kind: ErrorKind) -> String {

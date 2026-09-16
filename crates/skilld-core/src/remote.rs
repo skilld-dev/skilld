@@ -90,7 +90,9 @@ impl RemoteSelector {
         }
         Err(RemoteError::new(
             "INVALID_SOURCE",
-            "use a skilld search selector or an explicit GitHub Repository selector",
+            format!(
+                "{value} is not a Skill selector. Run skilld search {value}, then use a selector it prints."
+            ),
         ))
     }
 
