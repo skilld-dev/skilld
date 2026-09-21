@@ -14,6 +14,7 @@ Every public export, command, error, route, and document uses these terms.
 | skilld CLI | `skilld` | published CLI | developer, CI | skilld CLI |
 | Harness | `skilld-harness` | published package | application, CI | Harness |
 | Skill run | `skilld-harness` | published type | Harness consumer | Skill run |
+| local sandbox | `skilld-harness/sandbox-local` | published export | Harness consumer, CI | local sandbox |
 | Repository | GitHub | external standard | skilld.dev, skilld CLI | repository |
 | Account | GitHub and skilld.dev | external standard | GitHub App, skilld.dev | account |
 | Artifact | `skilld.dev/api/v1` | published protocol | skilld CLI | Artifact |

@@ -32,6 +32,10 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
+    "./sandbox-local": {
+      "types": "./dist/sandbox-local.d.mts",
+      "import": "./dist/sandbox-local.mjs"
+    },
     "./skills": {
       "types": "./dist/skills.d.mts",
       "import": "./dist/skills.mjs"
