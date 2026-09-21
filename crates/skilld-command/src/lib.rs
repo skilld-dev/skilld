@@ -976,7 +976,10 @@ fn dispatch<H: Host>(
                     for item in &listing.items {
                         match install_listed(host, item, &options, &mut undeliverable) {
                             Ok((installed, note)) => {
-                                lines.extend(note.map(Line::hint));
+                                // The note quotes a registry name and a
+                                // delivery error, so it never reaches the
+                                // terminal raw.
+                                lines.extend(note.map(|note| Line::hint(screen_message(&note))));
                                 for skill in &installed {
                                     lines.extend(render_installed(skill)?);
                                 }
@@ -993,10 +996,10 @@ fn dispatch<H: Host>(
                         listing.items.len()
                     )));
                     for (name, error) in &failures {
-                        lines.push(Line::error(format!(
+                        lines.push(Line::error(screen_message(&format!(
                             "{name}: {}: {}",
                             error.code, error.message
-                        )));
+                        ))));
                     }
                     Ok(CommandOutput::IncompleteScreen(Screen::new(lines)))
                 }
@@ -4159,6 +4162,116 @@ mod tests {
             "You chose no Skills of the 2 skilld-dev/skills names. skilld installed none.\n"
         );
         assert!(host.inner.requests().is_empty());
+    }
+
+    /// Lists one Skill whose registry name carries an escape byte and one
+    /// whose name also carries a newline. The hosted delivery fails with a
+    /// message that carries an escape byte and a newline too, so the failure
+    /// output receives remote-controlled text end to end.
+    struct UnsafeFailureHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UnsafeFailureHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "boom \u{1b}[31mstyled\nsecond line",
+                )),
+                InstallSource::DirectRemote(selector) if selector.starts_with("github:") => {
+                    Ok(vec![InstalledSkill {
+                        name: "vue".to_owned(),
+                        source: LockedSource::Remote {
+                            source: selector,
+                            commit_sha: "a".repeat(40),
+                            skill_path: "skills/vue".to_owned(),
+                        },
+                        source_status: "unverified",
+                    }])
+                }
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![
+                    skilld_core::ListedSkill {
+                        name: "vue\u{1b}[31m".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry {
+                            path: Some("skills/vue".to_owned()),
+                        },
+                    },
+                    skilld_core::ListedSkill {
+                        name: "pathless\u{1b}[0m\nsecond".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    },
+                ],
+            })
+        }
+    }
+
+    #[test]
+    fn add_failure_output_sanitizes_remote_text() {
+        let host = UnsafeFailureHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 1, "{stdout}{stderr}");
+        assert!(!stdout.contains('\u{1b}'), "{stdout}");
+        assert_eq!(
+            stdout.matches('\n').count(),
+            stdout.lines().count(),
+            "an embedded newline split the output: {stdout}"
+        );
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue [31m: boom [31mstyled second line. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("pathless [0m second: INVALID_SOURCE: boom [31mstyled second line"),
+            "{stdout}"
+        );
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::Remote("skilld-dev/skills/pathless\u{1b}[0m\nsecond".to_owned()),
+            ]
+        );
+        assert_eq!(stderr, "");
     }
 
     #[test]

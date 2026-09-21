@@ -1969,6 +1969,7 @@ impl SkilldRemote {
     /// Turn collection entries into listed Skills, in collection order.
     /// An entry that names one Skill lists it with the curator's reason.
     /// An entry that names a Repository lists every Skill it carries.
+    /// Skills that two entries resolve to list once.
     fn expand_entries(
         &self,
         entries: Vec<CollectionEntry>,
@@ -1978,25 +1979,82 @@ impl SkilldRemote {
         let mut items = Vec::new();
         for entry in entries {
             let expanded = match entry.name {
-                Some(name) => listed_skill(
-                    entry.owner,
-                    entry.repository,
-                    name,
+                Some(name) => self.named_entry_skills(
+                    &entry.owner,
+                    &entry.repository,
+                    &name,
                     entry.reason.as_deref(),
-                    None,
-                )
-                .into_iter()
-                .collect(),
+                    memo,
+                )?,
                 None => self.repository_skills(&entry.owner, &entry.repository, memo, false)?,
             };
             for skill in expanded {
-                if seen.insert(skill.selector()) {
+                if seen.insert(skill_identity(&skill)) {
                     items.push(skill);
                 }
             }
         }
         Ok(items)
     }
+
+    /// One collection entry that names a Skill, resolved to the Skill the
+    /// Repository carries.
+    ///
+    /// The install needs the Skill's path to read GitHub when skilld.dev
+    /// cannot deliver the named Skill. The Repository rows already know that
+    /// path, so a row with a matching name donates its path and keeps the
+    /// curator's reason. A Repository no row lists keeps the hosted named
+    /// Skill.
+    fn named_entry_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+        name: &str,
+        reason: Option<&str>,
+        memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let matched = self
+            .repository_skills(owner, repository, memo, false)?
+            .into_iter()
+            .find(|skill| {
+                skill.name.eq_ignore_ascii_case(name) && skill.direct_selector().is_some()
+            });
+        let Some(mut skill) = matched else {
+            return Ok(listed_skill(
+                owner.to_owned(),
+                repository.to_owned(),
+                name.to_owned(),
+                reason,
+                None,
+            )
+            .into_iter()
+            .collect());
+        };
+        skill.description = reason
+            .map(|reason| sanitize_line(reason, 500, ""))
+            .filter(|reason| !reason.is_empty())
+            .or(skill.description);
+        Ok(vec![skill])
+    }
+}
+
+/// The identity one expanded Skill keeps across collection entries.
+///
+/// A curator can name one Skill and also list its whole Repository. Both rows
+/// then resolve to the same Skill, while their selectors differ, because only
+/// one row carries the Skill path. The identity is the owner, the Repository,
+/// and the path when skilld knows it, falling back to the Skill name.
+fn skill_identity(skill: &ListedSkill) -> (String, String, String) {
+    (
+        skill.owner.to_ascii_lowercase(),
+        skill.repository.to_ascii_lowercase(),
+        match &skill.origin {
+            ListedOrigin::Registry { path: Some(path) } | ListedOrigin::Direct { path } => {
+                path.to_ascii_lowercase()
+            }
+            ListedOrigin::Registry { path: None } => skill.name.to_ascii_lowercase(),
+        },
+    )
 }
 
 /// Build one listed Skill from untrusted registry fields.

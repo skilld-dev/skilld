@@ -4,7 +4,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -1006,6 +1009,9 @@ fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
             }))
             .unwrap(),
         ),
+        // The named entry resolves through the rows of its Repository. No row
+        // carries a path, so the named Skill keeps the hosted selector.
+        registry_page(&[("vuejs", "core", "vue", None)]),
         registry_page(&[
             ("nuxt", "skills", "nuxt", Some("Build Nuxt apps.")),
             ("nuxt", "other", "ignored", None),
@@ -1031,7 +1037,74 @@ fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
         request_paths(&http),
         [
             "/api/collections/by-author/harlan-zw/nuxt",
+            "/api/skills?owner=vuejs&limit=200",
             "/api/skills?owner=nuxt&limit=200",
+        ]
+    );
+}
+
+#[test]
+fn a_named_entry_and_a_repository_entry_list_one_skill_once() {
+    let collection = response(
+        200,
+        serde_json::to_vec(&json!({
+            "authorLogin": "harlan-zw",
+            "slug": "nuxt",
+            "skills": [
+                { "position": 0, "owner": "vuejs", "repo": "core", "name": "vue", "reason": null },
+                { "position": 1, "owner": "vuejs", "repo": "core", "name": null, "reason": null },
+            ]
+        }))
+        .unwrap(),
+    );
+    let indexed = response(
+        200,
+        serde_json::to_vec(&json!({
+            "items": [{
+                "name": "vue",
+                "owner": "vuejs",
+                "repo": "core",
+                "description": null,
+                "stars": 12,
+                "registryPath": "/gh/vuejs/core/vue",
+                "skillFileUrl": format!(
+                    "https://github.com/vuejs/core/blob/{}/skills/vue/SKILL.md",
+                    "a".repeat(40)
+                ),
+            }],
+            "total": 1,
+            "page": 1,
+        }))
+        .unwrap(),
+    );
+    let http = Arc::new(FakeHttp::with([collection, indexed]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "nuxt".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [ListedSkill {
+            name: "vue".to_owned(),
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+            description: None,
+            origin: ListedOrigin::Registry {
+                path: Some("skills/vue".to_owned()),
+            },
+        }]
+    );
+    assert_eq!(listing.items[0].selector(), "vuejs/core/skills/vue");
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/collections/by-author/harlan-zw/nuxt",
+            "/api/skills?owner=vuejs&limit=200",
         ]
     );
 }
@@ -1187,6 +1260,132 @@ fn a_failing_github_read_lists_nothing_for_one_collection_entry() {
     assert_eq!(listing.items, [listed("vuejs", "core", "vue", None)]);
 }
 
+/// Serves one collection naming `vue` of the unindexed `vuejs/core`. skilld.dev
+/// fails every named-Skill Resolution, and GitHub serves the Repository, its
+/// tree, and the Skill bytes.
+struct LargeRepositoryHttp;
+
+impl HttpAdapter for LargeRepositoryHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let url = request.url.as_str();
+        if url.contains("/api/collections/by-author/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "authorLogin": "harlan-zw",
+                    "slug": "large",
+                    "skills": [
+                        { "position": 0, "owner": "vuejs", "repo": "core", "name": "vue", "reason": "The reactive core." },
+                    ]
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/api/skills") {
+            return Ok(registry_page(&[]));
+        }
+        if url.contains("/api/v1/resolutions") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "state": "failed",
+                    "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+                    "code": "INVALID_SOURCE",
+                    "retryable": false,
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/repos/vuejs/core/commits/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "sha": "b".repeat(40),
+                    "commit": { "tree": { "sha": "c".repeat(40) } },
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/git/trees/") {
+            let skill = b"---\nname: vue\ndescription: The reactive core.\n---\n";
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "truncated": false,
+                    "tree": [{
+                        "path": "skills/vue/SKILL.md",
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": "a".repeat(40),
+                        "size": skill.len(),
+                    }],
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/git/blobs/") {
+            let skill = b"---\nname: vue\ndescription: The reactive core.\n---\n";
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "content": STANDARD.encode(skill),
+                    "encoding": "base64",
+                    "size": skill.len(),
+                }))
+                .unwrap(),
+            ));
+        }
+        Ok(github_repository("main", false))
+    }
+}
+
+#[test]
+fn a_named_collection_entry_installs_through_the_github_path_selector() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host =
+        LocalHost::new(project, temporary.path().join("data")).with_remote_provider(Arc::new(
+            SkilldRemote::new(
+                Arc::new(LargeRepositoryHttp),
+                Arc::new(NoTokenProvider),
+                NativeRemoteConfig::Unconfigured,
+            )
+            .with_endpoint("http://127.0.0.1:8787")
+            .unwrap()
+            .with_sleeper(Arc::new(NoSleep)),
+        ));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        [
+            "skilld",
+            "add",
+            "@harlan-zw/large",
+            "--all",
+            "--agent",
+            "codex",
+        ],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    let output = String::from_utf8(stdout).unwrap();
+    assert_eq!(result.exit_code, 0, "{output}");
+    assert!(output.contains("Installed Skill vue."), "{output}");
+    assert_eq!(
+        host.list(InstallScope::Project).unwrap(),
+        ["vue".to_owned()]
+    );
+}
+
 #[test]
 fn a_curator_ref_lists_every_collection_once() {
     let collection = |name: &str| {
@@ -1215,6 +1414,12 @@ fn a_curator_ref_lists_every_collection_once() {
         ),
         collection("vue"),
         collection("nuxt"),
+        // The named entries resolve through the rows of their Repository once.
+        // No row carries a path, so every named Skill keeps its selector.
+        registry_page(&[
+            ("vuejs", "core", "vue", None),
+            ("vuejs", "core", "shared", None),
+        ]),
     ]));
     let remote = search_remote(http.clone());
 
@@ -1238,6 +1443,7 @@ fn a_curator_ref_lists_every_collection_once() {
             "/api/curators/harlan-zw",
             "/api/collections/by-author/harlan-zw/vue",
             "/api/collections/by-author/harlan-zw/nuxt",
+            "/api/skills?owner=vuejs&limit=200",
         ]
     );
 }
