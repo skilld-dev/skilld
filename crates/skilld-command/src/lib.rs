@@ -549,6 +549,8 @@ where
 
 enum CommandOutput {
     Screen(Screen),
+    /// Work that finished with part of it failed. It prints, then exits 1.
+    IncompleteScreen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
     Run(RunOutcome),
@@ -686,6 +688,13 @@ where
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
+        }
+        Ok(CommandOutput::IncompleteScreen(screen)) => {
+            let bytes = match mode {
+                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
+            };
+            write_success_with_exit(bytes.as_bytes(), mode, stdout, stderr, 1)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
             Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
@@ -960,27 +969,36 @@ fn dispatch<H: Host>(
                     // one failed delivery sends every later Skill of that
                     // Repository straight to GitHub.
                     let mut undeliverable = BTreeSet::new();
-                    for (index, item) in listing.items.iter().enumerate() {
-                        let (installed, note) = install_listed(
-                            host,
-                            item,
-                            &options,
-                            &mut undeliverable,
-                        )
-                        .map_err(|error| CommandError {
-                                message: format!(
-                                    "{}. skilld installed {index} of {} Skills from {reference} before this failure.",
-                                    error.message.trim_end_matches('.'),
-                                    listing.items.len()
-                                ),
-                                ..error
-                            })?;
-                        lines.extend(note.map(Line::hint));
-                        for skill in &installed {
-                            lines.extend(render_installed(skill)?);
+                    // One Skill a ref names can fail on its own, such as a
+                    // Skill a check blocks. The rest still install, and the
+                    // failures print at the end.
+                    let mut failures = Vec::new();
+                    for item in &listing.items {
+                        match install_listed(host, item, &options, &mut undeliverable) {
+                            Ok((installed, note)) => {
+                                lines.extend(note.map(Line::hint));
+                                for skill in &installed {
+                                    lines.extend(render_installed(skill)?);
+                                }
+                            }
+                            Err(error) => failures.push((item.name.clone(), error)),
                         }
                     }
-                    Ok(CommandOutput::Screen(Screen::new(lines)))
+                    if failures.is_empty() {
+                        return Ok(CommandOutput::Screen(Screen::new(lines)));
+                    }
+                    lines.push(Line::warn(format!(
+                        "skilld installed {} of {} Skills from {reference}.",
+                        listing.items.len() - failures.len(),
+                        listing.items.len()
+                    )));
+                    for (name, error) in &failures {
+                        lines.push(Line::error(format!(
+                            "{name}: {}: {}",
+                            error.code, error.message
+                        )));
+                    }
+                    Ok(CommandOutput::IncompleteScreen(Screen::new(lines)))
                 }
             }
         }
@@ -3900,6 +3918,90 @@ mod tests {
                 }],
             })
         }
+    }
+
+    /// Lists two Skills and blocks the second one, the way a check result does.
+    struct BlockedSkillHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for BlockedSkillHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            let InstallSource::Remote(selector) = &source else {
+                panic!("expected a hosted install: {source:?}")
+            };
+            let name = selector.rsplit('/').next().unwrap().to_owned();
+            if name == "blocked" {
+                return Err(CommandError::operation(
+                    "CHECK_BLOCKED",
+                    "the Resolution was blocked by check results",
+                ));
+            }
+            Ok(vec![InstalledSkill {
+                name: name.clone(),
+                source: LockedSource::Remote {
+                    source: selector.clone(),
+                    commit_sha: "a".repeat(40),
+                    skill_path: format!("skills/{name}"),
+                },
+                source_status: "verified",
+            }])
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: ["blocked", "vue"]
+                    .into_iter()
+                    .map(|name| ListedSkill {
+                        name: name.to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    #[test]
+    fn add_installs_every_other_skill_when_one_is_blocked() {
+        let host = BlockedSkillHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!((exit, stderr.as_str()), (1, ""));
+        assert!(stdout.contains("Installed Skill vue."), "{stdout}");
+        assert!(
+            stdout.contains("skilld installed 1 of 2 Skills from skilld-dev/skills."),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("blocked: CHECK_BLOCKED: the Resolution was blocked by check results"),
+            "{stdout}"
+        );
     }
 
     #[test]
