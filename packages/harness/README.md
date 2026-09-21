@@ -69,7 +69,8 @@ the session started and removes the directory.
 | `port` | a free port from the operating system | Bridge port. |
 | `keepRoot` | `false` | Keep the session root after `destroy`. |
 
-The local sandbox needs POSIX `sh` at `/bin/sh`.
+The local sandbox needs POSIX `sh` at `/bin/sh`. It runs on macOS and Linux.
+It does not support Windows.
 
 A Skill that carries a large reference tree will exceed the default output
 policy, which stops at 64 files. Raise it on `createSkillHarness`:

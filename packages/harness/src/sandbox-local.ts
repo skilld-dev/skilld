@@ -203,7 +203,8 @@ function createSandboxSession(root: string, children: Set<ChildProcessWithoutNul
 /**
  * Create a sandbox provider that runs Harness sessions on this computer.
  *
- * The session needs POSIX `sh` at `/bin/sh`. It exposes one port on
+ * The session needs POSIX `sh` at `/bin/sh`, so it runs on macOS and Linux
+ * and not on Windows. It exposes one port on
  * `127.0.0.1` for bridge-backed Harness adapters. It applies no isolation:
  * every process reaches the whole computer and the caller's environment.
  */
