@@ -1279,7 +1279,14 @@ fn install_listed<H: Host>(
     // Skills install in direct mode from the start.
     let repository = (item.owner.clone(), item.repository.clone());
     if item.needs_direct() || undeliverable.contains(&repository) {
-        let source = item.direct_selector().unwrap_or_else(|| item.selector());
+        // A row without a path has no direct selector, so it stays on hosted
+        // delivery. Its failure is the real delivery error, never the
+        // `--direct` guidance.
+        let Some(source) = item.direct_selector() else {
+            return host
+                .install_request(request(InstallSource::Remote(item.selector())))
+                .map(|installed| (installed, None));
+        };
         return host
             .install_request(request(InstallSource::DirectRemote(source)))
             .map(|installed| (installed, None));
@@ -4027,6 +4034,115 @@ mod tests {
                 InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
             ]
         );
+    }
+
+    /// Lists one hosted Skill that knows its path and one that does not, and
+    /// fails every hosted install. A direct selector without an explicit
+    /// `github:` source fails the way direct prepare does.
+    struct UndeliverablePathlessHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UndeliverablePathlessHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "the Resolution failed",
+                )),
+                InstallSource::DirectRemote(selector) if selector.starts_with("github:") => {
+                    Ok(vec![InstalledSkill {
+                        name: "vue".to_owned(),
+                        source: LockedSource::Remote {
+                            source: selector,
+                            commit_sha: "a".repeat(40),
+                            skill_path: "skills/vue".to_owned(),
+                        },
+                        source_status: "unverified",
+                    }])
+                }
+                InstallSource::DirectRemote(_) => Err(CommandError::operation(
+                    "DIRECT_SOURCE_REQUIRED",
+                    DIRECT_SOURCE_GUIDANCE,
+                )),
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![
+                    ListedSkill {
+                        name: "vue".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry {
+                            path: Some("skills/vue".to_owned()),
+                        },
+                    },
+                    ListedSkill {
+                        name: "pathless".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    },
+                ],
+            })
+        }
+    }
+
+    #[test]
+    fn add_reports_the_delivery_error_for_a_pathless_skill_of_an_undeliverable_repository() {
+        let host = UndeliverablePathlessHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 1, "{stdout}");
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue: the Resolution failed. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("pathless: INVALID_SOURCE: the Resolution failed"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("DIRECT_SOURCE_REQUIRED"), "{stdout}");
+        assert!(!stdout.contains("Remove --direct"), "{stdout}");
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::Remote("skilld-dev/skills/pathless".to_owned()),
+            ]
+        );
+        assert_eq!(stderr, "");
     }
 
     #[test]

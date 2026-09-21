@@ -852,6 +852,29 @@ fn a_truncated_github_tree_stops_the_fallback_listing() {
 }
 
 #[test]
+fn a_repository_past_the_direct_listing_cap_is_a_too_large_error() {
+    let paths = (0..201)
+        .map(|index| format!("skills/skill-{index:03}/SKILL.md"))
+        .collect::<Vec<_>>();
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        submission_declined(),
+        github_repository("main", false),
+        github_tree(&paths.iter().map(String::as_str).collect::<Vec<_>>()),
+    ]));
+    let remote = search_remote(http);
+
+    let error = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap_err();
+
+    assert_eq!(error.code, "DIRECT_SOURCE_TOO_LARGE");
+}
+
+#[test]
 fn an_owner_index_past_page_one_is_merged_into_the_listing() {
     let page_one = response(
         200,
@@ -1010,6 +1033,96 @@ fn a_collection_ref_lists_its_skills_in_order_and_expands_repository_entries() {
             "/api/collections/by-author/harlan-zw/nuxt",
             "/api/skills?owner=nuxt&limit=200",
         ]
+    );
+}
+
+/// Serves one collection whose entries name Repositories: `vuejs/core` is
+/// indexed, `organizer/stalled` lists nothing and its index job stays queued.
+#[derive(Default)]
+struct CollectionExpansionHttp {
+    polls: Mutex<usize>,
+}
+
+impl HttpAdapter for CollectionExpansionHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let url = request.url.as_str();
+        if url.contains("/api/collections/by-author/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "authorLogin": "harlan-zw",
+                    "slug": "nuxt",
+                    "skills": [
+                        { "position": 0, "owner": "vuejs", "repo": "core", "name": null, "reason": null },
+                        { "position": 1, "owner": "organizer", "repo": "stalled", "name": null, "reason": null },
+                    ]
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/api/skills") {
+            if url.contains("owner=vuejs") {
+                return Ok(registry_page(&[("vuejs", "core", "vue", None)]));
+            }
+            return Ok(registry_page(&[]));
+        }
+        if url.ends_with("/api/repos") {
+            return Ok(submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"));
+        }
+        if url.contains("/api/repos/index/") {
+            *self.polls.lock().unwrap() += 1;
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "_tag": "queued",
+                    "repository": { "_tag": "repository", "owner": "organizer", "repo": "stalled", "url": "https://github.com/organizer/stalled" },
+                    "progress": { "_tag": "checking" },
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/git/trees/") {
+            return Ok(github_tree(&["skills/pinned/SKILL.md"]));
+        }
+        Ok(github_repository("main", false))
+    }
+}
+
+#[test]
+fn a_collection_expansion_does_not_wait_for_a_stalled_index_job() {
+    let http = Arc::new(CollectionExpansionHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "nuxt".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            listed("vuejs", "core", "vue", None),
+            direct_listed("organizer", "stalled", "pinned", "skills/pinned"),
+        ]
+    );
+    assert_eq!(
+        *http.polls.lock().unwrap(),
+        0,
+        "a collection entry must not poll an index job"
     );
 }
 

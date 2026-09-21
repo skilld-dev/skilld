@@ -1718,11 +1718,17 @@ impl SkilldRemote {
     /// Every Skill one Repository carries, by name. The owner index fetch is
     /// memoized per Repository in `memo` for one listing, so repeated
     /// collection entries naming the same Repository cost one fetch.
+    ///
+    /// `submit` submits the Repository to skilld.dev and waits for its index
+    /// job when the owner index lists nothing. Only a direct Repository ref
+    /// pays that wait. A collection expansion must not stall on one stale
+    /// entry, so it reads the Git tree instead.
     fn repository_skills(
         &self,
         owner: &str,
         repository: &str,
         memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
+        submit: bool,
     ) -> Result<Vec<ListedSkill>, RemoteError> {
         let key = (owner.to_ascii_lowercase(), repository.to_ascii_lowercase());
         if let Some(items) = memo.get(&key) {
@@ -1733,7 +1739,7 @@ impl SkilldRemote {
             .into_iter()
             .filter(|skill| skill.repository.eq_ignore_ascii_case(repository))
             .collect::<Vec<_>>();
-        if items.is_empty() {
+        if items.is_empty() && submit {
             items = self.submitted_repository_skills(owner, repository)?;
         }
         if items.is_empty() {
@@ -1892,12 +1898,16 @@ impl SkilldRemote {
                 continue;
             };
             let name = path.rsplit('/').next().unwrap_or(path);
-            if let Some(skill) = listed_direct_skill(owner, repository, name, path) {
-                items.push(skill);
-            }
+            let Some(skill) = listed_direct_skill(owner, repository, name, path) else {
+                continue;
+            };
             if items.len() == MAX_DIRECT_LISTING_SKILLS {
-                break;
+                return Err(RemoteError::new(
+                    "DIRECT_SOURCE_TOO_LARGE",
+                    "the GitHub Repository lists more Skills than the direct access limit",
+                ));
             }
+            items.push(skill);
         }
         Ok(items)
     }
@@ -1968,7 +1978,7 @@ impl SkilldRemote {
                 )
                 .into_iter()
                 .collect(),
-                None => self.repository_skills(&entry.owner, &entry.repository, memo)?,
+                None => self.repository_skills(&entry.owner, &entry.repository, memo, false)?,
             };
             for skill in expanded {
                 if seen.insert(skill.selector()) {
@@ -2075,7 +2085,7 @@ impl RemoteProvider for SkilldRemote {
         let mut memo = HashMap::new();
         let items = match reference {
             MultiSkillRef::Repository { owner, repository } => {
-                self.repository_skills(owner, repository, &mut memo)?
+                self.repository_skills(owner, repository, &mut memo, true)?
             }
             MultiSkillRef::Collection { login, slug } => {
                 self.expand_entries(self.collection_entries(login, slug)?, &mut memo)?
