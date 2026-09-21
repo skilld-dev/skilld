@@ -89,14 +89,25 @@ impl RemoteSelector {
                 .map_or((rest, None), |(source, value)| {
                     (source, Some(parse_source_ref(value)))
                 });
-            let (owner, repository, name) = split_three(source)?;
+            let (owner, repository, selector) = split_three(source)?;
+            // One segment names the Skill. Several name its path in the
+            // Repository, which resolves one Skill even when two directories
+            // share a name, and reads that directory instead of the whole
+            // Repository tree.
+            let selector = if selector.contains('/') {
+                SourceSelector::Path {
+                    path: selector.to_owned(),
+                }
+            } else {
+                SourceSelector::NamedSkill {
+                    name: selector.to_owned(),
+                }
+            };
             let request = SourceRequest {
                 provider: SourceProvider::Github,
                 owner: owner.to_owned(),
                 repository: repository.to_owned(),
-                selector: SourceSelector::NamedSkill {
-                    name: name.to_owned(),
-                },
+                selector,
                 r#ref: reference,
             };
             validate_source_request(&request)?;

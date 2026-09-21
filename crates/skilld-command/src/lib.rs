@@ -27,10 +27,11 @@ pub use provenance::RemoteProvenance;
 use provenance::source_status_caution;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
-    NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider, PreparedRemoteSkill,
-    RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit,
-    RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState, RemoteUpdateComparison,
-    RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
+    INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
+    PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation,
+    RemoteLatestCommit, RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState,
+    RemoteUpdateComparison, RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper,
+    TokenProvider,
 };
 pub use run::{
     FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
@@ -955,22 +956,18 @@ fn dispatch<H: Host>(
                         )])));
                     }
                     let mut lines = Vec::with_capacity(listing.items.len());
+                    // skilld.dev delivers a whole Repository or none of it, so
+                    // one failed delivery sends every later Skill of that
+                    // Repository straight to GitHub.
+                    let mut undeliverable = BTreeSet::new();
                     for (index, item) in listing.items.iter().enumerate() {
-                        // A Repository the registry does not list yet resolves
-                        // through GitHub, so its Skills install in direct mode.
-                        let source = if item.needs_direct() {
-                            InstallSource::DirectRemote(item.selector())
-                        } else {
-                            InstallSource::Remote(item.selector())
-                        };
-                        let installed = host
-                            .install_request(InstallRequest {
-                                operation: InstallOperation::Install(source),
-                                scope: options.scope,
-                                targets: options.targets.clone(),
-                                mode: options.mode,
-                            })
-                            .map_err(|error| CommandError {
+                        let (installed, note) = install_listed(
+                            host,
+                            item,
+                            &options,
+                            &mut undeliverable,
+                        )
+                        .map_err(|error| CommandError {
                                 message: format!(
                                     "{}. skilld installed {index} of {} Skills from {reference} before this failure.",
                                     error.message.trim_end_matches('.'),
@@ -978,6 +975,7 @@ fn dispatch<H: Host>(
                                 ),
                                 ..error
                             })?;
+                        lines.extend(note.map(Line::hint));
                         for skill in &installed {
                             lines.extend(render_installed(skill)?);
                         }
@@ -1238,6 +1236,72 @@ fn install<H: Host>(
         lines.extend(render_installed(skill)?);
     }
     Ok(CommandOutput::Screen(Screen::new(lines)))
+}
+
+/// Install one listed Skill, reading GitHub when skilld.dev cannot deliver it.
+///
+/// skilld.dev lists a Skill before it can build an Artifact for it, and a
+/// delivery can fail for one Skill of many. A Skill that names its path in the
+/// Repository installs from GitHub instead, so one failed Artifact never ends
+/// the whole install. The returned note says that happened. The Skill records
+/// the `unverified` source status, which every installed line prints.
+fn install_listed<H: Host>(
+    host: &H,
+    item: &ListedSkill,
+    options: &InstallOptions,
+    undeliverable: &mut BTreeSet<(String, String)>,
+) -> Result<(Vec<InstalledSkill>, Option<String>), CommandError> {
+    let request = |source| InstallRequest {
+        operation: InstallOperation::Install(source),
+        scope: options.scope,
+        targets: options.targets.clone(),
+        mode: options.mode,
+    };
+    // A Repository the registry does not list resolves through GitHub, so its
+    // Skills install in direct mode from the start.
+    let repository = (item.owner.clone(), item.repository.clone());
+    if item.needs_direct() || undeliverable.contains(&repository) {
+        let source = item.direct_selector().unwrap_or_else(|| item.selector());
+        return host
+            .install_request(request(InstallSource::DirectRemote(source)))
+            .map(|installed| (installed, None));
+    }
+    let hosted = host.install_request(request(InstallSource::Remote(item.selector())));
+    let (error, fallback) = match (hosted, item.direct_selector()) {
+        (Ok(installed), _) => return Ok((installed, None)),
+        (Err(error), None) => return Err(error),
+        (Err(error), Some(_)) if !delivery_failed(&error) => return Err(error),
+        (Err(error), Some(fallback)) => (error, fallback),
+    };
+    let installed = host
+        .install_request(request(InstallSource::DirectRemote(fallback)))
+        .map_err(|_| error.clone())?;
+    undeliverable.insert(repository);
+    Ok((
+        installed,
+        Some(format!(
+            "skilld.dev could not deliver {}: {}. skilld read the Skill from GitHub instead.",
+            item.name,
+            error.message.trim_end_matches('.')
+        )),
+    ))
+}
+
+/// Whether skilld.dev failed to deliver an Artifact for a Skill it lists.
+///
+/// These are delivery failures, not refusals. A refusal, such as an
+/// authentication or policy error, stands.
+fn delivery_failed(error: &CommandError) -> bool {
+    matches!(
+        error.code,
+        "INVALID_SOURCE"
+            | "SOURCE_NOT_FOUND"
+            | "SOURCE_UNAVAILABLE"
+            | "SERVICE_UNAVAILABLE"
+            | "CHECK_UNAVAILABLE"
+            | "SIGNER_UNAVAILABLE"
+            | "RESOLUTION_FAILED"
+    )
 }
 
 /// List the Skills a multi-skill ref names. An empty listing is a failure:
@@ -3547,14 +3611,14 @@ mod tests {
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: Some("Build Vue interfaces.".to_owned()),
-                        origin: skilld_core::ListedOrigin::Registry,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
                     },
                     skilld_core::ListedSkill {
                         name: "nuxt".to_owned(),
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: None,
-                        origin: skilld_core::ListedOrigin::Registry,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
                     },
                 ]
             };
@@ -3775,6 +3839,92 @@ mod tests {
         assert_eq!(exit, 0, "{stderr}");
         assert!(stdout.contains("Installed Skill vue."), "{stdout}");
         assert_eq!(host.inner.requests().len(), 2);
+    }
+
+    /// Lists one hosted Skill that knows its path, and fails every hosted
+    /// install, so only the GitHub fallback can succeed.
+    struct UndeliverableHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UndeliverableHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "the Resolution failed",
+                )),
+                InstallSource::DirectRemote(source) => Ok(vec![InstalledSkill {
+                    name: "vue".to_owned(),
+                    source: LockedSource::Remote {
+                        source,
+                        commit_sha: "a".repeat(40),
+                        skill_path: "skills/vue".to_owned(),
+                    },
+                    source_status: "unverified",
+                }]),
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![ListedSkill {
+                    name: "vue".to_owned(),
+                    owner: "skilld-dev".to_owned(),
+                    repository: "skills".to_owned(),
+                    description: None,
+                    origin: skilld_core::ListedOrigin::Registry {
+                        path: Some("skills/vue".to_owned()),
+                    },
+                }],
+            })
+        }
+    }
+
+    #[test]
+    fn add_reads_github_when_skilld_dev_cannot_deliver_a_listed_skill() {
+        let host = UndeliverableHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue: the Resolution failed. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Source status: unverified"), "{stdout}");
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+            ]
+        );
     }
 
     #[test]

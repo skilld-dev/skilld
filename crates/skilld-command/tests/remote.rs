@@ -9,8 +9,8 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use skilld_command::{
-    Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, LocalHost,
-    NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
+    Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, INDEX_POLL_ATTEMPTS,
+    LocalHost, NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
     RemoteComparisonOutcome, RemoteComparisonRelation, RemoteProgress, RemoteProgressStage,
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, SecretValue, SkilldRemote, Sleeper,
     TokenProvider, run,
@@ -395,7 +395,7 @@ fn listed(owner: &str, repository: &str, name: &str, description: Option<&str>) 
         owner: owner.to_owned(),
         repository: repository.to_owned(),
         description: description.map(str::to_owned),
-        origin: ListedOrigin::Registry,
+        origin: ListedOrigin::Registry { path: None },
     }
 }
 
@@ -507,10 +507,242 @@ fn direct_listed(owner: &str, repository: &str, name: &str, path: &str) -> Liste
     }
 }
 
+/// Answers every index poll with `queued`, then serves the GitHub tree.
+#[derive(Default)]
+struct IndexingForeverHttp {
+    polls: Mutex<usize>,
+}
+
+impl HttpAdapter for IndexingForeverHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let url = request.url.as_str();
+        if url.contains("/api/skills") {
+            return Ok(registry_page(&[]));
+        }
+        if url.ends_with("/api/repos") {
+            return Ok(submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"));
+        }
+        if url.contains("/api/repos/index/") {
+            *self.polls.lock().unwrap() += 1;
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "_tag": "queued",
+                    "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+                    "progress": { "_tag": "checking" },
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/git/trees/") {
+            return Ok(github_tree(&["skills/vue/SKILL.md"]));
+        }
+        Ok(github_repository("main", false))
+    }
+}
+
+/// skilld.dev refuses the submission, so the listing reads GitHub instead.
+fn submission_declined() -> HttpResponse {
+    response(404, br#"{"message":"Not Found"}"#.to_vec())
+}
+
+fn submission_queued(job_id: &str) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({
+            "_tag": "queued",
+            "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+            "jobId": job_id,
+            "progress": { "_tag": "queued" },
+        }))
+        .unwrap(),
+    )
+}
+
+fn index_rows(names: &[&str]) -> serde_json::Value {
+    json!(
+        names
+            .iter()
+            .map(|name| json!({
+                "name": name,
+                "slug": format!("vuejs/{name}"),
+                "path": format!("skills/{name}/SKILL.md"),
+                "description": null,
+                "likeCount": 0,
+                "registryPath": format!("/gh/vuejs/core/{name}"),
+            }))
+            .collect::<Vec<_>>()
+    )
+}
+
+/// One hosted Skill that also knows its path, so it can fall back to GitHub.
+fn indexed_listed(name: &str) -> ListedSkill {
+    ListedSkill {
+        name: name.to_owned(),
+        owner: "vuejs".to_owned(),
+        repository: "core".to_owned(),
+        description: None,
+        origin: ListedOrigin::Registry {
+            path: Some(format!("skills/{name}")),
+        },
+    }
+}
+
+fn index_indexed(names: &[&str]) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({
+            "_tag": "indexed",
+            "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+            "skills": index_rows(names),
+        }))
+        .unwrap(),
+    )
+}
+
+#[test]
+fn a_repository_the_registry_does_not_list_is_submitted_then_listed_once_indexed() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"),
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "_tag": "queued",
+                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+                "progress": { "_tag": "indexing", "indexed": 1, "total": 2 },
+            }))
+            .unwrap(),
+        ),
+        index_indexed(&["nuxt", "vue"]),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [indexed_listed("nuxt"), indexed_listed("vue")]
+    );
+    assert!(listing.items.iter().all(|item| !item.needs_direct()));
+    assert_eq!(
+        listing.items[0].direct_selector().as_deref(),
+        Some("github:vuejs/core/skills/nuxt")
+    );
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/skills?owner=vuejs&limit=200",
+            "/api/repos",
+            "/api/repos/index/7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d",
+            "/api/repos/index/7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d",
+        ]
+    );
+}
+
+#[test]
+fn a_repository_skilld_dev_already_holds_needs_no_index_poll() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "_tag": "indexed",
+                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+                "skills": index_rows(&["vue"]),
+            }))
+            .unwrap(),
+        ),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [indexed_listed("vue")]);
+    assert_eq!(
+        request_paths(&http),
+        ["/api/skills?owner=vuejs&limit=200", "/api/repos"]
+    );
+}
+
+#[test]
+fn a_failed_index_job_falls_back_to_the_github_tree() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"),
+        response(
+            200,
+            serde_json::to_vec(&json!({
+                "_tag": "failed",
+                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
+                "reason": "No supported SKILL.md files were found.",
+            }))
+            .unwrap(),
+        ),
+        github_repository("main", false),
+        github_tree(&["skills/vue/SKILL.md"]),
+    ]));
+    let remote = search_remote(http);
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [direct_listed("vuejs", "core", "vue", "skills/vue")]
+    );
+}
+
+#[test]
+fn a_submission_that_never_finishes_stops_waiting_and_reads_github() {
+    let http = Arc::new(IndexingForeverHttp::default());
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [direct_listed("vuejs", "core", "vue", "skills/vue")]
+    );
+    assert_eq!(*http.polls.lock().unwrap(), INDEX_POLL_ATTEMPTS);
+}
+
 #[test]
 fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[("vuejs", "router", "vue-router", None)]),
+        submission_declined(),
         github_repository("main", false),
         github_tree(&[
             "README.md",
@@ -545,6 +777,7 @@ fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
         request_paths(&http),
         [
             "/api/skills?owner=vuejs&limit=200",
+            "/api/repos",
             "https://api.github.com/repos/vuejs/core",
             "https://api.github.com/repos/vuejs/core/git/trees/main?recursive=1",
         ]
@@ -555,6 +788,7 @@ fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
 fn the_fallback_listing_drops_a_skill_file_at_the_repository_root() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
+        submission_declined(),
         github_repository("trunk", false),
         github_tree(&["SKILL.md"]),
     ]));
@@ -576,7 +810,11 @@ fn a_private_or_missing_github_repository_lists_no_skills() {
         github_repository("main", true),
         response(404, br#"{"message":"Not Found"}"#.to_vec()),
     ] {
-        let http = Arc::new(FakeHttp::with([registry_page(&[]), github]));
+        let http = Arc::new(FakeHttp::with([
+            registry_page(&[]),
+            submission_declined(),
+            github,
+        ]));
         let remote = search_remote(http);
 
         let listing = remote
@@ -594,6 +832,7 @@ fn a_private_or_missing_github_repository_lists_no_skills() {
 fn a_truncated_github_tree_stops_the_fallback_listing() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
+        submission_declined(),
         github_repository("main", false),
         response(
             200,
@@ -2032,6 +2271,59 @@ fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
         header.name == "x-skilld-grant"
             && header.value.expose() == "private-grant-token-with-enough-bytes"
     }));
+}
+
+#[test]
+fn a_second_direct_skill_reuses_the_repository_snapshot() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let encoded = base64::engine::general_purpose::STANDARD.encode(skill);
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let tree = "89abcdef0123456789abcdef0123456789abcdef";
+    let blob = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let blob_response = || {
+        response(
+            200,
+            format!(
+                r#"{{"content":"{encoded}","encoding":"base64","size":{}}}"#,
+                skill.len()
+            ),
+        )
+    };
+    let http = Arc::new(FakeHttp::with([
+        response(
+            200,
+            br#"{"private":false,"default_branch":"main"}"#.to_vec(),
+        ),
+        response(
+            200,
+            format!(r#"{{"sha":"{sha}","commit":{{"tree":{{"sha":"{tree}"}}}}}}"#),
+        ),
+        response(
+            200,
+            format!(
+                r#"{{"truncated":false,"tree":[{{"path":"skills/one/SKILL.md","mode":"100644","type":"blob","sha":"{blob}","size":{size}}},{{"path":"skills/two/SKILL.md","mode":"100644","type":"blob","sha":"{blob}","size":{size}}}]}}"#,
+                size = skill.len()
+            ),
+        ),
+        blob_response(),
+        blob_response(),
+    ]));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_sleeper(Arc::new(NoSleep));
+
+    for name in ["one", "two"] {
+        let selector =
+            RemoteSelector::parse(&format!("github:skilld-dev/skills/skills/{name}")).unwrap();
+        remote.prepare(&selector, true).unwrap();
+    }
+
+    // Two Skills, one Repository read, one commit read, one tree read, one
+    // blob each. GitHub rate limits an unauthenticated caller at 60 an hour.
+    assert_eq!(http.requests.lock().unwrap().len(), 5);
 }
 
 #[test]

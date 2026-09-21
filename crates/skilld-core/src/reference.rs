@@ -36,7 +36,9 @@ pub enum MultiSkillRef {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ListedOrigin {
     /// skilld.dev lists the Skill. Install resolves an Artifact for it.
-    Registry,
+    /// `path` is the Skill directory in the Repository, when the listing
+    /// names it, so a failed Artifact delivery can still read GitHub.
+    Registry { path: Option<String> },
     /// GitHub carries the Skill at `path`. Install reads GitHub directly.
     Direct { path: String },
 }
@@ -59,11 +61,33 @@ impl ListedSkill {
     /// resolves.
     pub fn selector(&self) -> String {
         match &self.origin {
-            ListedOrigin::Registry => format!("{}/{}/{}", self.owner, self.repository, self.name),
-            ListedOrigin::Direct { path } => {
-                format!("github:{}/{}/{path}", self.owner, self.repository)
+            // The path resolves one Skill even when two directories share a
+            // Skill name, and skilld.dev then reads that directory instead of
+            // the whole Repository tree.
+            ListedOrigin::Registry { path: Some(path) } => {
+                format!("{}/{}/{path}", self.owner, self.repository)
             }
+            ListedOrigin::Registry { path: None } => {
+                format!("{}/{}/{}", self.owner, self.repository, self.name)
+            }
+            ListedOrigin::Direct { path } => self.github_selector(path),
         }
+    }
+
+    /// The `github:` selector that reads this Skill from GitHub, when skilld
+    /// knows where the Skill sits in the Repository.
+    ///
+    /// A hosted Skill keeps this as its fallback: skilld.dev can list a Skill
+    /// and still fail to deliver its Artifact.
+    pub fn direct_selector(&self) -> Option<String> {
+        match &self.origin {
+            ListedOrigin::Registry { path } => path.as_ref().map(|path| self.github_selector(path)),
+            ListedOrigin::Direct { path } => Some(self.github_selector(path)),
+        }
+    }
+
+    fn github_selector(&self, path: &str) -> String {
+        format!("github:{}/{}/{path}", self.owner, self.repository)
     }
 
     /// Whether loading or installing this Skill needs `--direct`.

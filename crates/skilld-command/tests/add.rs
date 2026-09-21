@@ -35,7 +35,7 @@ impl RemoteProvider for ListingRemote {
                     owner: "vuejs".to_owned(),
                     repository: "core".to_owned(),
                     description: None,
-                    origin: ListedOrigin::Registry,
+                    origin: ListedOrigin::Registry { path: None },
                 })
                 .collect(),
         })

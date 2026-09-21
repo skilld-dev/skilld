@@ -66,6 +66,7 @@ fn remote_status_label(stage: RemoteProgressStage) -> &'static str {
         RemoteProgressStage::Publishing => "Publishing Artifact",
         RemoteProgressStage::RetryWait => "Waiting to retry",
         RemoteProgressStage::VerifyingAttestation => "Verifying attestation",
+        RemoteProgressStage::Indexing => "Indexing Repository",
         RemoteProgressStage::RequestingDownload => "Requesting Artifact download",
         RemoteProgressStage::DownloadingArtifact => "Downloading Artifact",
         RemoteProgressStage::VerifyingArtifact => "Verifying Artifact",

@@ -73,7 +73,7 @@ fn every_listed_skill_starts_chosen() {
             owner: "vuejs".to_owned(),
             repository: "core".to_owned(),
             description: Some("Build Vue interfaces.".to_owned()),
-            origin: ListedOrigin::Registry,
+            origin: ListedOrigin::Registry { path: None },
         }],
     };
 
