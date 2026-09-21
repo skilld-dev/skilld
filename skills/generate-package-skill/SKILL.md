@@ -25,6 +25,8 @@ Ask for the destination only when the request does not provide one.
 
 For an npm package, use the installed or prepared package source first.
 Use current official documentation when the prepared source lacks required details.
+Read a current Skill for the advice it proves, never for its file layout.
+Decide the layout from the package, then delete any file the new `SKILL.md` does not link.
 For each version-specific rule, cite the source path or official documentation URL.
 Use `path:line` citations for prepared source when line numbers add value.
 
@@ -34,6 +36,14 @@ Write one directory whose name matches the Skill name.
 The directory must contain `SKILL.md`.
 Put detailed or conditional material in `references/`.
 Put reusable commands or code in `scripts/` when execution adds value.
+
+Keep `SKILL.md` under 500 lines.
+Write a reference file only when `SKILL.md` links it.
+Give each reference file one topic, such as an API surface or a migration.
+Write at most eight reference files.
+
+Never copy release notes, changelogs, issues, or discussions into a file.
+Cite them by URL instead.
 
 The `SKILL.md` frontmatter must contain only:
 
