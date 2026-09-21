@@ -10,11 +10,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use skilld_core::{
-    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, ListedSkill, LockedSource,
-    MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, SearchResponse,
-    SkillListing, SourceRef, SourceRequest, SourceSelector, SourceStatus, TrustedRoot,
-    TrustedRootPin, VerifiedTrustedRoot, parse_search_response, prepare_unverified_files,
-    verify_artifact, verify_attestation, verify_trusted_root,
+    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, ListedOrigin, ListedSkill,
+    LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
+    SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector, SourceStatus,
+    TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
+    prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -32,6 +32,12 @@ const MAX_LISTING_PAGES: usize = 25;
 /// `MAX_LISTING_PAGES`: the curator collection list and each collection's
 /// entry list are capped here so a malformed response cannot fan out.
 const MAX_LISTING_ENTRIES: usize = MAX_LISTING_PAGES;
+
+/// The Skill count one direct Repository listing returns at most.
+const MAX_DIRECT_LISTING_SKILLS: usize = 200;
+
+/// The Git tree entry count one direct Repository listing reads at most.
+const MAX_DIRECT_TREE_ENTRIES: usize = 20_000;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
@@ -1638,8 +1644,66 @@ impl SkilldRemote {
             .into_iter()
             .filter(|skill| skill.repository.eq_ignore_ascii_case(repository))
             .collect::<Vec<_>>();
+        if items.is_empty() {
+            items = self.github_repository_skills(owner, repository)?;
+        }
         items.sort_by(|left, right| left.name.cmp(&right.name));
         memo.insert(key, items.clone());
+        Ok(items)
+    }
+
+    /// Every Skill one public GitHub Repository carries, read from its Git
+    /// tree.
+    ///
+    /// The registry lists curated Skills only, so a Repository it has not
+    /// indexed lists nothing. GitHub still carries the Skills, so each
+    /// `SKILL.md` in the tree names one Skill that direct mode can install.
+    /// A private Repository, or one GitHub does not serve, lists nothing.
+    fn github_repository_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let repository_url = format!(
+            "https://api.github.com/repos/{}/{}",
+            path_segment(owner),
+            path_segment(repository)
+        );
+        let details: GithubRepository = match self.github_json(&repository_url, JSON_LIMIT) {
+            Ok(details) => details,
+            Err(error) if is_github_missing(&error) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        if details.private {
+            return Ok(Vec::new());
+        }
+        let tree_url = format!(
+            "{repository_url}/git/trees/{}?recursive=1",
+            path_segment(&details.default_branch)
+        );
+        let tree: GithubTree = self.github_json(&tree_url, JSON_LIMIT)?;
+        if tree.truncated || tree.tree.len() > MAX_DIRECT_TREE_ENTRIES {
+            return Err(RemoteError::new(
+                "DIRECT_SOURCE_TOO_LARGE",
+                "the GitHub Repository tree exceeds the direct access limit",
+            ));
+        }
+        let mut items = Vec::new();
+        for entry in tree.tree {
+            if entry.kind != "blob" {
+                continue;
+            }
+            let Some(path) = skill_directory(&entry.path) else {
+                continue;
+            };
+            let name = path.rsplit('/').next().unwrap_or(path);
+            if let Some(skill) = listed_direct_skill(owner, repository, name, path) {
+                items.push(skill);
+            }
+            if items.len() == MAX_DIRECT_LISTING_SKILLS {
+                break;
+            }
+        }
         Ok(items)
     }
 
@@ -1735,10 +1799,52 @@ fn listed_skill(
         description: description
             .map(|value| sanitize_line(value, 500, ""))
             .filter(|value| !value.is_empty()),
+        origin: ListedOrigin::Registry,
     };
     RemoteSelector::parse(&skill.selector())
         .is_ok()
         .then_some(skill)
+}
+
+/// Whether GitHub answered that the Repository does not exist.
+///
+/// GitHub answers 404 for a missing Repository and for a private one the
+/// request cannot read. Either way the Repository lists no Skills, and the
+/// caller reports that the ref names none.
+fn is_github_missing(error: &RemoteError) -> bool {
+    error.code == "SERVICE_UNAVAILABLE" && error.message.ends_with("HTTP 404")
+}
+
+/// The Skill directory one tree path names, when the path is a `SKILL.md`.
+///
+/// A `SKILL.md` at the Repository root names no directory. Direct mode reads
+/// one Skill path inside a Repository, so a root Skill has no selector and
+/// the listing drops it.
+fn skill_directory(path: &str) -> Option<&str> {
+    path.strip_suffix("/SKILL.md")
+}
+
+/// Build one listed Skill from a GitHub tree path.
+///
+/// A path outside the selector contract has no `github:` selector, so skilld
+/// could not run or install it. Listing it would print a command that fails,
+/// so the path is dropped.
+fn listed_direct_skill(
+    owner: &str,
+    repository: &str,
+    name: &str,
+    path: &str,
+) -> Option<ListedSkill> {
+    let skill = ListedSkill {
+        owner: owner.to_owned(),
+        repository: repository.to_owned(),
+        name: sanitize_line(name, 100, ""),
+        description: None,
+        origin: ListedOrigin::Direct {
+            path: path.to_owned(),
+        },
+    };
+    (!skill.name.is_empty() && RemoteSelector::parse(&skill.selector()).is_ok()).then_some(skill)
 }
 
 fn not_found_as_source(error: RemoteError, message: String) -> RemoteError {

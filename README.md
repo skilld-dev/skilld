@@ -200,7 +200,11 @@ The instructions and changes stay visible to you.
 
 `skilld run` with a Repository, curator, or collection ref prints an index.
 The index has one line per Skill with its run command. It loads no Skill.
-`skilld add` installs every Skill the same ref names. It accepts the `skilld install` flags.
+`skilld add` installs the Skills the same ref names. It accepts the `skilld install` flags.
+A terminal asks which Skills to install. `--all` installs every one without asking.
+Any other context, such as an Agent, a pipe, or CI, installs every one.
+A Repository that skilld.dev does not list yet falls back to its public GitHub tree.
+Those Skills install through direct mode and record the `unverified` source status.
 
 ## Artifact delivery
 

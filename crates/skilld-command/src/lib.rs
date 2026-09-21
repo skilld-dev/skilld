@@ -37,10 +37,11 @@ pub use run::{
 };
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
-    InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    MultiSkillRef, NotTrackedReason, SkillListing, SkillRef, SourceRef, UpdateFailure,
-    UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
-    UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets, select_target_ids,
+    InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, ListedSkill,
+    LockedSource, MultiSkillRef, NotTrackedReason, SkillListing, SkillRef, SourceRef,
+    UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1,
+    UpdateRelation, UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets,
+    select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
@@ -138,6 +139,11 @@ enum Command {
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nOnly one Skill source accepts --direct. A direct install records the unverified source status."
         )]
         direct: bool,
+        #[arg(
+            long,
+            long_help = "Install every Skill the ref names without asking.\nA terminal asks which Skills to install. Every other context installs all of them."
+        )]
+        all: bool,
     },
     /// Load a Skill for this session without installing it.
     #[command(
@@ -287,6 +293,13 @@ pub trait Host {
         Err(CommandError::unsupported_host(
             "Skill listings are unavailable on this host",
         ))
+    }
+
+    /// Choose which listed Skills to install.
+    ///
+    /// A host that cannot ask installs every Skill the ref names.
+    fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        Ok(listing.items.clone())
     }
 
     fn view(&self, _name: &str, _scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -914,6 +927,7 @@ fn dispatch<H: Host>(
             agents,
             mode,
             direct,
+            all,
         } => {
             let reference = SkillRef::parse(&reference).map_err(CommandError::remote)?;
             let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
@@ -924,13 +938,34 @@ fn dispatch<H: Host>(
                 }
                 SkillRef::Many(reference) => {
                     let listing = list_skills(host, &reference)?;
+                    let total = listing.items.len();
+                    let listing = if all {
+                        listing
+                    } else {
+                        SkillListing {
+                            items: host.choose_skills(&listing)?,
+                            ..listing
+                        }
+                    };
+                    if listing.items.is_empty() {
+                        return Ok(CommandOutput::Screen(Screen::new(vec![Line::item(
+                            format!(
+                                "You chose no Skills of the {total} {reference} names. skilld installed none."
+                            ),
+                        )])));
+                    }
                     let mut lines = Vec::with_capacity(listing.items.len());
                     for (index, item) in listing.items.iter().enumerate() {
+                        // A Repository the registry does not list yet resolves
+                        // through GitHub, so its Skills install in direct mode.
+                        let source = if item.needs_direct() {
+                            InstallSource::DirectRemote(item.selector())
+                        } else {
+                            InstallSource::Remote(item.selector())
+                        };
                         let installed = host
                             .install_request(InstallRequest {
-                                operation: InstallOperation::Install(InstallSource::Remote(
-                                    item.selector(),
-                                )),
+                                operation: InstallOperation::Install(source),
                                 scope: options.scope,
                                 targets: options.targets.clone(),
                                 mode: options.mode,
@@ -1339,6 +1374,23 @@ pub trait BundledSkillProvider: Send + Sync {
     fn skilld_source(&self) -> Result<PathBuf, CommandError>;
 }
 
+/// Choose which Skills of one multi-skill ref `skilld add` installs.
+///
+/// A terminal asks the person. Every other context, and `--all`, installs
+/// every listed Skill.
+pub trait SkillChooser: Send + Sync {
+    fn choose(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError>;
+}
+
+/// The chooser that asks nothing and installs every listed Skill.
+pub struct EveryListedSkill;
+
+impl SkillChooser for EveryListedSkill {
+    fn choose(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        Ok(listing.items.clone())
+    }
+}
+
 pub trait AccountProvider: Send + Sync {
     fn status(&self) -> Result<bool, CommandError>;
     fn login(&self) -> Result<(), CommandError>;
@@ -1369,6 +1421,7 @@ pub struct LocalHost {
     remote: Option<Arc<dyn RemoteProvider>>,
     account: Option<Arc<dyn AccountProvider>>,
     outdated_progress: Arc<dyn outdated::OutdatedProgress>,
+    skill_chooser: Arc<dyn SkillChooser>,
 }
 
 impl LocalHost {
@@ -1393,7 +1446,15 @@ impl LocalHost {
             remote: None,
             account: None,
             outdated_progress: Arc::new(outdated::NoOutdatedProgress),
+            skill_chooser: Arc::new(EveryListedSkill),
         }
+    }
+
+    /// Ask this chooser which listed Skills `skilld add` installs.
+    #[must_use]
+    pub fn with_skill_chooser(mut self, chooser: Arc<dyn SkillChooser>) -> Self {
+        self.skill_chooser = chooser;
+        self
     }
 
     pub fn with_target_roots(mut self, roots: TargetRoots) -> Self {
@@ -1981,6 +2042,10 @@ impl Host for LocalHost {
         self.remote_provider()?
             .list_skills(reference)
             .map_err(CommandError::remote)
+    }
+
+    fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        self.skill_chooser.choose(listing)
     }
 
     fn view(&self, name: &str, scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -3482,12 +3547,14 @@ mod tests {
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: Some("Build Vue interfaces.".to_owned()),
+                        origin: skilld_core::ListedOrigin::Registry,
                     },
                     skilld_core::ListedSkill {
                         name: "nuxt".to_owned(),
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: None,
+                        origin: skilld_core::ListedOrigin::Registry,
                     },
                 ]
             };
@@ -3634,6 +3701,96 @@ mod tests {
             assert_eq!(request.targets, [AgentTargetId::Codex]);
             assert_eq!(request.mode, Some(InstallMode::Symlink));
         }
+    }
+
+    /// Lists two Skills and chooses only the Skills whose names it holds.
+    struct ChoosingHost {
+        inner: ListingHost,
+        chosen: Vec<&'static str>,
+    }
+
+    impl Host for ChoosingHost {
+        fn list(&self, scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            self.inner.list(scope)
+        }
+
+        fn install(
+            &self,
+            source: InstallSource,
+            scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            self.inner.install(source, scope)
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            self.inner.install_request(request)
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            self.inner.list_skills(reference)
+        }
+
+        fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+            Ok(listing
+                .items
+                .iter()
+                .filter(|item| self.chosen.contains(&item.name.as_str()))
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[test]
+    fn add_installs_only_the_chosen_skills_and_all_skips_the_choice() {
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec!["nuxt"],
+        };
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "add", "skilld-dev/skills"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(stdout.contains("Installed Skill nuxt."), "{stdout}");
+        assert!(!stdout.contains("Installed Skill vue."), "{stdout}");
+        assert_eq!(
+            host.inner
+                .requests()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            [InstallOperation::Install(InstallSource::Remote(
+                "skilld-dev/skills/nuxt".to_owned()
+            ))]
+        );
+
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec!["nuxt"],
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(stdout.contains("Installed Skill vue."), "{stdout}");
+        assert_eq!(host.inner.requests().len(), 2);
+    }
+
+    #[test]
+    fn add_reports_that_choosing_no_skill_installs_none() {
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec![],
+        };
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "add", "skilld-dev/skills"]);
+
+        assert_eq!((exit, stderr.as_str()), (0, ""));
+        assert_eq!(
+            stdout,
+            "You chose no Skills of the 2 skilld-dev/skills names. skilld installed none.\n"
+        );
+        assert!(host.inner.requests().is_empty());
     }
 
     #[test]

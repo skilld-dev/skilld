@@ -18,8 +18,8 @@ use skilld_command::{
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
     CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, ListedSkill, LockedSource, MultiSkillRef,
-    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
+    InstallRequest, InstallScope, InstallSource, ListedOrigin, ListedSkill, LockedSource,
+    MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
     SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
     UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
@@ -395,6 +395,7 @@ fn listed(owner: &str, repository: &str, name: &str, description: Option<&str>) 
         owner: owner.to_owned(),
         repository: repository.to_owned(),
         description: description.map(str::to_owned),
+        origin: ListedOrigin::Registry,
     }
 }
 
@@ -462,6 +463,153 @@ fn a_repository_ref_lists_that_repository_from_the_owner_index() {
         ]
     );
     assert_eq!(request_paths(&http), ["/api/skills?owner=vuejs&limit=200"]);
+}
+
+fn github_repository(default_branch: &str, private: bool) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({
+            "private": private,
+            "default_branch": default_branch,
+        }))
+        .unwrap(),
+    )
+}
+
+fn github_tree(paths: &[&str]) -> HttpResponse {
+    let tree = paths
+        .iter()
+        .map(|path| {
+            json!({
+                "path": path,
+                "mode": "100644",
+                "type": if path.ends_with(".md") { "blob" } else { "tree" },
+                "sha": "a".repeat(40),
+                "size": 10,
+            })
+        })
+        .collect::<Vec<_>>();
+    response(
+        200,
+        serde_json::to_vec(&json!({ "truncated": false, "tree": tree })).unwrap(),
+    )
+}
+
+fn direct_listed(owner: &str, repository: &str, name: &str, path: &str) -> ListedSkill {
+    ListedSkill {
+        name: name.to_owned(),
+        owner: owner.to_owned(),
+        repository: repository.to_owned(),
+        description: None,
+        origin: ListedOrigin::Direct {
+            path: path.to_owned(),
+        },
+    }
+}
+
+#[test]
+fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[("vuejs", "router", "vue-router", None)]),
+        github_repository("main", false),
+        github_tree(&[
+            "README.md",
+            "skills",
+            "skills/vue/SKILL.md",
+            "skills/vue/references/api.md",
+            "skills/nuxt/SKILL.md",
+        ]),
+    ]));
+    let remote = search_remote(http.clone());
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        listing.items,
+        [
+            direct_listed("vuejs", "core", "nuxt", "skills/nuxt"),
+            direct_listed("vuejs", "core", "vue", "skills/vue"),
+        ]
+    );
+    assert_eq!(
+        listing.items[0].selector(),
+        "github:vuejs/core/skills/nuxt".to_owned()
+    );
+    assert!(listing.items.iter().all(ListedSkill::needs_direct));
+    assert_eq!(
+        request_paths(&http),
+        [
+            "/api/skills?owner=vuejs&limit=200",
+            "https://api.github.com/repos/vuejs/core",
+            "https://api.github.com/repos/vuejs/core/git/trees/main?recursive=1",
+        ]
+    );
+}
+
+#[test]
+fn the_fallback_listing_drops_a_skill_file_at_the_repository_root() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        github_repository("trunk", false),
+        github_tree(&["SKILL.md"]),
+    ]));
+    let remote = search_remote(http);
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap();
+
+    assert!(listing.items.is_empty());
+}
+
+#[test]
+fn a_private_or_missing_github_repository_lists_no_skills() {
+    for github in [
+        github_repository("main", true),
+        response(404, br#"{"message":"Not Found"}"#.to_vec()),
+    ] {
+        let http = Arc::new(FakeHttp::with([registry_page(&[]), github]));
+        let remote = search_remote(http);
+
+        let listing = remote
+            .list_skills(&MultiSkillRef::Repository {
+                owner: "vuejs".to_owned(),
+                repository: "core".to_owned(),
+            })
+            .unwrap();
+
+        assert!(listing.items.is_empty());
+    }
+}
+
+#[test]
+fn a_truncated_github_tree_stops_the_fallback_listing() {
+    let http = Arc::new(FakeHttp::with([
+        registry_page(&[]),
+        github_repository("main", false),
+        response(
+            200,
+            serde_json::to_vec(&json!({ "truncated": true, "tree": [] })).unwrap(),
+        ),
+    ]));
+    let remote = search_remote(http);
+
+    let error = remote
+        .list_skills(&MultiSkillRef::Repository {
+            owner: "vuejs".to_owned(),
+            repository: "core".to_owned(),
+        })
+        .unwrap_err();
+
+    assert_eq!(error.code, "DIRECT_SOURCE_TOO_LARGE");
 }
 
 #[test]

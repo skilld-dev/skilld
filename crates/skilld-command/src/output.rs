@@ -544,7 +544,20 @@ fn render_index_plain(listing: &SkillListing) -> String {
 }
 
 fn run_command(item: &ListedSkill) -> String {
-    format!("npx skilld run {}", item.selector())
+    format!("npx skilld run {}", run_arguments(item).join(" "))
+}
+
+/// The `skilld run` arguments that load one listed Skill.
+///
+/// A Skill the registry does not list resolves through GitHub, so its command
+/// carries `--direct`.
+fn run_arguments(item: &ListedSkill) -> Vec<String> {
+    let mut arguments = Vec::new();
+    if item.needs_direct() {
+        arguments.push("--direct".to_owned());
+    }
+    arguments.push(item.selector());
+    arguments
 }
 
 #[derive(Serialize)]
@@ -572,12 +585,12 @@ fn index_json(listing: &SkillListing) -> JsonRunData {
                 repository: item.repository.clone(),
                 description: item.description.clone(),
                 selector: item.selector(),
-                run_argv: vec![
-                    "skilld".to_owned(),
-                    "run".to_owned(),
-                    item.selector(),
-                    "--json".to_owned(),
-                ],
+                run_argv: [
+                    vec!["skilld".to_owned(), "run".to_owned()],
+                    run_arguments(item),
+                    vec!["--json".to_owned()],
+                ]
+                .concat(),
             })
             .collect(),
         total: listing.items.len(),

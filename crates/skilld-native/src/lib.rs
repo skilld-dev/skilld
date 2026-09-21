@@ -7,6 +7,7 @@ use skilld_core::RemoteError;
 use url::Url;
 
 #[cfg(not(target_os = "wasi"))]
+pub mod select_ui;
 pub mod update_ui;
 #[cfg(not(target_os = "wasi"))]
 pub mod upgrade;
