@@ -1839,6 +1839,42 @@ fn a_resolution_cannot_change_its_identity_while_polling() {
 }
 
 #[test]
+fn a_blocked_resolution_names_the_check_that_failed() {
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "blocked",
+            "resolutionId": "0f9a4a44-27f9-4f6a-9a21-4d24d8ff2f60",
+            "checkResults": [
+                {
+                    "name": "agent-skills-spec",
+                    "version": "1",
+                    "outcome": "pass",
+                    "required": true,
+                },
+                {
+                    "name": "path-policy",
+                    "version": "1",
+                    "outcome": "fail",
+                    "required": true,
+                    "summary": "The Skill has more than 256 files.",
+                },
+            ],
+        }))
+        .unwrap(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(
+        error.message,
+        "the Resolution was blocked by check results. path-policy: The Skill has more than 256 files."
+    );
+}
+
+#[test]
 fn a_hosted_resolution_reports_each_service_stage() {
     let resolution_id = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
     let stages = [

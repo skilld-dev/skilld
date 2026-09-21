@@ -10,10 +10,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use skilld_core::{
-    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, ListedOrigin, ListedSkill,
-    LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
-    SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector, SourceStatus,
-    TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
+    ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
+    ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
+    RepositoryVisibility, SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector,
+    SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
     prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
@@ -1017,10 +1017,10 @@ impl SkilldRemote {
                     )?;
                     resolution = parse_json(&response.body)?;
                 }
-                Resolution::Blocked { .. } => {
+                Resolution::Blocked { check_results, .. } => {
                     return Err(RemoteError::new(
                         "CHECK_BLOCKED",
-                        "the Resolution was blocked by check results",
+                        blocked_message(&check_results),
                     ));
                 }
                 Resolution::Failed {
@@ -2947,6 +2947,32 @@ fn resolution_timeout() -> RemoteError {
     )
 }
 
+/// Say which check blocked the Skill, and what it found.
+///
+/// A blocked Resolution is a decision about the Skill, so the person needs the
+/// check that made it. Without the names, every block reads the same.
+fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
+    let failed = results
+        .iter()
+        .filter(|result| result.outcome == CheckOutcome::Fail)
+        .map(|result| match &result.summary {
+            Some(summary) => format!(
+                "{}: {}",
+                sanitize_line(&result.name, 100, "check"),
+                sanitize_line(summary, 300, "no summary")
+            ),
+            None => sanitize_line(&result.name, 100, "check"),
+        })
+        .collect::<Vec<_>>();
+    if failed.is_empty() {
+        return "the Resolution was blocked by check results".to_owned();
+    }
+    format!(
+        "the Resolution was blocked by check results. {}",
+        failed.join(". ")
+    )
+}
+
 fn direct_snapshot_lost() -> RemoteError {
     RemoteError::new(
         "SERVICE_UNAVAILABLE",
@@ -2980,7 +3006,7 @@ enum Resolution {
         #[serde(rename = "resolutionId")]
         resolution_id: String,
         #[serde(rename = "checkResults")]
-        _check_results: Vec<skilld_core::CheckResult>,
+        check_results: Vec<skilld_core::CheckResult>,
     },
     Failed {
         #[serde(rename = "resolutionId")]
