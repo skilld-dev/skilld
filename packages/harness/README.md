@@ -71,6 +71,13 @@ the session started and removes the directory.
 
 The local sandbox needs POSIX `sh` at `/bin/sh`.
 
+A Skill that carries a large reference tree will exceed the default output
+policy, which stops at 64 files. Raise it on `createSkillHarness`:
+
+```ts
+createSkillHarness({ harness, sandbox, outputPolicy: { maxOutputFiles: 512 } })
+```
+
 **It applies no isolation.** Every process reaches the whole computer and the
 caller's environment. Use it for your own Skills on your own computer or on a
 self-hosted runner. Use a hosted sandbox provider when the Harness must contain
