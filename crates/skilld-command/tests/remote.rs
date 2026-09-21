@@ -1126,6 +1126,67 @@ fn a_collection_expansion_does_not_wait_for_a_stalled_index_job() {
     );
 }
 
+/// Serves one collection: `vuejs/core` is indexed, and GitHub answers the
+/// repository read for the unindexed `organizer/gone` with HTTP 500.
+struct CollectionFallbackFailureHttp;
+
+impl HttpAdapter for CollectionFallbackFailureHttp {
+    fn send(
+        &self,
+        request: &HttpRequest,
+        _cancellation: &dyn Cancellation,
+        _timeout: Option<Duration>,
+    ) -> Result<HttpResponse, RemoteError> {
+        let url = request.url.as_str();
+        if url.contains("/api/collections/by-author/") {
+            return Ok(response(
+                200,
+                serde_json::to_vec(&json!({
+                    "authorLogin": "harlan-zw",
+                    "slug": "nuxt",
+                    "skills": [
+                        { "position": 0, "owner": "vuejs", "repo": "core", "name": null, "reason": null },
+                        { "position": 1, "owner": "organizer", "repo": "gone", "name": null, "reason": null },
+                    ]
+                }))
+                .unwrap(),
+            ));
+        }
+        if url.contains("/api/skills") {
+            if url.contains("owner=vuejs") {
+                return Ok(registry_page(&[("vuejs", "core", "vue", None)]));
+            }
+            return Ok(registry_page(&[]));
+        }
+        if url.contains("api.github.com/repos/organizer/gone") {
+            return Ok(response(500, b"boom".to_vec()));
+        }
+        Ok(github_repository("main", false))
+    }
+}
+
+#[test]
+fn a_failing_github_read_lists_nothing_for_one_collection_entry() {
+    let http = Arc::new(CollectionFallbackFailureHttp);
+    let remote = SkilldRemote::new(
+        http,
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let listing = remote
+        .list_skills(&MultiSkillRef::Collection {
+            login: "harlan-zw".to_owned(),
+            slug: "nuxt".to_owned(),
+        })
+        .unwrap();
+
+    assert_eq!(listing.items, [listed("vuejs", "core", "vue", None)]);
+}
+
 #[test]
 fn a_curator_ref_lists_every_collection_once() {
     let collection = |name: &str| {

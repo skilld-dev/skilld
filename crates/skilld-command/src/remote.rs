@@ -1723,6 +1723,11 @@ impl SkilldRemote {
     /// job when the owner index lists nothing. Only a direct Repository ref
     /// pays that wait. A collection expansion must not stall on one stale
     /// entry, so it reads the Git tree instead.
+    ///
+    /// The GitHub fallback follows the same rule. A collection entry whose
+    /// GitHub read fails lists nothing, and the rest of the collection keeps
+    /// expanding. A direct Repository ref stays loud, because the caller
+    /// asked for that one Repository.
     fn repository_skills(
         &self,
         owner: &str,
@@ -1743,7 +1748,11 @@ impl SkilldRemote {
             items = self.submitted_repository_skills(owner, repository)?;
         }
         if items.is_empty() {
-            items = self.github_repository_skills(owner, repository)?;
+            items = match self.github_repository_skills(owner, repository) {
+                Ok(items) => items,
+                Err(_) if !submit => Vec::new(),
+                Err(error) => return Err(error),
+            };
         }
         items.sort_by(|left, right| left.name.cmp(&right.name));
         memo.insert(key, items.clone());
