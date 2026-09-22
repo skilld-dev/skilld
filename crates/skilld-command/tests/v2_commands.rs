@@ -77,6 +77,7 @@ fn removed_v2_commands_name_their_replacement() {
     assert!(stdout.is_empty());
     assert!(stderr.starts_with("REMOVED_COMMAND"), "{stderr}");
     assert!(stderr.contains("generate-package-skill"), "{stderr}");
+    assert!(stderr.contains("generate-project-skill"), "{stderr}");
 
     for command in [
         "watch",
