@@ -52,26 +52,38 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Get Started
 
-Find a Skill on [skilld.dev](https://skilld.dev/skills), or search from your terminal:
+Your Agent runs skilld, not you. Teach it the CLI once:
+
+```sh
+npm install --global skilld
+skilld install skilld --global
+```
+
+Then ask for what you need, in your own words:
+
+> Find a skilld Skill for Vue and use it
+
+Your Agent searches the registry, reads the descriptions, and loads the Skill for that session.
+It installs nothing unless you ask it to.
+
+Find a Skill yourself on [skilld.dev](https://skilld.dev/skills).
+[Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
+Every Skill page credits its author and links the source file on GitHub.
+[Curators](https://skilld.dev/community) publish named collections that `skilld add` installs in one command.
+
+### Run it yourself
+
+You need no install and no project files:
 
 ```sh
 npx skilld search vue
-```
-
-[Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
-Every Skill page names its [curator](https://skilld.dev/community) and links the source file on GitHub.
-
-Run one. skilld installs nothing and writes no file:
-
-```sh
 npx skilld run antfu/skills/vue
 ```
 
-That prints [`vue` by antfu](https://skilld.dev/gh/antfu/skills/vue) to stdout.
-Ask your Agent to run the command and follow what it prints.
-If you run it yourself, pass the output to your Agent.
+`skilld run` prints `SKILL.md` to stdout and writes no file.
+Pass the output to your Agent.
 
-Install a Skill when you want it in every session:
+Keep a Skill when you want it in every session:
 
 ```sh
 npx skilld install antfu/skills/vue
@@ -91,15 +103,7 @@ An install writes files. If an Agent runs the install, it asks you first.
 
 Start with `skilld run`. Install when you reach for the same Skill again.
 
-### Teach your Agent the CLI
-
-Install the CLI and the skilld-maintained `skilld` Skill once.
-Your Agent then knows every command:
-
-```sh
-npm install --global skilld
-skilld install skilld --global
-```
+### Agent targets
 
 Use `--agent` to name a target. Repeat it for several, or use `--agent all`.
 `-g` is the short form of `--global`.
