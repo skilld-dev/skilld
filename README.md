@@ -20,11 +20,11 @@
 
 ## Features
 
-- 👤 **A person wrote it, and you can see who.** A maintainer owns the Skill in their own GitHub Repository. skilld.dev lists it under their name, linked to the source file.
-- 📖 **Read before you run.** `skilld run` prints `SKILL.md` and installs nothing. Your Agent follows it for this session only.
-- 🔁 **Know when the source moved.** skilld records the source commit. `skilld outdated` lists what fell behind. `skilld update --check` reports each update relation.
-- 🎯 **One command, every Agent.** `skilld install` detects your Agent targets. Claude Code, Codex, Cursor, Gemini CLI, and the rest get the same Skill.
-- 🔏 **Nothing installs unchecked.** skilld.dev builds an immutable Artifact from an exact commit. The CLI checks its digest and attestation before it writes a file.
+- 📖 **Try a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
+- 🎯 **One install, 19 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each. Claude Code, Codex, Cursor, Gemini CLI, Zed, and 14 more.
+- 🦀 **One native binary, no runtime to install.** Startup is under a millisecond. Install it with `curl` and you need no Node.js at all.
+- 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
+- 🔍 **No telemetry.** skilld sends no analytics. Account credentials go to your operating system keychain, never a plain text file.
 
 ## What is skilld?
 
