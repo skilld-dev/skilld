@@ -52,28 +52,21 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Get Started
 
-Your Agent runs skilld, not you. Teach it the CLI once:
+Give your Agent a Skill URL. There is nothing to install:
 
-```sh
-npm install --global skilld
-skilld install skilld --global
-```
+> Use this Skill: https://skilld.dev/gh/antfu/skills/vue
 
-Then ask for what you need, in your own words:
+Your Agent reads the page and follows it for that session.
+Nothing is written to your project. Add `.md` to any Skill URL for the raw `SKILL.md`.
 
-> Find a skilld Skill for Vue and use it
-
-Your Agent searches the registry, reads the descriptions, and loads the Skill for that session.
-It installs nothing unless you ask it to.
-
-Find a Skill yourself on [skilld.dev](https://skilld.dev/skills).
+Find one on [skilld.dev](https://skilld.dev/skills).
 [Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
 Every Skill page credits its author and links the source file on GitHub.
-[Curators](https://skilld.dev/community) publish named collections that `skilld add` installs in one command.
+[Curators](https://skilld.dev/community) publish named collections.
 
-### Run it yourself
+### Run it from your terminal
 
-You need no install and no project files:
+Same transient run, from a shell. You need no install and no project files:
 
 ```sh
 npx skilld search vue
@@ -83,10 +76,24 @@ npx skilld run antfu/skills/vue
 `skilld run` prints `SKILL.md` to stdout and writes no file.
 Pass the output to your Agent.
 
-Keep a Skill when you want it in every session:
+### Set it up properly
+
+Once a Skill earns its place, install the CLI and teach your Agent to drive it:
 
 ```sh
-npx skilld install antfu/skills/vue
+npm install --global skilld
+skilld install skilld --global
+```
+
+Your Agent then searches the registry and loads Skills on its own.
+Ask for what you need, in your own words:
+
+> Find a skilld Skill for Vue and use it
+
+Keep a Skill in every session of one project:
+
+```sh
+skilld install antfu/skills/vue
 ```
 
 An install writes files. If an Agent runs the install, it asks you first.
