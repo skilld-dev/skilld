@@ -1,12 +1,14 @@
 <h1 align="center">
 <a href="https://skilld.dev"><picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo.svg">
-<img alt="skilld" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-light.svg" width="260">
+<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-mark.svg">
+<img alt="" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-mark-light.svg" width="90">
 </picture></a>
+<br>
+skilld
 </h1>
 
 <p align="center">
-Curated agent skills by humans. Search, run, install, and keep them current.<br>One command, every Agent.
+Open source, privacy friendly Agent Skills, curated by humans.<br>Search, run, install, and keep them current.
 </p>
 
 <p align="center">
