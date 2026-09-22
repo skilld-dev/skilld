@@ -28,19 +28,71 @@ pub enum MultiSkillRef {
     Collection { login: String, slug: String },
 }
 
-/// One Skill a multi-skill ref names, as skilld.dev lists it.
+/// Where the bytes of one listed Skill come from.
+///
+/// skilld.dev lists every curated Skill. A Repository the registry does not
+/// list yet still carries Skills on GitHub, so the listing falls back to the
+/// Git tree and records the Skill path it found.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ListedOrigin {
+    /// skilld.dev lists the Skill. Install resolves an Artifact for it.
+    /// `path` is the Skill directory in the Repository, when the listing
+    /// names it, so a failed Artifact delivery can still read GitHub.
+    Registry { path: Option<String> },
+    /// GitHub carries the Skill at `path`. Install reads GitHub directly.
+    Direct { path: String },
+}
+
+/// One Skill a multi-skill ref names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListedSkill {
     pub name: String,
     pub owner: String,
     pub repository: String,
     pub description: Option<String>,
+    pub origin: ListedOrigin,
 }
 
 impl ListedSkill {
-    /// The hosted selector `skilld run` and `skilld install` accept.
+    /// The selector `skilld run` and `skilld install` accept for this Skill.
+    ///
+    /// A registry Skill uses its hosted `OWNER/REPOSITORY/SKILL` form. A
+    /// direct Skill uses its explicit `github:` path, which only direct mode
+    /// resolves.
     pub fn selector(&self) -> String {
-        format!("{}/{}/{}", self.owner, self.repository, self.name)
+        match &self.origin {
+            // The path resolves one Skill even when two directories share a
+            // Skill name, and skilld.dev then reads that directory instead of
+            // the whole Repository tree.
+            ListedOrigin::Registry { path: Some(path) } => {
+                format!("{}/{}/{path}", self.owner, self.repository)
+            }
+            ListedOrigin::Registry { path: None } => {
+                format!("{}/{}/{}", self.owner, self.repository, self.name)
+            }
+            ListedOrigin::Direct { path } => self.github_selector(path),
+        }
+    }
+
+    /// The `github:` selector that reads this Skill from GitHub, when skilld
+    /// knows where the Skill sits in the Repository.
+    ///
+    /// A hosted Skill keeps this as its fallback: skilld.dev can list a Skill
+    /// and still fail to deliver its Artifact.
+    pub fn direct_selector(&self) -> Option<String> {
+        match &self.origin {
+            ListedOrigin::Registry { path } => path.as_ref().map(|path| self.github_selector(path)),
+            ListedOrigin::Direct { path } => Some(self.github_selector(path)),
+        }
+    }
+
+    fn github_selector(&self, path: &str) -> String {
+        format!("github:{}/{}/{path}", self.owner, self.repository)
+    }
+
+    /// Whether loading or installing this Skill needs `--direct`.
+    pub const fn needs_direct(&self) -> bool {
+        matches!(self.origin, ListedOrigin::Direct { .. })
     }
 }
 

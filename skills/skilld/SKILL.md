@@ -157,6 +157,8 @@ skilld add @LOGIN/SLUG --global
 
 `skilld add` accepts `--global`, `--agent`, and `--mode` like `skilld install`.
 It prints one `Installed Skill` line per Skill.
+An Agent run installs every Skill the ref names. Pass `--all` to state that intent.
+A person at a terminal is asked which Skills to install.
 Run `skilld run` with the same ref first, then confirm the list with the user.
 `skilld add` with one Skill selector installs that Skill like `skilld install`.
 

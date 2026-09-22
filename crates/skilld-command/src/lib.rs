@@ -27,20 +27,22 @@ pub use provenance::RemoteProvenance;
 use provenance::source_status_caution;
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
-    NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider, PreparedRemoteSkill,
-    RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation, RemoteLatestCommit,
-    RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState, RemoteUpdateComparison,
-    RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
+    INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
+    PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation,
+    RemoteLatestCommit, RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState,
+    RemoteUpdateComparison, RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper,
+    TokenProvider,
 };
 pub use run::{
     FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
 };
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
-    InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, LockedSource,
-    MultiSkillRef, NotTrackedReason, SkillListing, SkillRef, SourceRef, UpdateFailure,
-    UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
-    UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets, select_target_ids,
+    InstallMode, InstallOperation, InstallRequest, InstallScope, InstallSource, ListedSkill,
+    LockedSource, MultiSkillRef, NotTrackedReason, SkillListing, SkillRef, SourceRef,
+    UpdateFailure, UpdateLatestCommit, UpdateModelError, UpdatePlan, UpdatePlanItem, UpdatePlanV1,
+    UpdateRelation, UpdateRetryAfter, VERSION, classify_update_comparison, parse_agent_targets,
+    select_target_ids,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use skilld_ui::{Detail, Line, Marker, Screen};
@@ -138,6 +140,11 @@ enum Command {
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nOnly one Skill source accepts --direct. A direct install records the unverified source status."
         )]
         direct: bool,
+        #[arg(
+            long,
+            long_help = "Install every Skill the ref names without asking.\nA terminal asks which Skills to install. Every other context installs all of them."
+        )]
+        all: bool,
     },
     /// Load a Skill for this session without installing it.
     #[command(
@@ -287,6 +294,13 @@ pub trait Host {
         Err(CommandError::unsupported_host(
             "Skill listings are unavailable on this host",
         ))
+    }
+
+    /// Choose which listed Skills to install.
+    ///
+    /// A host that cannot ask installs every Skill the ref names.
+    fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        Ok(listing.items.clone())
     }
 
     fn view(&self, _name: &str, _scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -535,6 +549,8 @@ where
 
 enum CommandOutput {
     Screen(Screen),
+    /// Work that finished with part of it failed. It prints, then exits 1.
+    IncompleteScreen(Screen),
     Search(SearchOutcome),
     UpdateCheck(UpdatePlanV1),
     Run(RunOutcome),
@@ -672,6 +688,13 @@ where
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
+        }
+        Ok(CommandOutput::IncompleteScreen(screen)) => {
+            let bytes = match mode {
+                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
+            };
+            write_success_with_exit(bytes.as_bytes(), mode, stdout, stderr, 1)
         }
         Ok(CommandOutput::Search(outcome)) => match render_search(&outcome, mode) {
             Ok(bytes) => write_success(&bytes, mode, stdout, stderr),
@@ -914,6 +937,7 @@ fn dispatch<H: Host>(
             agents,
             mode,
             direct,
+            all,
         } => {
             let reference = SkillRef::parse(&reference).map_err(CommandError::remote)?;
             let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
@@ -924,30 +948,60 @@ fn dispatch<H: Host>(
                 }
                 SkillRef::Many(reference) => {
                     let listing = list_skills(host, &reference)?;
+                    let total = listing.items.len();
+                    let listing = if all {
+                        listing
+                    } else {
+                        SkillListing {
+                            items: host.choose_skills(&listing)?,
+                            ..listing
+                        }
+                    };
+                    if listing.items.is_empty() {
+                        return Ok(CommandOutput::Screen(Screen::new(vec![Line::item(
+                            format!(
+                                "You chose no Skills of the {total} {reference} names. skilld installed none."
+                            ),
+                        )])));
+                    }
                     let mut lines = Vec::with_capacity(listing.items.len());
-                    for (index, item) in listing.items.iter().enumerate() {
-                        let installed = host
-                            .install_request(InstallRequest {
-                                operation: InstallOperation::Install(InstallSource::Remote(
-                                    item.selector(),
-                                )),
-                                scope: options.scope,
-                                targets: options.targets.clone(),
-                                mode: options.mode,
-                            })
-                            .map_err(|error| CommandError {
-                                message: format!(
-                                    "{}. skilld installed {index} of {} Skills from {reference} before this failure.",
-                                    error.message.trim_end_matches('.'),
-                                    listing.items.len()
-                                ),
-                                ..error
-                            })?;
-                        for skill in &installed {
-                            lines.extend(render_installed(skill)?);
+                    // skilld.dev delivers a whole Repository or none of it, so
+                    // one failed delivery sends every later Skill of that
+                    // Repository straight to GitHub.
+                    let mut undeliverable = BTreeSet::new();
+                    // One Skill a ref names can fail on its own, such as a
+                    // Skill a check blocks. The rest still install, and the
+                    // failures print at the end.
+                    let mut failures = Vec::new();
+                    for item in &listing.items {
+                        match install_listed(host, item, &options, &mut undeliverable) {
+                            Ok((installed, note)) => {
+                                // The note quotes a registry name and a
+                                // delivery error, so it never reaches the
+                                // terminal raw.
+                                lines.extend(note.map(|note| Line::hint(screen_message(&note))));
+                                for skill in &installed {
+                                    lines.extend(render_installed(skill)?);
+                                }
+                            }
+                            Err(error) => failures.push((item.name.clone(), error)),
                         }
                     }
-                    Ok(CommandOutput::Screen(Screen::new(lines)))
+                    if failures.is_empty() {
+                        return Ok(CommandOutput::Screen(Screen::new(lines)));
+                    }
+                    lines.push(Line::warn(format!(
+                        "skilld installed {} of {} Skills from {reference}.",
+                        listing.items.len() - failures.len(),
+                        listing.items.len()
+                    )));
+                    for (name, error) in &failures {
+                        lines.push(Line::error(screen_message(&format!(
+                            "{name}: {}: {}",
+                            error.code, error.message
+                        ))));
+                    }
+                    Ok(CommandOutput::IncompleteScreen(Screen::new(lines)))
                 }
             }
         }
@@ -1205,6 +1259,79 @@ fn install<H: Host>(
     Ok(CommandOutput::Screen(Screen::new(lines)))
 }
 
+/// Install one listed Skill, reading GitHub when skilld.dev cannot deliver it.
+///
+/// skilld.dev lists a Skill before it can build an Artifact for it, and a
+/// delivery can fail for one Skill of many. A Skill that names its path in the
+/// Repository installs from GitHub instead, so one failed Artifact never ends
+/// the whole install. The returned note says that happened. The Skill records
+/// the `unverified` source status, which every installed line prints.
+fn install_listed<H: Host>(
+    host: &H,
+    item: &ListedSkill,
+    options: &InstallOptions,
+    undeliverable: &mut BTreeSet<(String, String)>,
+) -> Result<(Vec<InstalledSkill>, Option<String>), CommandError> {
+    let request = |source| InstallRequest {
+        operation: InstallOperation::Install(source),
+        scope: options.scope,
+        targets: options.targets.clone(),
+        mode: options.mode,
+    };
+    // A Repository the registry does not list resolves through GitHub, so its
+    // Skills install in direct mode from the start.
+    let repository = (item.owner.clone(), item.repository.clone());
+    if item.needs_direct() || undeliverable.contains(&repository) {
+        // A row without a path has no direct selector, so it stays on hosted
+        // delivery. Its failure is the real delivery error, never the
+        // `--direct` guidance.
+        let Some(source) = item.direct_selector() else {
+            return host
+                .install_request(request(InstallSource::Remote(item.selector())))
+                .map(|installed| (installed, None));
+        };
+        return host
+            .install_request(request(InstallSource::DirectRemote(source)))
+            .map(|installed| (installed, None));
+    }
+    let hosted = host.install_request(request(InstallSource::Remote(item.selector())));
+    let (error, fallback) = match (hosted, item.direct_selector()) {
+        (Ok(installed), _) => return Ok((installed, None)),
+        (Err(error), None) => return Err(error),
+        (Err(error), Some(_)) if !delivery_failed(&error) => return Err(error),
+        (Err(error), Some(fallback)) => (error, fallback),
+    };
+    let installed = host
+        .install_request(request(InstallSource::DirectRemote(fallback)))
+        .map_err(|_| error.clone())?;
+    undeliverable.insert(repository);
+    Ok((
+        installed,
+        Some(format!(
+            "skilld.dev could not deliver {}: {}. skilld read the Skill from GitHub instead.",
+            item.name,
+            error.message.trim_end_matches('.')
+        )),
+    ))
+}
+
+/// Whether skilld.dev failed to deliver an Artifact for a Skill it lists.
+///
+/// These are delivery failures, not refusals. A refusal, such as an
+/// authentication or policy error, stands.
+fn delivery_failed(error: &CommandError) -> bool {
+    matches!(
+        error.code,
+        "INVALID_SOURCE"
+            | "SOURCE_NOT_FOUND"
+            | "SOURCE_UNAVAILABLE"
+            | "SERVICE_UNAVAILABLE"
+            | "CHECK_UNAVAILABLE"
+            | "SIGNER_UNAVAILABLE"
+            | "RESOLUTION_FAILED"
+    )
+}
+
 /// List the Skills a multi-skill ref names. An empty listing is a failure:
 /// the caller asked for Skills and got none to act on.
 fn list_skills<H: Host>(host: &H, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
@@ -1339,6 +1466,23 @@ pub trait BundledSkillProvider: Send + Sync {
     fn skilld_source(&self) -> Result<PathBuf, CommandError>;
 }
 
+/// Choose which Skills of one multi-skill ref `skilld add` installs.
+///
+/// A terminal asks the person. Every other context, and `--all`, installs
+/// every listed Skill.
+pub trait SkillChooser: Send + Sync {
+    fn choose(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError>;
+}
+
+/// The chooser that asks nothing and installs every listed Skill.
+pub struct EveryListedSkill;
+
+impl SkillChooser for EveryListedSkill {
+    fn choose(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        Ok(listing.items.clone())
+    }
+}
+
 pub trait AccountProvider: Send + Sync {
     fn status(&self) -> Result<bool, CommandError>;
     fn login(&self) -> Result<(), CommandError>;
@@ -1369,6 +1513,7 @@ pub struct LocalHost {
     remote: Option<Arc<dyn RemoteProvider>>,
     account: Option<Arc<dyn AccountProvider>>,
     outdated_progress: Arc<dyn outdated::OutdatedProgress>,
+    skill_chooser: Arc<dyn SkillChooser>,
 }
 
 impl LocalHost {
@@ -1393,7 +1538,15 @@ impl LocalHost {
             remote: None,
             account: None,
             outdated_progress: Arc::new(outdated::NoOutdatedProgress),
+            skill_chooser: Arc::new(EveryListedSkill),
         }
+    }
+
+    /// Ask this chooser which listed Skills `skilld add` installs.
+    #[must_use]
+    pub fn with_skill_chooser(mut self, chooser: Arc<dyn SkillChooser>) -> Self {
+        self.skill_chooser = chooser;
+        self
     }
 
     pub fn with_target_roots(mut self, roots: TargetRoots) -> Self {
@@ -1981,6 +2134,10 @@ impl Host for LocalHost {
         self.remote_provider()?
             .list_skills(reference)
             .map_err(CommandError::remote)
+    }
+
+    fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+        self.skill_chooser.choose(listing)
     }
 
     fn view(&self, name: &str, scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -3482,12 +3639,14 @@ mod tests {
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: Some("Build Vue interfaces.".to_owned()),
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
                     },
                     skilld_core::ListedSkill {
                         name: "nuxt".to_owned(),
                         owner: "skilld-dev".to_owned(),
                         repository: "skills".to_owned(),
                         description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
                     },
                 ]
             };
@@ -3634,6 +3793,485 @@ mod tests {
             assert_eq!(request.targets, [AgentTargetId::Codex]);
             assert_eq!(request.mode, Some(InstallMode::Symlink));
         }
+    }
+
+    /// Lists two Skills and chooses only the Skills whose names it holds.
+    struct ChoosingHost {
+        inner: ListingHost,
+        chosen: Vec<&'static str>,
+    }
+
+    impl Host for ChoosingHost {
+        fn list(&self, scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            self.inner.list(scope)
+        }
+
+        fn install(
+            &self,
+            source: InstallSource,
+            scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            self.inner.install(source, scope)
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            self.inner.install_request(request)
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            self.inner.list_skills(reference)
+        }
+
+        fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
+            Ok(listing
+                .items
+                .iter()
+                .filter(|item| self.chosen.contains(&item.name.as_str()))
+                .cloned()
+                .collect())
+        }
+    }
+
+    #[test]
+    fn add_installs_only_the_chosen_skills_and_all_skips_the_choice() {
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec!["nuxt"],
+        };
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "add", "skilld-dev/skills"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(stdout.contains("Installed Skill nuxt."), "{stdout}");
+        assert!(!stdout.contains("Installed Skill vue."), "{stdout}");
+        assert_eq!(
+            host.inner
+                .requests()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            [InstallOperation::Install(InstallSource::Remote(
+                "skilld-dev/skills/nuxt".to_owned()
+            ))]
+        );
+
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec!["nuxt"],
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(stdout.contains("Installed Skill vue."), "{stdout}");
+        assert_eq!(host.inner.requests().len(), 2);
+    }
+
+    /// Lists one hosted Skill that knows its path, and fails every hosted
+    /// install, so only the GitHub fallback can succeed.
+    struct UndeliverableHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UndeliverableHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "the Resolution failed",
+                )),
+                InstallSource::DirectRemote(source) => Ok(vec![InstalledSkill {
+                    name: "vue".to_owned(),
+                    source: LockedSource::Remote {
+                        source,
+                        commit_sha: "a".repeat(40),
+                        skill_path: "skills/vue".to_owned(),
+                    },
+                    source_status: "unverified",
+                }]),
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![ListedSkill {
+                    name: "vue".to_owned(),
+                    owner: "skilld-dev".to_owned(),
+                    repository: "skills".to_owned(),
+                    description: None,
+                    origin: skilld_core::ListedOrigin::Registry {
+                        path: Some("skills/vue".to_owned()),
+                    },
+                }],
+            })
+        }
+    }
+
+    /// Lists two Skills and blocks the second one, the way a check result does.
+    struct BlockedSkillHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for BlockedSkillHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            let InstallSource::Remote(selector) = &source else {
+                panic!("expected a hosted install: {source:?}")
+            };
+            let name = selector.rsplit('/').next().unwrap().to_owned();
+            if name == "blocked" {
+                return Err(CommandError::operation(
+                    "CHECK_BLOCKED",
+                    "the Resolution was blocked by check results",
+                ));
+            }
+            Ok(vec![InstalledSkill {
+                name: name.clone(),
+                source: LockedSource::Remote {
+                    source: selector.clone(),
+                    commit_sha: "a".repeat(40),
+                    skill_path: format!("skills/{name}"),
+                },
+                source_status: "verified",
+            }])
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: ["blocked", "vue"]
+                    .into_iter()
+                    .map(|name| ListedSkill {
+                        name: name.to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    #[test]
+    fn add_installs_every_other_skill_when_one_is_blocked() {
+        let host = BlockedSkillHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!((exit, stderr.as_str()), (1, ""));
+        assert!(stdout.contains("Installed Skill vue."), "{stdout}");
+        assert!(
+            stdout.contains("skilld installed 1 of 2 Skills from skilld-dev/skills."),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("blocked: CHECK_BLOCKED: the Resolution was blocked by check results"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
+    fn add_reads_github_when_skilld_dev_cannot_deliver_a_listed_skill() {
+        let host = UndeliverableHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 0, "{stderr}");
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue: the Resolution failed. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Source status: unverified"), "{stdout}");
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+            ]
+        );
+    }
+
+    /// Lists one hosted Skill that knows its path and one that does not, and
+    /// fails every hosted install. A direct selector without an explicit
+    /// `github:` source fails the way direct prepare does.
+    struct UndeliverablePathlessHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UndeliverablePathlessHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "the Resolution failed",
+                )),
+                InstallSource::DirectRemote(selector) if selector.starts_with("github:") => {
+                    Ok(vec![InstalledSkill {
+                        name: "vue".to_owned(),
+                        source: LockedSource::Remote {
+                            source: selector,
+                            commit_sha: "a".repeat(40),
+                            skill_path: "skills/vue".to_owned(),
+                        },
+                        source_status: "unverified",
+                    }])
+                }
+                InstallSource::DirectRemote(_) => Err(CommandError::operation(
+                    "DIRECT_SOURCE_REQUIRED",
+                    DIRECT_SOURCE_GUIDANCE,
+                )),
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![
+                    ListedSkill {
+                        name: "vue".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry {
+                            path: Some("skills/vue".to_owned()),
+                        },
+                    },
+                    ListedSkill {
+                        name: "pathless".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    },
+                ],
+            })
+        }
+    }
+
+    #[test]
+    fn add_reports_the_delivery_error_for_a_pathless_skill_of_an_undeliverable_repository() {
+        let host = UndeliverablePathlessHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 1, "{stdout}");
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue: the Resolution failed. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("pathless: INVALID_SOURCE: the Resolution failed"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("DIRECT_SOURCE_REQUIRED"), "{stdout}");
+        assert!(!stdout.contains("Remove --direct"), "{stdout}");
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::Remote("skilld-dev/skills/pathless".to_owned()),
+            ]
+        );
+        assert_eq!(stderr, "");
+    }
+
+    #[test]
+    fn add_reports_that_choosing_no_skill_installs_none() {
+        let host = ChoosingHost {
+            inner: ListingHost::new(),
+            chosen: vec![],
+        };
+        let (exit, stdout, stderr) = run_plain(&host, &["skilld", "add", "skilld-dev/skills"]);
+
+        assert_eq!((exit, stderr.as_str()), (0, ""));
+        assert_eq!(
+            stdout,
+            "You chose no Skills of the 2 skilld-dev/skills names. skilld installed none.\n"
+        );
+        assert!(host.inner.requests().is_empty());
+    }
+
+    /// Lists one Skill whose registry name carries an escape byte and one
+    /// whose name also carries a newline. The hosted delivery fails with a
+    /// message that carries an escape byte and a newline too, so the failure
+    /// output receives remote-controlled text end to end.
+    struct UnsafeFailureHost {
+        installs: std::sync::Mutex<Vec<InstallSource>>,
+    }
+
+    impl Host for UnsafeFailureHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(source) = request.operation else {
+                unreachable!("add installs one source")
+            };
+            self.installs.lock().unwrap().push(source.clone());
+            match source {
+                InstallSource::Remote(_) => Err(CommandError::operation(
+                    "INVALID_SOURCE",
+                    "boom \u{1b}[31mstyled\nsecond line",
+                )),
+                InstallSource::DirectRemote(selector) if selector.starts_with("github:") => {
+                    Ok(vec![InstalledSkill {
+                        name: "vue".to_owned(),
+                        source: LockedSource::Remote {
+                            source: selector,
+                            commit_sha: "a".repeat(40),
+                            skill_path: "skills/vue".to_owned(),
+                        },
+                        source_status: "unverified",
+                    }])
+                }
+                other => panic!("unexpected source: {other:?}"),
+            }
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: vec![
+                    skilld_core::ListedSkill {
+                        name: "vue\u{1b}[31m".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry {
+                            path: Some("skills/vue".to_owned()),
+                        },
+                    },
+                    skilld_core::ListedSkill {
+                        name: "pathless\u{1b}[0m\nsecond".to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    },
+                ],
+            })
+        }
+    }
+
+    #[test]
+    fn add_failure_output_sanitizes_remote_text() {
+        let host = UnsafeFailureHost {
+            installs: std::sync::Mutex::new(vec![]),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!(exit, 1, "{stdout}{stderr}");
+        assert!(!stdout.contains('\u{1b}'), "{stdout}");
+        assert_eq!(
+            stdout.matches('\n').count(),
+            stdout.lines().count(),
+            "an embedded newline split the output: {stdout}"
+        );
+        assert!(
+            stdout.contains(
+                "skilld.dev could not deliver vue [31m: boom [31mstyled second line. skilld read the Skill from GitHub instead."
+            ),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("pathless [0m second: INVALID_SOURCE: boom [31mstyled second line"),
+            "{stdout}"
+        );
+        assert_eq!(
+            *host.installs.lock().unwrap(),
+            [
+                InstallSource::Remote("skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::DirectRemote("github:skilld-dev/skills/skills/vue".to_owned()),
+                InstallSource::Remote("skilld-dev/skills/pathless\u{1b}[0m\nsecond".to_owned()),
+            ]
+        );
+        assert_eq!(stderr, "");
     }
 
     #[test]

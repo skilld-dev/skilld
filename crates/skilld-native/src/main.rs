@@ -21,6 +21,7 @@ use skilld_core::{
     SourceRequest, SourceSelector, TrustedRootPin, VERSION,
 };
 use skilld_native::NativeHttpAdapter;
+use skilld_native::select_ui::TtySkillChooser;
 use skilld_native::update_ui::{
     CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
     write_static_summary,
@@ -103,6 +104,13 @@ fn main() -> ExitCode {
             )
             .with_progress(remote_progress),
         ));
+    // Only a person at a terminal can answer the Skill picker. An Agent, a
+    // pipe, or CI installs every Skill the ref names.
+    let host = if asks_which_skills(&args) {
+        host.with_skill_chooser(Arc::new(TtySkillChooser))
+    } else {
+        host
+    };
     let host = if args.iter().skip(1).any(|arg| arg == "outdated")
         && !args.iter().any(|arg| arg == "--json" || arg == "--plain")
     {
@@ -370,6 +378,18 @@ fn detection_environment() -> DetectionEnvironment {
             .filter(|name| env::var_os(name).is_some())
             .map(|name| (*name).to_owned()),
     )
+}
+
+/// Whether `skilld add` may ask which Skills of a ref to install.
+fn asks_which_skills(args: &[std::ffi::OsString]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "add")
+        && !args
+            .iter()
+            .any(|arg| arg == "--all" || arg == "--json" || arg == "--plain")
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+        && !active_agent_detected()
+        && !environment_enabled("CI")
 }
 
 fn active_agent_detected() -> bool {

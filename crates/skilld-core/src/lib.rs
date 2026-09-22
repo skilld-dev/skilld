@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub use lock::{
     LockDocument, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES, SourceStatus,
 };
-pub use reference::{ListedSkill, MultiSkillRef, SkillListing, SkillRef};
+pub use reference::{ListedOrigin, ListedSkill, MultiSkillRef, SkillListing, SkillRef};
 pub use release::{
     ReleasePin, VerifiedRelease, is_release_version, verify_release_asset, verify_release_manifest,
 };

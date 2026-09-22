@@ -1498,7 +1498,7 @@ where
     outcome
 }
 
-struct NativeTerminalLifecycle;
+pub(crate) struct NativeTerminalLifecycle;
 
 impl TerminalLifecycle for NativeTerminalLifecycle {
     fn enter(&mut self) -> Result<(), InteractiveUpdateError> {

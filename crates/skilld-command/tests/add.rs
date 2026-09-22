@@ -10,8 +10,8 @@ use skilld_command::{
     RemoteUpdateResult, run_with_output,
 };
 use skilld_core::{
-    CommitSha, InstallScope, ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError,
-    RemoteSelector, SearchResponse, SkillListing, SourceSelector, SourceStatus,
+    CommitSha, InstallScope, ListedOrigin, ListedSkill, LockedSource, MultiSkillRef, PreparedFile,
+    RemoteError, RemoteSelector, SearchResponse, SkillListing, SourceSelector, SourceStatus,
 };
 
 /// Lists two Skills for one Repository and prepares whichever one is asked for.
@@ -35,6 +35,7 @@ impl RemoteProvider for ListingRemote {
                     owner: "vuejs".to_owned(),
                     repository: "core".to_owned(),
                     description: None,
+                    origin: ListedOrigin::Registry { path: None },
                 })
                 .collect(),
         })

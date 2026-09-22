@@ -10,11 +10,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use skilld_core::{
-    ArtifactAttestation, CommitAuthor, CommitSha, CommitSummary, ListedSkill, LockedSource,
-    MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, SearchResponse,
-    SkillListing, SourceRef, SourceRequest, SourceSelector, SourceStatus, TrustedRoot,
-    TrustedRootPin, VerifiedTrustedRoot, parse_search_response, prepare_unverified_files,
-    verify_artifact, verify_attestation, verify_trusted_root,
+    ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
+    ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
+    RepositoryVisibility, SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector,
+    SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
+    prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -32,6 +32,19 @@ const MAX_LISTING_PAGES: usize = 25;
 /// `MAX_LISTING_PAGES`: the curator collection list and each collection's
 /// entry list are capped here so a malformed response cannot fan out.
 const MAX_LISTING_ENTRIES: usize = MAX_LISTING_PAGES;
+
+/// The Skill count one direct Repository listing returns at most.
+const MAX_DIRECT_LISTING_SKILLS: usize = 200;
+
+/// The wait between two index status reads for a submitted Repository.
+const INDEX_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// The index status reads one submission waits through before skilld gives up
+/// and reads GitHub instead.
+pub const INDEX_POLL_ATTEMPTS: usize = 30;
+
+/// The Git tree entry count one direct Repository listing reads at most.
+const MAX_DIRECT_TREE_ENTRIES: usize = 20_000;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
@@ -682,6 +695,7 @@ pub enum RemoteProgressStage {
     Publishing,
     RetryWait,
     VerifyingAttestation,
+    Indexing,
     RequestingDownload,
     DownloadingArtifact,
     VerifyingArtifact,
@@ -707,6 +721,14 @@ impl RemoteProgress for NoRemoteProgress {
 }
 
 pub struct SkilldRemote {
+    /// One Repository snapshot per direct source, for this process.
+    ///
+    /// Installing every Skill of one Repository reads the same Repository,
+    /// commit and Git tree once per Skill. GitHub rate limits an
+    /// unauthenticated caller at 60 reads an hour, so the repeat reads are the
+    /// difference between a Repository that installs and one that stops
+    /// halfway.
+    direct_snapshots: Mutex<HashMap<(String, String, String), Arc<DirectSnapshot>>>,
     adapter: Arc<dyn HttpAdapter>,
     tokens: Arc<dyn TokenProvider>,
     cancellation: Arc<dyn Cancellation>,
@@ -723,6 +745,7 @@ impl SkilldRemote {
         root_pin: NativeRemoteConfig,
     ) -> Self {
         Self {
+            direct_snapshots: Mutex::new(HashMap::new()),
             adapter,
             tokens,
             cancellation: Arc::new(NeverCancelled),
@@ -994,10 +1017,10 @@ impl SkilldRemote {
                     )?;
                     resolution = parse_json(&response.body)?;
                 }
-                Resolution::Blocked { .. } => {
+                Resolution::Blocked { check_results, .. } => {
                     return Err(RemoteError::new(
                         "CHECK_BLOCKED",
-                        "the Resolution was blocked by check results",
+                        blocked_message(&check_results),
                     ));
                 }
                 Resolution::Failed {
@@ -1126,20 +1149,8 @@ impl SkilldRemote {
     fn direct_commit(
         &self,
         selector: &RemoteSelector,
-    ) -> Result<(String, String, GithubCommit), RemoteError> {
-        if !selector.is_explicit_github() {
-            return Err(RemoteError::new(
-                "DIRECT_SOURCE_REQUIRED",
-                crate::DIRECT_SOURCE_GUIDANCE,
-            ));
-        }
+    ) -> Result<(String, GithubCommit), RemoteError> {
         let source = selector.source();
-        let SourceSelector::Path { path: skill_path } = &source.selector else {
-            return Err(RemoteError::new(
-                "DIRECT_SOURCE_REQUIRED",
-                crate::DIRECT_SOURCE_GUIDANCE,
-            ));
-        };
         let repository_url = format!(
             "https://api.github.com/repos/{}/{}",
             path_segment(&source.owner),
@@ -1174,7 +1185,7 @@ impl SkilldRemote {
                 "GitHub resolved a different commit than requested",
             ));
         }
-        Ok((repository_url, skill_path.clone(), commit))
+        Ok((repository_url, commit))
     }
 
     fn public_comparison(
@@ -1436,8 +1447,37 @@ impl SkilldRemote {
         }
     }
 
-    fn direct(&self, selector: &RemoteSelector) -> Result<PreparedRemoteSkill, RemoteError> {
-        let (repository_url, skill_path, commit) = self.direct_commit(selector)?;
+    /// The Repository, commit and Git tree one direct source names.
+    ///
+    /// The snapshot is memoized for this process, so installing many Skills of
+    /// one Repository reads GitHub once for all three.
+    fn direct_snapshot(
+        &self,
+        selector: &RemoteSelector,
+    ) -> Result<(Arc<DirectSnapshot>, String), RemoteError> {
+        let skill_path = direct_skill_path(selector)?;
+        let source = selector.source();
+        let key = (
+            source.owner.to_ascii_lowercase(),
+            source.repository.to_ascii_lowercase(),
+            source.r#ref.as_ref().map_or_else(
+                || "default".to_owned(),
+                |reference| match reference {
+                    SourceRef::Branch { value } => format!("branch:{value}"),
+                    SourceRef::Tag { value } => format!("tag:{value}"),
+                    SourceRef::Commit { value } => format!("commit:{value}"),
+                },
+            ),
+        );
+        if let Some(snapshot) = self
+            .direct_snapshots
+            .lock()
+            .map_err(|_| direct_snapshot_lost())?
+            .get(&key)
+        {
+            return Ok((Arc::clone(snapshot), skill_path));
+        }
+        let (repository_url, commit) = self.direct_commit(selector)?;
         let tree_url = format!(
             "{repository_url}/git/trees/{}?recursive=1",
             path_segment(&commit.commit.tree.sha)
@@ -1449,15 +1489,30 @@ impl SkilldRemote {
                 "the GitHub Repository tree exceeds the direct access limit",
             ));
         }
+        let snapshot = Arc::new(DirectSnapshot {
+            repository_url,
+            commit_sha: commit.sha,
+            entries: tree.tree,
+        });
+        self.direct_snapshots
+            .lock()
+            .map_err(|_| direct_snapshot_lost())?
+            .insert(key, Arc::clone(&snapshot));
+        Ok((snapshot, skill_path))
+    }
+
+    fn direct(&self, selector: &RemoteSelector) -> Result<PreparedRemoteSkill, RemoteError> {
+        let (snapshot, skill_path) = self.direct_snapshot(selector)?;
+        let repository_url = snapshot.repository_url.as_str();
         let prefix = skill_path.trim_end_matches('/');
         let prefix_with_slash = format!("{prefix}/");
         let mut files = Vec::new();
         let mut total = 0_u64;
-        for entry in tree.tree {
+        for entry in &snapshot.entries {
             if entry.path == prefix && entry.kind != "tree" {
                 return Err(invalid_github());
             }
-            let Some(relative) = entry.path.strip_prefix(&prefix_with_slash) else {
+            let Some(relative) = entry.path.strip_prefix(prefix_with_slash.as_str()) else {
                 continue;
             };
             if entry.kind == "tree" {
@@ -1497,7 +1552,7 @@ impl SkilldRemote {
         Ok(PreparedRemoteSkill {
             locked_source: LockedSource::Remote {
                 source: selector.canonical(),
-                commit_sha: commit.sha,
+                commit_sha: snapshot.commit_sha.clone(),
                 skill_path,
             },
             source_status: SourceStatus::Unverified {
@@ -1507,6 +1562,33 @@ impl SkilldRemote {
             files,
         })
     }
+}
+
+/// The Skill path one direct source names.
+///
+/// Direct mode reads one Skill path inside one public GitHub Repository. Every
+/// other source shape belongs to hosted delivery.
+fn direct_skill_path(selector: &RemoteSelector) -> Result<String, RemoteError> {
+    if !selector.is_explicit_github() {
+        return Err(RemoteError::new(
+            "DIRECT_SOURCE_REQUIRED",
+            crate::DIRECT_SOURCE_GUIDANCE,
+        ));
+    }
+    match &selector.source().selector {
+        SourceSelector::Path { path } => Ok(path.clone()),
+        SourceSelector::NamedSkill { .. } => Err(RemoteError::new(
+            "DIRECT_SOURCE_REQUIRED",
+            crate::DIRECT_SOURCE_GUIDANCE,
+        )),
+    }
+}
+
+/// One Repository at one commit, with its whole Git tree.
+struct DirectSnapshot {
+    repository_url: String,
+    commit_sha: String,
+    entries: Vec<GithubTreeEntry>,
 }
 
 /// One entry a collection names, before the Skills behind it are known.
@@ -1534,6 +1616,9 @@ struct RegistrySkillRow {
     owner: String,
     repo: String,
     description: Option<String>,
+    /// The `SKILL.md` blob on GitHub, when the registry knows it.
+    #[serde(rename = "skillFileUrl")]
+    skill_file_url: Option<String>,
 }
 
 /// `GET /api/curators/{login}`: the protocol `CuratorPayload` shape.
@@ -1597,7 +1682,17 @@ impl SkilldRemote {
             .into_iter()
             .filter(|row| row.owner.eq_ignore_ascii_case(owner))
             .filter_map(|row| {
-                listed_skill(row.owner, row.repo, row.name, row.description.as_deref())
+                let path = row
+                    .skill_file_url
+                    .as_deref()
+                    .and_then(skill_directory_from_blob_url);
+                listed_skill(
+                    row.owner,
+                    row.repo,
+                    row.name,
+                    row.description.as_deref(),
+                    path,
+                )
             })
             .filter(|skill| seen.insert(skill.selector()))
             .collect())
@@ -1623,11 +1718,22 @@ impl SkilldRemote {
     /// Every Skill one Repository carries, by name. The owner index fetch is
     /// memoized per Repository in `memo` for one listing, so repeated
     /// collection entries naming the same Repository cost one fetch.
+    ///
+    /// `submit` submits the Repository to skilld.dev and waits for its index
+    /// job when the owner index lists nothing. Only a direct Repository ref
+    /// pays that wait. A collection expansion must not stall on one stale
+    /// entry, so it reads the Git tree instead.
+    ///
+    /// The GitHub fallback follows the same rule. A collection entry whose
+    /// GitHub read fails lists nothing, and the rest of the collection keeps
+    /// expanding. A direct Repository ref stays loud, because the caller
+    /// asked for that one Repository.
     fn repository_skills(
         &self,
         owner: &str,
         repository: &str,
         memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
+        submit: bool,
     ) -> Result<Vec<ListedSkill>, RemoteError> {
         let key = (owner.to_ascii_lowercase(), repository.to_ascii_lowercase());
         if let Some(items) = memo.get(&key) {
@@ -1638,8 +1744,180 @@ impl SkilldRemote {
             .into_iter()
             .filter(|skill| skill.repository.eq_ignore_ascii_case(repository))
             .collect::<Vec<_>>();
+        if items.is_empty() && submit {
+            items = self.submitted_repository_skills(owner, repository)?;
+        }
+        if items.is_empty() {
+            items = match self.github_repository_skills(owner, repository) {
+                Ok(items) => items,
+                Err(_) if !submit => Vec::new(),
+                Err(error) => return Err(error),
+            };
+        }
         items.sort_by(|left, right| left.name.cmp(&right.name));
         memo.insert(key, items.clone());
+        Ok(items)
+    }
+
+    /// Submit one Repository to skilld.dev, then wait for the Skills it indexes.
+    ///
+    /// The registry lists curated Skills only, so a Repository nobody has
+    /// submitted lists nothing even when GitHub serves it. skilld submits it and
+    /// waits a bounded time. The indexed Skills arrive with the submission, so
+    /// they skip the cached owner index.
+    ///
+    /// A submission that fails, or that outlasts the wait, lists nothing here.
+    /// The caller then reads the Git tree, and the Repository keeps indexing.
+    fn submitted_repository_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let Some(submission) = self.submit_repository(owner, repository)? else {
+            return Ok(Vec::new());
+        };
+        let job_id = match submission {
+            RepositorySubmission::Indexed { skills } => {
+                return Ok(self.listed_index_rows(owner, repository, skills));
+            }
+            RepositorySubmission::Queued { job_id } => job_id,
+        };
+        let path = format!("/api/repos/index/{}", path_segment(&job_id));
+        for _ in 0..INDEX_POLL_ATTEMPTS {
+            self.progress.stage(RemoteProgressStage::Indexing);
+            self.sleep(INDEX_POLL_INTERVAL, None)?;
+            let status: RepositoryIndexStatus = match self.service_json(self.service_url(&path)?) {
+                Ok(status) => status,
+                // skilld.dev answered the submission, so the Repository is
+                // queued. A read that fails now ends the wait, and the caller
+                // reads the same Skills from GitHub.
+                Err(_) => return Ok(Vec::new()),
+            };
+            match status {
+                RepositoryIndexStatus::Indexed { skills } => {
+                    return Ok(self.listed_index_rows(owner, repository, skills));
+                }
+                RepositoryIndexStatus::Failed { .. } => return Ok(Vec::new()),
+                RepositoryIndexStatus::Queued {} => {}
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Ask skilld.dev to index one Repository.
+    ///
+    /// `None` means skilld.dev did not accept the submission. That is not fatal:
+    /// the caller reads GitHub instead.
+    fn submit_repository(
+        &self,
+        owner: &str,
+        repository: &str,
+    ) -> Result<Option<RepositorySubmission>, RemoteError> {
+        let body = serde_json::to_vec(&json!({
+            "url": format!("https://github.com/{owner}/{repository}"),
+        }))
+        .map_err(|_| {
+            RemoteError::new(
+                "INVALID_SOURCE",
+                "the Repository submission cannot be encoded",
+            )
+        })?;
+        let request = HttpRequest {
+            method: HttpMethod::Post,
+            url: self.service_url("/api/repos")?.into(),
+            headers: json_headers(),
+            body,
+            response_limit: LISTING_LIMIT,
+        };
+        let Ok(response) = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))
+        else {
+            return Ok(None);
+        };
+        Ok(parse_json(&response.body).ok())
+    }
+
+    /// Turn indexed rows into listed Skills, in name order.
+    fn listed_index_rows(
+        &self,
+        owner: &str,
+        repository: &str,
+        rows: Vec<IndexedSkillRow>,
+    ) -> Vec<ListedSkill> {
+        // An index row names the Skill only. The Repository is the one skilld
+        // submitted, so the selector keeps the owner and name the caller typed.
+        let mut items = rows
+            .into_iter()
+            .filter_map(|row| {
+                let path = row.path.as_deref().and_then(skill_directory);
+                listed_skill(
+                    owner.to_owned(),
+                    repository.to_owned(),
+                    row.name,
+                    row.description.as_deref(),
+                    path.map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| left.name.cmp(&right.name));
+        items
+    }
+
+    /// Every Skill one public GitHub Repository carries, read from its Git
+    /// tree.
+    ///
+    /// The registry lists curated Skills only, so a Repository it has not
+    /// indexed lists nothing. GitHub still carries the Skills, so each
+    /// `SKILL.md` in the tree names one Skill that direct mode can install.
+    /// A private Repository, or one GitHub does not serve, lists nothing.
+    fn github_repository_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let repository_url = format!(
+            "https://api.github.com/repos/{}/{}",
+            path_segment(owner),
+            path_segment(repository)
+        );
+        let details: GithubRepository = match self.github_json(&repository_url, JSON_LIMIT) {
+            Ok(details) => details,
+            Err(error) if is_github_missing(&error) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        if details.private {
+            return Ok(Vec::new());
+        }
+        let tree_url = format!(
+            "{repository_url}/git/trees/{}?recursive=1",
+            path_segment(&details.default_branch)
+        );
+        let tree: GithubTree = self.github_json(&tree_url, JSON_LIMIT)?;
+        if tree.truncated || tree.tree.len() > MAX_DIRECT_TREE_ENTRIES {
+            return Err(RemoteError::new(
+                "DIRECT_SOURCE_TOO_LARGE",
+                "the GitHub Repository tree exceeds the direct access limit",
+            ));
+        }
+        let mut items = Vec::new();
+        for entry in tree.tree {
+            if entry.kind != "blob" {
+                continue;
+            }
+            let Some(path) = skill_directory(&entry.path) else {
+                continue;
+            };
+            let name = path.rsplit('/').next().unwrap_or(path);
+            let Some(skill) = listed_direct_skill(owner, repository, name, path) else {
+                continue;
+            };
+            if items.len() == MAX_DIRECT_LISTING_SKILLS {
+                return Err(RemoteError::new(
+                    "DIRECT_SOURCE_TOO_LARGE",
+                    "the GitHub Repository lists more Skills than the direct access limit",
+                ));
+            }
+            items.push(skill);
+        }
         Ok(items)
     }
 
@@ -1691,6 +1969,7 @@ impl SkilldRemote {
     /// Turn collection entries into listed Skills, in collection order.
     /// An entry that names one Skill lists it with the curator's reason.
     /// An entry that names a Repository lists every Skill it carries.
+    /// Skills that two entries resolve to list once.
     fn expand_entries(
         &self,
         entries: Vec<CollectionEntry>,
@@ -1700,21 +1979,82 @@ impl SkilldRemote {
         let mut items = Vec::new();
         for entry in entries {
             let expanded = match entry.name {
-                Some(name) => {
-                    listed_skill(entry.owner, entry.repository, name, entry.reason.as_deref())
-                        .into_iter()
-                        .collect()
-                }
-                None => self.repository_skills(&entry.owner, &entry.repository, memo)?,
+                Some(name) => self.named_entry_skills(
+                    &entry.owner,
+                    &entry.repository,
+                    &name,
+                    entry.reason.as_deref(),
+                    memo,
+                )?,
+                None => self.repository_skills(&entry.owner, &entry.repository, memo, false)?,
             };
             for skill in expanded {
-                if seen.insert(skill.selector()) {
+                if seen.insert(skill_identity(&skill)) {
                     items.push(skill);
                 }
             }
         }
         Ok(items)
     }
+
+    /// One collection entry that names a Skill, resolved to the Skill the
+    /// Repository carries.
+    ///
+    /// The install needs the Skill's path to read GitHub when skilld.dev
+    /// cannot deliver the named Skill. The Repository rows already know that
+    /// path, so a row with a matching name donates its path and keeps the
+    /// curator's reason. A Repository no row lists keeps the hosted named
+    /// Skill.
+    fn named_entry_skills(
+        &self,
+        owner: &str,
+        repository: &str,
+        name: &str,
+        reason: Option<&str>,
+        memo: &mut HashMap<(String, String), Vec<ListedSkill>>,
+    ) -> Result<Vec<ListedSkill>, RemoteError> {
+        let matched = self
+            .repository_skills(owner, repository, memo, false)?
+            .into_iter()
+            .find(|skill| {
+                skill.name.eq_ignore_ascii_case(name) && skill.direct_selector().is_some()
+            });
+        let Some(mut skill) = matched else {
+            return Ok(listed_skill(
+                owner.to_owned(),
+                repository.to_owned(),
+                name.to_owned(),
+                reason,
+                None,
+            )
+            .into_iter()
+            .collect());
+        };
+        skill.description = reason
+            .map(|reason| sanitize_line(reason, 500, ""))
+            .filter(|reason| !reason.is_empty())
+            .or(skill.description);
+        Ok(vec![skill])
+    }
+}
+
+/// The identity one expanded Skill keeps across collection entries.
+///
+/// A curator can name one Skill and also list its whole Repository. Both rows
+/// then resolve to the same Skill, while their selectors differ, because only
+/// one row carries the Skill path. The identity is the owner, the Repository,
+/// and the path when skilld knows it, falling back to the Skill name.
+fn skill_identity(skill: &ListedSkill) -> (String, String, String) {
+    (
+        skill.owner.to_ascii_lowercase(),
+        skill.repository.to_ascii_lowercase(),
+        match &skill.origin {
+            ListedOrigin::Registry { path: Some(path) } | ListedOrigin::Direct { path } => {
+                path.to_ascii_lowercase()
+            }
+            ListedOrigin::Registry { path: None } => skill.name.to_ascii_lowercase(),
+        },
+    )
 }
 
 /// Build one listed Skill from untrusted registry fields.
@@ -1727,6 +2067,7 @@ fn listed_skill(
     repository: String,
     name: String,
     description: Option<&str>,
+    path: Option<String>,
 ) -> Option<ListedSkill> {
     let skill = ListedSkill {
         owner,
@@ -1735,10 +2076,67 @@ fn listed_skill(
         description: description
             .map(|value| sanitize_line(value, 500, ""))
             .filter(|value| !value.is_empty()),
+        origin: ListedOrigin::Registry {
+            path: path.filter(|path| {
+                RemoteSelector::parse(&format!("github:owner/repository/{path}")).is_ok()
+            }),
+        },
     };
     RemoteSelector::parse(&skill.selector())
         .is_ok()
         .then_some(skill)
+}
+
+/// Whether GitHub answered that the Repository does not exist.
+///
+/// GitHub answers 404 for a missing Repository and for a private one the
+/// request cannot read. Either way the Repository lists no Skills, and the
+/// caller reports that the ref names none.
+fn is_github_missing(error: &RemoteError) -> bool {
+    error.code == "SERVICE_UNAVAILABLE" && error.message.ends_with("HTTP 404")
+}
+
+/// The Skill directory one GitHub blob URL names.
+///
+/// The registry stores the `SKILL.md` blob, such as
+/// `https://github.com/OWNER/REPOSITORY/blob/SHA/skills/vue/SKILL.md`. The path
+/// after the commit names the Skill, so a hosted Skill can fall back to GitHub.
+fn skill_directory_from_blob_url(value: &str) -> Option<String> {
+    let (_, rest) = value.split_once("/blob/")?;
+    let (_, path) = rest.split_once('/')?;
+    skill_directory(path).map(str::to_owned)
+}
+
+/// The Skill directory one tree path names, when the path is a `SKILL.md`.
+///
+/// A `SKILL.md` at the Repository root names no directory. Direct mode reads
+/// one Skill path inside a Repository, so a root Skill has no selector and
+/// the listing drops it.
+fn skill_directory(path: &str) -> Option<&str> {
+    path.strip_suffix("/SKILL.md")
+}
+
+/// Build one listed Skill from a GitHub tree path.
+///
+/// A path outside the selector contract has no `github:` selector, so skilld
+/// could not run or install it. Listing it would print a command that fails,
+/// so the path is dropped.
+fn listed_direct_skill(
+    owner: &str,
+    repository: &str,
+    name: &str,
+    path: &str,
+) -> Option<ListedSkill> {
+    let skill = ListedSkill {
+        owner: owner.to_owned(),
+        repository: repository.to_owned(),
+        name: sanitize_line(name, 100, ""),
+        description: None,
+        origin: ListedOrigin::Direct {
+            path: path.to_owned(),
+        },
+    };
+    (!skill.name.is_empty() && RemoteSelector::parse(&skill.selector()).is_ok()).then_some(skill)
 }
 
 fn not_found_as_source(error: RemoteError, message: String) -> RemoteError {
@@ -1754,7 +2152,7 @@ impl RemoteProvider for SkilldRemote {
         let mut memo = HashMap::new();
         let items = match reference {
             MultiSkillRef::Repository { owner, repository } => {
-                self.repository_skills(owner, repository, &mut memo)?
+                self.repository_skills(owner, repository, &mut memo, true)?
             }
             MultiSkillRef::Collection { login, slug } => {
                 self.expand_entries(self.collection_entries(login, slug)?, &mut memo)?
@@ -1914,7 +2312,8 @@ impl RemoteProvider for SkilldRemote {
         direct: bool,
     ) -> Result<RemoteLatestCommit, RemoteError> {
         if direct {
-            let commit_sha = self.direct_commit(selector).and_then(|(_, _, commit)| {
+            direct_skill_path(selector)?;
+            let commit_sha = self.direct_commit(selector).and_then(|(_, commit)| {
                 CommitSha::parse(commit.sha).map_err(|_| invalid_github())
             })?;
             return Ok(RemoteLatestCommit {
@@ -2625,6 +3024,39 @@ fn resolution_timeout() -> RemoteError {
     )
 }
 
+/// Say which check blocked the Skill, and what it found.
+///
+/// A blocked Resolution is a decision about the Skill, so the person needs the
+/// check that made it. Without the names, every block reads the same.
+fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
+    let failed = results
+        .iter()
+        .filter(|result| result.outcome == CheckOutcome::Fail)
+        .map(|result| match &result.summary {
+            Some(summary) => format!(
+                "{}: {}",
+                sanitize_line(&result.name, 100, "check"),
+                sanitize_line(summary, 300, "no summary")
+            ),
+            None => sanitize_line(&result.name, 100, "check"),
+        })
+        .collect::<Vec<_>>();
+    if failed.is_empty() {
+        return "the Resolution was blocked by check results".to_owned();
+    }
+    format!(
+        "the Resolution was blocked by check results. {}",
+        failed.join(". ")
+    )
+}
+
+fn direct_snapshot_lost() -> RemoteError {
+    RemoteError::new(
+        "SERVICE_UNAVAILABLE",
+        "the direct Repository cache is unusable. Run the command again.",
+    )
+}
+
 fn invalid_github() -> RemoteError {
     RemoteError::new(
         "INVALID_GITHUB_RESPONSE",
@@ -2651,7 +3083,7 @@ enum Resolution {
         #[serde(rename = "resolutionId")]
         resolution_id: String,
         #[serde(rename = "checkResults")]
-        _check_results: Vec<skilld_core::CheckResult>,
+        check_results: Vec<skilld_core::CheckResult>,
     },
     Failed {
         #[serde(rename = "resolutionId")]
@@ -2732,6 +3164,40 @@ struct GithubCommitData {
 #[derive(Deserialize)]
 struct GithubTreeIdentity {
     sha: String,
+}
+
+/// The answer to a Repository submission.
+#[derive(Deserialize)]
+#[serde(tag = "_tag", rename_all = "lowercase")]
+enum RepositorySubmission {
+    /// skilld.dev already holds this Repository.
+    Indexed { skills: Vec<IndexedSkillRow> },
+    /// skilld.dev queued the Repository under this job.
+    Queued {
+        #[serde(rename = "jobId")]
+        job_id: String,
+    },
+}
+
+/// The state of one Repository index job.
+#[derive(Deserialize)]
+#[serde(tag = "_tag", rename_all = "lowercase")]
+enum RepositoryIndexStatus {
+    Queued {},
+    Indexed { skills: Vec<IndexedSkillRow> },
+    Failed {},
+}
+
+/// One Skill row an index answer carries.
+///
+/// The answer names the Repository once, beside the rows, so a row carries no
+/// owner and no repository of its own.
+#[derive(Deserialize)]
+struct IndexedSkillRow {
+    name: String,
+    description: Option<String>,
+    /// The `SKILL.md` path inside the Repository, when a render recorded it.
+    path: Option<String>,
 }
 
 #[derive(Deserialize)]
