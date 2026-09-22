@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha1::{Digest as _, Sha1};
 use skilld_core::{
     ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
     ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
@@ -47,6 +48,28 @@ pub const INDEX_POLL_ATTEMPTS: usize = 30;
 const MAX_DIRECT_TREE_ENTRIES: usize = 20_000;
 const ARTIFACT_LIMIT: usize = 64 * 1024 * 1024;
 const DIRECT_BLOB_LIMIT: usize = 12 * 1024 * 1024;
+
+/// The uncompressed Repository size the tarball path accepts, summed from the
+/// Git tree blob sizes.
+///
+/// The tarball carries the whole Repository, so the gate is the Repository
+/// size, not the Skill size. The delivery spike measured 4.2 to 6.1 ms of CPU
+/// per uncompressed MiB, so 128 MiB costs about 0.6 s of inflate and 20 to
+/// 30 MiB of transfer at the measured 4x to 6x compression ratio. Above it the
+/// per-blob path stays the cheaper way to read one Skill out of a large
+/// Repository.
+const MAX_DIRECT_TARBALL_TREE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// The compressed bytes one tarball response may carry. The gate above bounds
+/// the honest case; this bounds a Repository whose tree understates its size.
+const DIRECT_TARBALL_LIMIT: usize = 64 * 1024 * 1024;
+
+/// The inflated bytes one tarball may produce before skilld stops reading it.
+/// A lying tree or a compression bomb cannot exhaust memory behind this.
+const MAX_TARBALL_INFLATED_BYTES: usize = 256 * 1024 * 1024;
+
+/// One tar block. Every header and every file body is a whole number of these.
+const TAR_BLOCK: usize = 512;
 const MAX_REDIRECTS: usize = 3;
 const MAX_RETRIES: usize = 2;
 const MAX_POLLS: usize = 120;
@@ -854,7 +877,13 @@ impl SkilldRemote {
                 }
             };
             if matches!(response.status, 301 | 302 | 303 | 307 | 308) {
-                if request.method != HttpMethod::Get || redirects == MAX_REDIRECTS {
+                // The tarball redirect is an exception, so it is spent once:
+                // one hop, to codeload and nowhere else.
+                let limit = match allowed {
+                    AllowedOrigin::GithubTarball => 1,
+                    _ => MAX_REDIRECTS,
+                };
+                if request.method != HttpMethod::Get || redirects == limit {
                     return Err(RemoteError::new(
                         "REDIRECT_REJECTED",
                         "the remote response used a rejected redirect",
@@ -870,13 +899,21 @@ impl SkilldRemote {
                     RemoteError::new("REDIRECT_REJECTED", "the redirect URL is invalid")
                 })?;
                 validate_url(&next, &allowed)?;
+                if matches!(allowed, AllowedOrigin::GithubTarball)
+                    && next.host_str() != Some("codeload.github.com")
+                {
+                    return Err(RemoteError::new(
+                        "REDIRECT_REJECTED",
+                        "the tarball redirect left codeload.github.com",
+                    ));
+                }
                 request.url = next.into();
                 redirects += 1;
                 continue;
             }
             if !(200..300).contains(&response.status) {
                 return Err(match allowed {
-                    AllowedOrigin::Github => github_error(&response),
+                    AllowedOrigin::Github | AllowedOrigin::GithubTarball => github_error(&response),
                     AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => {
                         problem_error(&response)
                     }
@@ -1488,10 +1525,18 @@ impl SkilldRemote {
                 "the GitHub Repository tree exceeds the direct access limit",
             ));
         }
+        let tree_bytes = tree
+            .tree
+            .iter()
+            .filter(|entry| entry.kind == "blob")
+            .map(|entry| entry.size.unwrap_or_default())
+            .fold(0_u64, u64::saturating_add);
         let snapshot = Arc::new(DirectSnapshot {
             repository_url,
             commit_sha: commit.sha,
             entries: tree.tree,
+            tree_bytes,
+            tarball: Mutex::new(TarballCache::Unread),
         });
         self.direct_snapshots
             .lock()
@@ -1502,10 +1547,9 @@ impl SkilldRemote {
 
     fn direct(&self, selector: &RemoteSelector) -> Result<PreparedRemoteSkill, RemoteError> {
         let (snapshot, skill_path) = self.direct_snapshot(selector)?;
-        let repository_url = snapshot.repository_url.as_str();
         let prefix = skill_path.trim_end_matches('/');
         let prefix_with_slash = format!("{prefix}/");
-        let mut files = Vec::new();
+        let mut plan = Vec::new();
         let mut total = 0_u64;
         for entry in &snapshot.entries {
             if entry.path == prefix && entry.kind != "tree" {
@@ -1525,28 +1569,27 @@ impl SkilldRemote {
             }
             let size = entry.size.ok_or_else(invalid_github)?;
             total = total.checked_add(size).ok_or_else(invalid_github)?;
-            if size > 8 * 1024 * 1024 || total > ARTIFACT_LIMIT as u64 || files.len() == 2_000 {
+            if size > 8 * 1024 * 1024 || total > ARTIFACT_LIMIT as u64 || plan.len() == 2_000 {
                 return Err(RemoteError::new(
                     "DIRECT_SOURCE_TOO_LARGE",
                     "the direct Skill exceeds its content limit",
                 ));
             }
-            let blob_url = format!("{repository_url}/git/blobs/{}", path_segment(&entry.sha));
-            let blob: GithubBlob = self.github_json(&blob_url, DIRECT_BLOB_LIMIT)?;
-            if blob.encoding != "base64" || blob.size != size {
-                return Err(invalid_github());
-            }
-            let encoded = blob.content.replace(['\r', '\n'], "");
-            let bytes = STANDARD.decode(encoded).map_err(|_| invalid_github())?;
-            if bytes.len() as u64 != size {
-                return Err(invalid_github());
-            }
-            files.push(PreparedFile {
-                path: relative.to_owned(),
+            plan.push(DirectPlanEntry {
+                relative: relative.to_owned(),
+                repository_path: entry.path.clone(),
+                sha: entry.sha.clone(),
                 mode: if entry.mode == "100755" { 0o755 } else { 0o644 },
-                bytes,
+                size,
             });
         }
+        // The tarball is one request for the whole Repository, against the
+        // per-blob path's one request per file. It is content addressed, so a
+        // gap in it is detectable and never silent: any doubt reads the blobs.
+        let files = match self.direct_tarball_files(&snapshot, &plan) {
+            Some(files) => files,
+            None => self.direct_blob_files(&snapshot, &plan)?,
+        };
         let (_name, installed_sha256, files) = prepare_unverified_files(files)?;
         Ok(PreparedRemoteSkill {
             locked_source: LockedSource::Remote {
@@ -1561,6 +1604,320 @@ impl SkilldRemote {
             files,
         })
     }
+
+    /// The Skill files, read one blob at a time.
+    ///
+    /// One GitHub request per file. This is the path direct mode used for
+    /// every Skill, and it stays the fallback whenever the tarball cannot be
+    /// trusted to hold the exact tree bytes.
+    fn direct_blob_files(
+        &self,
+        snapshot: &DirectSnapshot,
+        plan: &[DirectPlanEntry],
+    ) -> Result<Vec<PreparedFile>, RemoteError> {
+        let repository_url = snapshot.repository_url.as_str();
+        plan.iter()
+            .map(|entry| {
+                let blob_url = format!("{repository_url}/git/blobs/{}", path_segment(&entry.sha));
+                let blob: GithubBlob = self.github_json(&blob_url, DIRECT_BLOB_LIMIT)?;
+                if blob.encoding != "base64" || blob.size != entry.size {
+                    return Err(invalid_github());
+                }
+                let encoded = blob.content.replace(['\r', '\n'], "");
+                let bytes = STANDARD.decode(encoded).map_err(|_| invalid_github())?;
+                if bytes.len() as u64 != entry.size {
+                    return Err(invalid_github());
+                }
+                Ok(PreparedFile {
+                    path: entry.relative.clone(),
+                    mode: entry.mode,
+                    bytes,
+                })
+            })
+            .collect()
+    }
+
+    /// The Skill files, read from the Repository tarball.
+    ///
+    /// `None` means the tarball cannot serve this Skill and the caller reads
+    /// the blobs instead. It is returned for an oversized Repository, a failed
+    /// or rejected fetch, an archive that does not parse, a file the archive
+    /// does not carry, and any file whose bytes miss their Git blob SHA.
+    /// Direct mode therefore still works everywhere it worked before.
+    fn direct_tarball_files(
+        &self,
+        snapshot: &DirectSnapshot,
+        plan: &[DirectPlanEntry],
+    ) -> Option<Vec<PreparedFile>> {
+        if plan.is_empty() || snapshot.tree_bytes > MAX_DIRECT_TARBALL_TREE_BYTES {
+            return None;
+        }
+        let archive = self.direct_tarball_bytes(snapshot)?;
+        let tar = inflate_gzip(&archive, MAX_TARBALL_INFLATED_BYTES)?;
+        // Only the wanted paths are retained. The archive holds the whole
+        // Repository, and the spike measured retained bytes, not archive size,
+        // as the memory bound.
+        let wanted = plan
+            .iter()
+            .map(|entry| entry.repository_path.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut carried = read_tar_files(&tar, &wanted)?;
+        drop(tar);
+        plan.iter()
+            .map(|entry| {
+                // `.gitattributes export-ignore` drops files from the archive
+                // without a word. A missing file falls back; it never installs
+                // a partial Skill. The spike measured one Repository with 176
+                // tree blobs and 77 files in its tarball.
+                let bytes = carried.remove(entry.repository_path.as_str())?;
+                // The tar carries no Git SHA, so this is what makes the
+                // transport irrelevant: the bytes are the tree's bytes, or
+                // they are not used.
+                if bytes.len() as u64 != entry.size || git_blob_sha1(&bytes) != entry.sha {
+                    return None;
+                }
+                Some(PreparedFile {
+                    path: entry.relative.clone(),
+                    // The mode comes from the tree. GitHub tarballs report
+                    // 0664 and 0775, which no Git tree ever carries.
+                    mode: entry.mode,
+                    bytes,
+                })
+            })
+            .collect()
+    }
+
+    /// The compressed Repository tarball, downloaded at most once per
+    /// Repository per run.
+    fn direct_tarball_bytes(&self, snapshot: &DirectSnapshot) -> Option<Arc<Vec<u8>>> {
+        // A poisoned lock means another thread panicked mid-download. Treat it
+        // like a failed fetch and read the blobs.
+        let mut cache = snapshot.tarball.lock().ok()?;
+        match &*cache {
+            TarballCache::Ready(bytes) => return Some(Arc::clone(bytes)),
+            TarballCache::Unavailable => return None,
+            TarballCache::Unread => {}
+        }
+        let url = format!(
+            "{}/tarball/{}",
+            snapshot.repository_url,
+            path_segment(&snapshot.commit_sha)
+        );
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            url,
+            headers: github_headers(),
+            body: vec![],
+            response_limit: DIRECT_TARBALL_LIMIT,
+        };
+        // A tarball failure is a routing signal, not an install failure, so
+        // the error is recorded as unavailable and not raised.
+        match self.execute(request, AllowedOrigin::GithubTarball) {
+            Ok(response) => {
+                let bytes = Arc::new(response.body);
+                *cache = TarballCache::Ready(Arc::clone(&bytes));
+                Some(bytes)
+            }
+            Err(_) => {
+                *cache = TarballCache::Unavailable;
+                None
+            }
+        }
+    }
+}
+
+/// The inflated bytes of one gzip member, or `None` when the archive is not a
+/// single well formed member within `limit` bytes.
+///
+/// The CRC32 in the trailer is not checked, and that is deliberate: every file
+/// this archive yields is checked against its Git blob SHA-1, which is a
+/// stronger claim about the same bytes. The length is checked because it is
+/// free and catches a truncated download early.
+fn inflate_gzip(bytes: &[u8], limit: usize) -> Option<Vec<u8>> {
+    const HEADER: usize = 10;
+    const TRAILER: usize = 8;
+    const FHCRC: u8 = 0b0000_0010;
+    const FEXTRA: u8 = 0b0000_0100;
+    const FNAME: u8 = 0b0000_1000;
+    const FCOMMENT: u8 = 0b0001_0000;
+
+    if bytes.len() < HEADER + TRAILER || bytes[0] != 0x1f || bytes[1] != 0x8b || bytes[2] != 8 {
+        return None;
+    }
+    let flags = bytes[3];
+    if flags & 0b1110_0000 != 0 {
+        // The reserved bits are zero in every gzip a Git host writes.
+        return None;
+    }
+    let end = bytes.len() - TRAILER;
+    let mut at = HEADER;
+    if flags & FEXTRA != 0 {
+        let length = usize::from(u16::from_le_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]));
+        at = at.checked_add(2)?.checked_add(length)?;
+    }
+    for field in [FNAME, FCOMMENT] {
+        if flags & field != 0 {
+            let start = at;
+            at = bytes.get(start..end)?.iter().position(|byte| *byte == 0)? + start + 1;
+        }
+    }
+    if flags & FHCRC != 0 {
+        at = at.checked_add(2)?;
+    }
+    let deflate = bytes.get(at..end)?;
+    let inflated = miniz_oxide::inflate::decompress_to_vec_with_limit(deflate, limit).ok()?;
+    let declared = u32::from_le_bytes(bytes.get(end + 4..end + TRAILER)?.try_into().ok()?);
+    // ISIZE is the uncompressed length modulo 2^32.
+    if (inflated.len() as u64) % (1 << 32) != u64::from(declared) {
+        return None;
+    }
+    Some(inflated)
+}
+
+/// The wanted files of one tar archive, keyed by Repository path.
+///
+/// GitHub wraps the Repository in one top level directory, which is stripped.
+/// The reader is tolerant on purpose: Git writes ustar headers, pax `x`
+/// extended headers for a path over 100 bytes, and GNU `L` long name entries,
+/// and an archive mixes all three. Unwanted entries are skipped without being
+/// retained. `None` means the archive is malformed.
+fn read_tar_files<'a>(
+    tar: &[u8],
+    wanted: &BTreeSet<&'a str>,
+) -> Option<BTreeMap<&'a str, Vec<u8>>> {
+    let mut carried: BTreeMap<&'a str, Vec<u8>> = BTreeMap::new();
+    let mut long_name: Option<String> = None;
+    let mut at = 0_usize;
+    let mut ended = false;
+    while at + TAR_BLOCK <= tar.len() {
+        let header = tar.get(at..at + TAR_BLOCK)?;
+        at += TAR_BLOCK;
+        if header.iter().all(|byte| *byte == 0) {
+            // The first zero block ends the archive. Padding follows it.
+            ended = true;
+            break;
+        }
+        let size = usize::try_from(parse_tar_octal(header.get(124..136)?)?).ok()?;
+        let kind = *header.get(156)?;
+        let body_end = at.checked_add(size)?;
+        let body = tar.get(at..body_end)?;
+        at = body_end.checked_add(tar_padding(size))?;
+        match kind {
+            // A pax extended header and a GNU long name both describe the next
+            // entry, so the path they carry is held over one entry.
+            b'x' | b'X' => long_name = pax_path(body),
+            b'L' => long_name = Some(tar_string(body).to_owned()),
+            // A global pax header and a GNU long link name describe something
+            // else. Read past them without losing a pending long name.
+            b'g' | b'K' => {}
+            b'0' | b'\0' => {
+                let path = match long_name.take() {
+                    Some(path) => path,
+                    None => tar_header_path(header)?,
+                };
+                if let Some(path) = strip_top_directory(&path)
+                    && let Some(key) = wanted.get(path).copied()
+                {
+                    carried.insert(key, body.to_vec());
+                }
+            }
+            _ => {
+                // Directories, links and every other type carry no Skill
+                // bytes. A link under the Skill path was already rejected from
+                // the Git tree, which is the only place a link is visible.
+                long_name = None;
+            }
+        }
+    }
+    // An archive that stops without its end of file blocks was cut short, and
+    // a cut short archive silently loses its last files.
+    ended.then_some(carried)
+}
+
+/// The path a ustar header names, joining its `prefix` field when it has one.
+fn tar_header_path(header: &[u8]) -> Option<String> {
+    let name = tar_string(header.get(0..100)?);
+    let ustar = header.get(257..262)? == b"ustar";
+    let prefix = if ustar {
+        tar_string(header.get(345..500)?)
+    } else {
+        ""
+    };
+    if prefix.is_empty() {
+        Some(name.to_owned())
+    } else {
+        Some(format!("{prefix}/{name}"))
+    }
+}
+
+/// The `path` record of one pax extended header, whose records read
+/// `LENGTH KEY=VALUE\n`.
+fn pax_path(body: &[u8]) -> Option<String> {
+    let mut at = 0_usize;
+    while at < body.len() {
+        let space = body.get(at..)?.iter().position(|byte| *byte == b' ')? + at;
+        let length = std::str::from_utf8(body.get(at..space)?)
+            .ok()?
+            .parse::<usize>()
+            .ok()?;
+        let end = at.checked_add(length)?;
+        if length == 0 || end > body.len() {
+            return None;
+        }
+        let record = std::str::from_utf8(body.get(space + 1..end)?).ok()?;
+        if let Some(path) = record.trim_end_matches('\n').strip_prefix("path=") {
+            return Some(path.to_owned());
+        }
+        at = end;
+    }
+    None
+}
+
+/// The archive path with GitHub's top level directory removed.
+fn strip_top_directory(path: &str) -> Option<&str> {
+    path.split_once('/')
+        .map(|(_top, rest)| rest)
+        .filter(|rest| !rest.is_empty())
+}
+
+/// One NUL terminated tar header field, as text.
+fn tar_string(field: &[u8]) -> &str {
+    let end = field
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(field.len());
+    std::str::from_utf8(&field[..end]).unwrap_or_default()
+}
+
+/// One octal tar header number. The field is space or NUL padded.
+fn parse_tar_octal(field: &[u8]) -> Option<u64> {
+    let digits = field
+        .iter()
+        .copied()
+        .filter(|byte| !matches!(byte, b' ' | 0))
+        .collect::<Vec<_>>();
+    if digits.is_empty() {
+        return Some(0);
+    }
+    let text = std::str::from_utf8(&digits).ok()?;
+    u64::from_str_radix(text, 8).ok()
+}
+
+/// The padding that follows one tar body, which fills its last block.
+const fn tar_padding(size: usize) -> usize {
+    (TAR_BLOCK - size % TAR_BLOCK) % TAR_BLOCK
+}
+
+/// The Git blob SHA-1 of one file: `sha1("blob " + length + "\0" + bytes)`.
+fn git_blob_sha1(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The Skill path one direct source names.
@@ -1588,6 +1945,39 @@ struct DirectSnapshot {
     repository_url: String,
     commit_sha: String,
     entries: Vec<GithubTreeEntry>,
+    /// The uncompressed size of every blob the tree reports, which gates the
+    /// tarball path. The tree is the only size the CLI knows before the
+    /// download: codeload omits `content-length` on a cold archive.
+    tree_bytes: u64,
+    /// The gzipped Repository tarball, read at most once per Repository.
+    ///
+    /// The snapshot is memoized per (owner, repository, ref), so installing 33
+    /// Skills of one Repository downloads one archive, not 33.
+    tarball: Mutex<TarballCache>,
+}
+
+/// The Repository tarball, across the Skills of one run.
+enum TarballCache {
+    /// No attempt yet.
+    Unread,
+    /// The tarball cannot serve this Repository. One failed attempt is enough:
+    /// every later Skill goes straight to the per-blob path.
+    Unavailable,
+    /// The compressed archive bytes, inflated again per Skill.
+    Ready(Arc<Vec<u8>>),
+}
+
+/// One tree blob the Skill path carries, validated and ready to read.
+struct DirectPlanEntry {
+    /// The path inside the Skill.
+    relative: String,
+    /// The path inside the Repository, which is what the tarball keys on.
+    repository_path: String,
+    sha: String,
+    /// `0o644` or `0o755`, taken from the Git tree. GitHub tarballs report
+    /// `0664` and `0775`, so the tar header mode is never read.
+    mode: u32,
+    size: u64,
 }
 
 /// One entry a collection names, before the Skills behind it are known.
@@ -2778,6 +3168,13 @@ enum AllowedOrigin {
     /// subdomains, such as `artifacts.skilld.dev` for `skilld.dev`.
     Artifact(Url),
     Github,
+    /// The Repository tarball, and only it.
+    ///
+    /// `api.github.com` answers `/tarball/{sha}` with a 302 to
+    /// `codeload.github.com`, so this one request accepts both hosts and
+    /// follows one redirect. Every other GitHub request keeps
+    /// `AllowedOrigin::Github`, which accepts `api.github.com` alone.
+    GithubTarball,
 }
 
 fn same_origin(url: &Url, base: &Url) -> bool {
@@ -2816,6 +3213,14 @@ fn validate_url(url: &Url, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
         AllowedOrigin::Github => {
             url.scheme() == "https"
                 && url.host_str() == Some("api.github.com")
+                && url.port().is_none()
+        }
+        AllowedOrigin::GithubTarball => {
+            url.scheme() == "https"
+                && matches!(
+                    url.host_str(),
+                    Some("api.github.com" | "codeload.github.com")
+                )
                 && url.port().is_none()
         }
     };
@@ -3302,5 +3707,102 @@ mod problem_tests {
         let error = problem_error(&response(404, &[], "not json"));
         assert_eq!(error.code, "SERVICE_UNAVAILABLE");
         assert_eq!(error.message, "the remote service returned HTTP 404");
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use std::collections::BTreeSet;
+
+    use super::{MAX_TARBALL_INFLATED_BYTES, git_blob_sha1, inflate_gzip, read_tar_files};
+
+    /// One gzip member around `payload`, with the optional header fields the
+    /// flags name. Git writes FNAME; the reader must read past it.
+    fn gzip(payload: &[u8], flags: u8, extra: &[u8], name: &str) -> Vec<u8> {
+        let mut out = vec![0x1f, 0x8b, 0x08, flags, 0, 0, 0, 0, 0x00, 0xff];
+        if flags & 0b0000_0100 != 0 {
+            out.extend((extra.len() as u16).to_le_bytes());
+            out.extend(extra);
+        }
+        if flags & 0b0000_1000 != 0 {
+            out.extend(name.as_bytes());
+            out.push(0);
+        }
+        out.extend(miniz_oxide::deflate::compress_to_vec(payload, 6));
+        out.extend([0, 0, 0, 0]);
+        out.extend((payload.len() as u32).to_le_bytes());
+        out
+    }
+
+    fn tar_entry(name: &str, body: &[u8]) -> Vec<u8> {
+        let mut entry = vec![0_u8; 512];
+        entry[..name.len()].copy_from_slice(name.as_bytes());
+        entry[124..135].copy_from_slice(format!("{:011o}", body.len()).as_bytes());
+        entry[156] = b'0';
+        entry[257..262].copy_from_slice(b"ustar");
+        entry.extend(body);
+        entry.resize(512 + body.len().div_ceil(512) * 512, 0);
+        entry
+    }
+
+    #[test]
+    fn a_gzip_member_inflates_past_its_optional_header_fields() {
+        let payload = b"skilld tarball payload".repeat(40);
+        let archive = gzip(&payload, 0b0000_1100, b"ab", "skills.tar");
+
+        assert_eq!(
+            inflate_gzip(&archive, MAX_TARBALL_INFLATED_BYTES).as_deref(),
+            Some(payload.as_slice())
+        );
+    }
+
+    #[test]
+    fn a_gzip_member_past_the_output_limit_is_refused() {
+        let archive = gzip(&b"a".repeat(4096), 0, b"", "");
+
+        assert_eq!(inflate_gzip(&archive, 1024), None);
+    }
+
+    #[test]
+    fn a_gzip_member_whose_length_disagrees_with_its_bytes_is_refused() {
+        let mut archive = gzip(b"skilld", 0, b"", "");
+        let end = archive.len();
+        archive[end - 4..].copy_from_slice(&7_u32.to_le_bytes());
+
+        assert_eq!(inflate_gzip(&archive, MAX_TARBALL_INFLATED_BYTES), None);
+    }
+
+    #[test]
+    fn a_truncated_tar_carries_nothing() {
+        let mut tar = tar_entry("top/skills/example/SKILL.md", b"skilld");
+        tar.truncate(tar.len() - 8);
+        let wanted = BTreeSet::from(["skills/example/SKILL.md"]);
+
+        assert!(read_tar_files(&tar, &wanted).is_none());
+    }
+
+    #[test]
+    fn a_tar_yields_only_the_wanted_paths_without_its_top_directory() {
+        let mut tar = tar_entry("top/skills/example/SKILL.md", b"skilld");
+        tar.extend(tar_entry("top/README.md", b"unrelated"));
+        tar.extend(vec![0_u8; 1024]);
+        let wanted = BTreeSet::from(["skills/example/SKILL.md"]);
+
+        let carried = read_tar_files(&tar, &wanted).unwrap();
+
+        assert_eq!(carried.len(), 1);
+        assert_eq!(
+            carried.get("skills/example/SKILL.md").map(Vec::as_slice),
+            Some(b"skilld".as_slice())
+        );
+    }
+
+    #[test]
+    fn a_git_blob_sha_matches_the_value_git_hash_object_writes() {
+        // `printf 'what is up, doc?' | git hash-object --stdin`
+        assert_eq!(
+            git_blob_sha1(b"what is up, doc?"),
+            "bd9dbf5aae1a3862dd1526723246b20206e5fc37"
+        );
     }
 }
