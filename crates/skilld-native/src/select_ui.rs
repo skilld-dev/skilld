@@ -36,9 +36,18 @@ pub enum PickerKey {
     Up,
     Down,
     Toggle,
+    /// Choose or free every Skill the filter shows.
     ToggleAll,
     Confirm,
     Cancel,
+    /// Start typing a filter.
+    FilterStart,
+    /// One character typed into the filter.
+    FilterChar(char),
+    /// Erase the last filter character.
+    FilterBackspace,
+    /// Leave the filter, keeping what it shows.
+    FilterDone,
 }
 
 /// What the picker returned.
@@ -55,7 +64,11 @@ pub enum PickerOutcome {
 pub struct PickerModel {
     reference: String,
     choices: Vec<SkillChoice>,
+    /// The cursor position inside the filtered list, not the whole list.
     cursor: usize,
+    filter: String,
+    /// Whether typing goes to the filter or to the list.
+    filtering: bool,
     outcome: Option<PickerOutcome>,
 }
 
@@ -66,11 +79,53 @@ impl PickerModel {
             reference: reference.into(),
             choices,
             cursor: 0,
+            filter: String::new(),
+            filtering: false,
             outcome: None,
         }
     }
 
+    /// The positions the filter shows, in list order.
+    ///
+    /// An empty filter shows every Skill. A filter matches the name or the
+    /// description, ignoring case, so "form" finds both `vee-validate` and
+    /// `formkit`.
+    #[must_use]
+    pub fn visible(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.choices.len()).collect();
+        }
+        let needle = self.filter.to_lowercase();
+        self.choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| {
+                choice.label.to_lowercase().contains(&needle)
+                    || choice
+                        .description
+                        .as_deref()
+                        .is_some_and(|value| value.to_lowercase().contains(&needle))
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// What the person has typed into the filter.
+    #[must_use]
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    /// Whether the next character typed goes to the filter.
+    #[must_use]
+    pub const fn filtering(&self) -> bool {
+        self.filtering
+    }
+
     /// The Skills chosen so far, and how many the ref names.
+    ///
+    /// The chosen count covers every Skill, including ones the filter hides,
+    /// because a Skill stays chosen while you look for the next one.
     #[must_use]
     pub fn counts(&self) -> (usize, usize) {
         (self.chosen().len(), self.choices.len())
@@ -89,26 +144,67 @@ impl PickerModel {
             return;
         }
         match key {
-            PickerKey::Up => {
-                self.cursor = if self.cursor == 0 {
-                    self.choices.len() - 1
-                } else {
-                    self.cursor - 1
-                };
-            }
-            PickerKey::Down => self.cursor = (self.cursor + 1) % self.choices.len(),
+            PickerKey::Up => self.move_cursor(-1),
+            PickerKey::Down => self.move_cursor(1),
             PickerKey::Toggle => {
-                let choice = &mut self.choices[self.cursor];
-                choice.selected = !choice.selected;
+                if let Some(position) = self.visible().get(self.cursor).copied() {
+                    self.choices[position].selected = !self.choices[position].selected;
+                }
             }
             PickerKey::ToggleAll => {
-                let select = !self.choices.iter().all(|choice| choice.selected);
-                for choice in &mut self.choices {
-                    choice.selected = select;
+                // Filter, then press a: the pair is how you take a family of
+                // Skills without walking the whole list.
+                let visible = self.visible();
+                let select = !visible
+                    .iter()
+                    .all(|position| self.choices[*position].selected);
+                for position in visible {
+                    self.choices[position].selected = select;
                 }
             }
             PickerKey::Confirm => self.outcome = Some(PickerOutcome::Chose(self.chosen())),
-            PickerKey::Cancel => self.outcome = Some(PickerOutcome::Cancelled),
+            PickerKey::Cancel => {
+                // Escape backs out of the filter first. It cancels the picker
+                // only when there is nothing to back out of.
+                if self.filtering || !self.filter.is_empty() {
+                    self.filtering = false;
+                    self.filter.clear();
+                    self.clamp_cursor();
+                } else {
+                    self.outcome = Some(PickerOutcome::Cancelled);
+                }
+            }
+            PickerKey::FilterStart => self.filtering = true,
+            PickerKey::FilterChar(character) => {
+                if self.filter.chars().count() < 64 {
+                    self.filter.push(character);
+                    self.cursor = 0;
+                }
+            }
+            PickerKey::FilterBackspace => {
+                self.filter.pop();
+                self.cursor = 0;
+            }
+            PickerKey::FilterDone => self.filtering = false,
+        }
+    }
+
+    /// Move the cursor inside the filtered list, wrapping at both ends.
+    fn move_cursor(&mut self, step: isize) {
+        let length = self.visible().len();
+        if length == 0 {
+            self.cursor = 0;
+            return;
+        }
+        let position = self.cursor as isize + step;
+        self.cursor = position.rem_euclid(length as isize) as usize;
+    }
+
+    /// Keep the cursor inside the filtered list after the filter changes.
+    fn clamp_cursor(&mut self) {
+        let length = self.visible().len();
+        if self.cursor >= length {
+            self.cursor = length.saturating_sub(1);
         }
     }
 
@@ -161,7 +257,7 @@ pub fn run_skill_picker(
             }
             if event::poll(Duration::from_millis(120)).map_err(terminal_lost)?
                 && let Event::Key(event) = event::read().map_err(terminal_lost)?
-                && let Some(key) = picker_key(event)
+                && let Some(key) = picker_key(event, model.filtering())
             {
                 model.update(key);
             }
@@ -183,18 +279,34 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
     .split(frame.area());
     frame.render_widget(header(model, color), areas[0]);
     let width = areas[1].width as usize;
+    let visible = model.visible();
+    if visible.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    "No Skill matches ",
+                    Style::default().fg(theme(color, Color::DarkGray)),
+                ),
+                Span::styled(
+                    sanitize(model.filter()),
+                    Style::default().fg(theme(color, Color::Yellow)),
+                ),
+            ])),
+            areas[1],
+        );
+        frame.render_widget(footer(model, color), areas[2]);
+        return;
+    }
     // The name column is as wide as the longest name, so every description
     // starts in the same place and the eye reads one column, not a ragged edge.
-    let name_width = model
-        .choices()
+    let name_width = visible
         .iter()
-        .map(|choice| UnicodeWidthStr::width(choice.label.as_str()))
+        .map(|position| UnicodeWidthStr::width(model.choices()[*position].label.as_str()))
         .max()
         .unwrap_or(0);
-    let items = model
-        .choices()
+    let items = visible
         .iter()
-        .map(|choice| row(choice, name_width, width, color))
+        .map(|position| row(&model.choices()[*position], name_width, width, color))
         .collect::<Vec<_>>();
     let mut state = ListState::default().with_selected(Some(model.cursor()));
     frame.render_stateful_widget(
@@ -204,7 +316,7 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
         areas[1],
         &mut state,
     );
-    frame.render_widget(footer(color), areas[2]);
+    frame.render_widget(footer(model, color), areas[2]);
 }
 
 /// The ref, the counts, and one blank line.
@@ -217,22 +329,53 @@ fn header(model: &PickerModel, color: bool) -> Paragraph<'static> {
             .fg(theme(color, Color::Green))
             .add_modifier(Modifier::BOLD)
     };
-    Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(
-                sanitize(model.reference()),
-                Style::default()
-                    .fg(theme(color, Color::Cyan))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" names {total} Skills. "),
-                Style::default().fg(theme(color, Color::Reset)),
-            ),
-            Span::styled(format!("{chosen} chosen"), chosen_style),
-        ]),
-        Line::from(String::new()),
-    ])
+    let shown = model.visible().len();
+    let mut counts = vec![
+        Span::styled(
+            sanitize(model.reference()),
+            Style::default()
+                .fg(theme(color, Color::Cyan))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" names {total} Skills. "),
+            Style::default().fg(theme(color, Color::Reset)),
+        ),
+        Span::styled(format!("{chosen} chosen"), chosen_style),
+    ];
+    if shown != total {
+        counts.push(Span::styled(
+            format!(", {shown} shown"),
+            Style::default().fg(theme(color, Color::DarkGray)),
+        ));
+    }
+    Paragraph::new(vec![Line::from(counts), filter_line(model, color)])
+}
+
+/// The filter line. It carries a cursor while the person is typing.
+fn filter_line(model: &PickerModel, color: bool) -> Line<'static> {
+    if !model.filtering() && model.filter().is_empty() {
+        return Line::from(String::new());
+    }
+    let mut spans = vec![
+        Span::styled(
+            "filter ",
+            Style::default().fg(theme(color, Color::DarkGray)),
+        ),
+        Span::styled(
+            sanitize(model.filter()),
+            Style::default()
+                .fg(theme(color, Color::Yellow))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if model.filtering() {
+        spans.push(Span::styled(
+            "\u{2588}",
+            Style::default().fg(theme(color, Color::Yellow)),
+        ));
+    }
+    Line::from(spans)
 }
 
 /// One Skill row: the mark, the name, then as much description as fits.
@@ -281,24 +424,42 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
 }
 
 /// The key hints. Each key is lit, each verb stays dim.
-fn footer(color: bool) -> Paragraph<'static> {
+///
+/// Typing a filter takes the letter keys, so the hints say what is left.
+fn footer(model: &PickerModel, color: bool) -> Paragraph<'static> {
     let key = Style::default()
         .fg(theme(color, Color::Cyan))
         .add_modifier(Modifier::BOLD);
     let text = Style::default().fg(theme(color, Color::DarkGray));
-    Paragraph::new(vec![
-        Line::from(String::new()),
-        Line::from(vec![
-            Span::styled("space", key),
-            Span::styled(" choose   ", text),
-            Span::styled("a", key),
-            Span::styled(" all   ", text),
-            Span::styled("enter", key),
-            Span::styled(" install   ", text),
-            Span::styled("esc", key),
-            Span::styled(" cancel", text),
-        ]),
-    ])
+    let hints = if model.filtering() {
+        vec![
+            ("type", " to filter   "),
+            ("enter", " keep it   "),
+            ("esc", " clear"),
+        ]
+    } else if model.filter().is_empty() {
+        vec![
+            ("space", " choose   "),
+            ("a", " all   "),
+            ("/", " filter   "),
+            ("enter", " install   "),
+            ("esc", " cancel"),
+        ]
+    } else {
+        vec![
+            ("space", " choose   "),
+            ("a", " all shown   "),
+            ("/", " edit filter   "),
+            ("enter", " install   "),
+            ("esc", " clear filter"),
+        ]
+    };
+    let mut spans = Vec::with_capacity(hints.len() * 2);
+    for (name, verb) in hints {
+        spans.push(Span::styled(name, key));
+        spans.push(Span::styled(verb, text));
+    }
+    Paragraph::new(vec![Line::from(String::new()), Line::from(spans)])
 }
 
 /// Colors are off under NO_COLOR, so every style falls back to the default.
@@ -359,18 +520,35 @@ pub fn render_snapshot(model: &PickerModel, width: u16, height: u16, color: bool
     lines.join("\n")
 }
 
-fn picker_key(event: KeyEvent) -> Option<PickerKey> {
+/// Read one key. What it means depends on whether a filter is being typed.
+fn picker_key(event: KeyEvent, filtering: bool) -> Option<PickerKey> {
     if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return None;
     }
     if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
         return Some(PickerKey::Cancel);
     }
+    if filtering {
+        return match event.code {
+            KeyCode::Up => Some(PickerKey::Up),
+            KeyCode::Down => Some(PickerKey::Down),
+            KeyCode::Backspace => Some(PickerKey::FilterBackspace),
+            // Enter keeps the filter and hands the letter keys back, so the
+            // next space chooses rather than typing a space.
+            KeyCode::Enter => Some(PickerKey::FilterDone),
+            KeyCode::Esc => Some(PickerKey::Cancel),
+            KeyCode::Char(character) if !character.is_control() => {
+                Some(PickerKey::FilterChar(character))
+            }
+            _ => None,
+        };
+    }
     match event.code {
         KeyCode::Up | KeyCode::Char('k') => Some(PickerKey::Up),
         KeyCode::Down | KeyCode::Char('j') => Some(PickerKey::Down),
         KeyCode::Char(' ') => Some(PickerKey::Toggle),
         KeyCode::Char('a') => Some(PickerKey::ToggleAll),
+        KeyCode::Char('/') => Some(PickerKey::FilterStart),
         KeyCode::Enter => Some(PickerKey::Confirm),
         KeyCode::Char('q') | KeyCode::Esc => Some(PickerKey::Cancel),
         _ => None,
