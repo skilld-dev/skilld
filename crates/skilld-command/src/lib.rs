@@ -973,7 +973,11 @@ fn dispatch<H: Host>(
                     // Skill a check blocks. The rest still install, and the
                     // failures print at the end.
                     let mut failures = Vec::new();
-                    for item in &listing.items {
+                    // A rate limit answers for the whole service, so every
+                    // later Skill would fail the same way and spend the same
+                    // budget. skilld stops and says how many are left.
+                    let mut stopped = None;
+                    for (index, item) in listing.items.iter().enumerate() {
                         match install_listed(host, item, &options, &mut undeliverable) {
                             Ok((installed, note)) => {
                                 // The note quotes a registry name and a
@@ -984,15 +988,20 @@ fn dispatch<H: Host>(
                                     lines.extend(render_installed(skill)?);
                                 }
                             }
+                            Err(error) if error.code == "RATE_LIMITED" => {
+                                stopped = Some((listing.items.len() - index, error));
+                                break;
+                            }
                             Err(error) => failures.push((item.name.clone(), error)),
                         }
                     }
-                    if failures.is_empty() {
+                    if failures.is_empty() && stopped.is_none() {
                         return Ok(CommandOutput::Screen(Screen::new(lines)));
                     }
+                    let remaining = stopped.as_ref().map_or(0, |(remaining, _)| *remaining);
                     lines.push(Line::warn(format!(
                         "skilld installed {} of {} Skills from {reference}.",
-                        listing.items.len() - failures.len(),
+                        listing.items.len() - failures.len() - remaining,
                         listing.items.len()
                     )));
                     for (name, error) in &failures {
@@ -1000,6 +1009,15 @@ fn dispatch<H: Host>(
                             "{name}: {}: {}",
                             error.code, error.message
                         ))));
+                    }
+                    if let Some((remaining, error)) = stopped {
+                        lines.push(Line::error(screen_message(&format!(
+                            "{}: {}",
+                            error.code, error.message
+                        ))));
+                        lines.push(Line::hint(format!(
+                            "skilld left {remaining} Skills for later. Run the same command again to take them."
+                        )));
                     }
                     Ok(CommandOutput::IncompleteScreen(Screen::new(lines)))
                 }
@@ -3992,6 +4010,95 @@ mod tests {
                     .collect(),
             })
         }
+    }
+
+    /// Installs the first Skill, then reports the service rate limit.
+    struct RateLimitedHost {
+        installs: std::sync::Mutex<usize>,
+    }
+
+    impl Host for RateLimitedHost {
+        fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+            Ok(vec![])
+        }
+
+        fn install(
+            &self,
+            _source: InstallSource,
+            _scope: InstallScope,
+        ) -> Result<InstalledSkill, CommandError> {
+            unreachable!("add installs through install_request")
+        }
+
+        fn install_request(
+            &self,
+            request: InstallRequest,
+        ) -> Result<Vec<InstalledSkill>, CommandError> {
+            let InstallOperation::Install(InstallSource::Remote(selector)) = &request.operation
+            else {
+                panic!("expected a hosted install: {:?}", request.operation)
+            };
+            let mut installs = self.installs.lock().unwrap();
+            *installs += 1;
+            if *installs > 1 {
+                return Err(CommandError::operation(
+                    "RATE_LIMITED",
+                    "the Resolution failed. Retry in 25 minutes.",
+                ));
+            }
+            let name = selector.rsplit('/').next().unwrap().to_owned();
+            Ok(vec![InstalledSkill {
+                name: name.clone(),
+                source: LockedSource::Remote {
+                    source: selector.clone(),
+                    commit_sha: "a".repeat(40),
+                    skill_path: format!("skills/{name}"),
+                },
+                source_status: "verified",
+            }])
+        }
+
+        fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
+            Ok(SkillListing {
+                reference: reference.clone(),
+                items: ["one", "two", "three"]
+                    .into_iter()
+                    .map(|name| ListedSkill {
+                        name: name.to_owned(),
+                        owner: "skilld-dev".to_owned(),
+                        repository: "skills".to_owned(),
+                        description: None,
+                        origin: skilld_core::ListedOrigin::Registry { path: None },
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    #[test]
+    fn add_stops_at_a_rate_limit_and_says_how_many_skills_are_left() {
+        let host = RateLimitedHost {
+            installs: std::sync::Mutex::new(0),
+        };
+        let (exit, stdout, stderr) =
+            run_plain(&host, &["skilld", "add", "skilld-dev/skills", "--all"]);
+
+        assert_eq!((exit, stderr.as_str()), (1, ""));
+        assert!(stdout.contains("Installed Skill one."), "{stdout}");
+        assert!(
+            stdout.contains("skilld installed 1 of 3 Skills from skilld-dev/skills."),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("RATE_LIMITED: the Resolution failed. Retry in 25 minutes."),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("skilld left 2 Skills for later."),
+            "{stdout}"
+        );
+        // The third Skill is never attempted, so it spends none of the budget.
+        assert_eq!(*host.installs.lock().unwrap(), 2);
     }
 
     #[test]

@@ -636,6 +636,14 @@ components:
           $ref: '#/components/schemas/ProblemCode'
         retryable:
           type: boolean
+        retryAfterSeconds:
+          description: >-
+            How long to wait before the same request can succeed. The service
+            sends it when it knows the wait, such as a rate limit that names its
+            reset. A client without it retries on its own schedule.
+          type: integer
+          minimum: 1
+          maximum: 86400
     ResolutionRevoked:
       type: object
       additionalProperties: false

@@ -1024,15 +1024,14 @@ impl SkilldRemote {
                     ));
                 }
                 Resolution::Failed {
-                    code, retryable, ..
+                    code,
+                    retryable,
+                    retry_after_seconds,
+                    ..
                 } => {
                     return Err(RemoteError::new(
                         problem_code(&code),
-                        if retryable {
-                            "the Resolution failed and may be retried"
-                        } else {
-                            "the Resolution failed"
-                        },
+                        resolution_failure_message(retryable, retry_after_seconds),
                     ));
                 }
                 Resolution::Revoked { .. } => {
@@ -3050,6 +3049,35 @@ fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
     )
 }
 
+/// Say whether the same command can work later, and when.
+///
+/// skilld.dev knows the wait for a failure such as a rate limit, so the message
+/// carries it. Without a wait, the person is told only that a retry is worth
+/// trying.
+fn resolution_failure_message(retryable: bool, retry_after_seconds: Option<u64>) -> String {
+    match (retryable, retry_after_seconds) {
+        (true, Some(seconds)) => format!(
+            "the Resolution failed. Retry in {}.",
+            human_wait(seconds.clamp(1, 86_400))
+        ),
+        (true, None) => "the Resolution failed and may be retried".to_owned(),
+        (false, _) => "the Resolution failed".to_owned(),
+    }
+}
+
+/// A wait a person can act on: seconds under a minute, whole minutes above it.
+fn human_wait(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds.div_ceil(60);
+    if minutes == 1 {
+        "a minute".to_owned()
+    } else {
+        format!("{minutes} minutes")
+    }
+}
+
 fn direct_snapshot_lost() -> RemoteError {
     RemoteError::new(
         "SERVICE_UNAVAILABLE",
@@ -3090,6 +3118,9 @@ enum Resolution {
         resolution_id: String,
         code: String,
         retryable: bool,
+        /// How long skilld.dev says to wait before the same request can work.
+        #[serde(rename = "retryAfterSeconds", default)]
+        retry_after_seconds: Option<u64>,
     },
     Revoked {
         #[serde(rename = "resolutionId")]
