@@ -52,7 +52,21 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Get Started
 
-Run a Skill once. You need no install and no project files:
+Give your Agent a Skill URL. There is nothing to install:
+
+> Use this Skill: https://skilld.dev/gh/antfu/skills/vue
+
+Your Agent reads the page and follows it for that session.
+Nothing is written to your project. Add `.md` to any Skill URL for the raw `SKILL.md`.
+
+Find one on [skilld.dev](https://skilld.dev/skills).
+[Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
+Every Skill page credits its author and links the source file on GitHub.
+[Curators](https://skilld.dev/community) publish named collections.
+
+### Run it from your terminal
+
+Same transient run, from a shell. You need no install and no project files:
 
 ```sh
 npx skilld search vue
@@ -60,13 +74,26 @@ npx skilld run antfu/skills/vue
 ```
 
 `skilld run` prints `SKILL.md` to stdout and writes no file.
-Ask your Agent to run the command and follow the printed instructions.
-If you run it yourself, pass the output to your Agent.
+Pass the output to your Agent.
 
-Install a Skill only when you want it in every session:
+### Set it up properly
+
+Once a Skill earns its place, install the CLI and teach your Agent to drive it:
 
 ```sh
-npx skilld install antfu/skills/vue
+npm install --global skilld
+skilld install skilld --global
+```
+
+Your Agent then searches the registry and loads Skills on its own.
+Ask for what you need, in your own words:
+
+> Find a skilld Skill for Vue and use it
+
+Keep a Skill in every session of one project:
+
+```sh
+skilld install antfu/skills/vue
 ```
 
 An install writes files. If an Agent runs the install, it asks you first.
@@ -83,24 +110,13 @@ An install writes files. If an Agent runs the install, it asks you first.
 
 Start with `skilld run`. Install when you reach for the same Skill again.
 
-If you use skilld often, install the CLI globally:
+### Agent targets
 
-```sh
-npm install --global skilld
-```
-
-Teach your Agent the CLI with the skilld-maintained `skilld` Skill:
-
-```sh
-skilld install skilld --global
-```
-
-Use `--agent` when you want an explicit Agent target.
-Repeat it for several targets. Use `--agent all` for every known target.
+Use `--agent` to name a target. Repeat it for several, or use `--agent all`.
 `-g` is the short form of `--global`.
 
 ```sh
-skilld install skilld --global --agent codex
+skilld install skilld -g --agent codex
 skilld install skilld -g --agent kiro --agent zed
 skilld install skilld -g --agent all
 ```
