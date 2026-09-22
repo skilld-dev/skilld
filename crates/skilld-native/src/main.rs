@@ -267,7 +267,8 @@ fn print_weekly_notice(
     let state = native_weekly::read_state(data_root);
     let now = cli_upgrade::unix_now();
     // Every cheaper check returns first, so CI, an Agent, a pipe, an auth
-    // command, and a throttled notice never pay for the credential read.
+    // command, a throttled notice, and a recent signed-in check never pay for
+    // the credential read.
     if !weekly::should_show(
         &state,
         NoticeContext {
@@ -280,7 +281,20 @@ fn print_weekly_notice(
     }
     // A keychain read can fail on a locked or absent store. Treat that as
     // signed in, so a person who cannot be asked is never nagged.
-    if account.status().unwrap_or(true) {
+    let signed_in = match account.status() {
+        Ok(signed_in) => signed_in,
+        Err(_) => return,
+    };
+    if signed_in {
+        // Record the confirmed sign-in so later eligible runs short-circuit
+        // before this read. A notice that recorded nothing would send every
+        // run back to the keychain, so a failed write is worth surfacing
+        // rather than swallowing.
+        if let Err(error) =
+            native_weekly::write_state(data_root, &weekly::record_signed_in(&state, now))
+        {
+            eprintln!("SERVICE_UNAVAILABLE: the weekly notice state could not be stored: {error}");
+        }
         return;
     }
     eprintln!("{}", weekly::NOTICE_MESSAGE);
@@ -615,6 +629,7 @@ mod weekly_notice_tests {
             &weekly::WeeklyNoticeState {
                 shown_at: 1,
                 shown_count: weekly::NOTICE_LIMIT,
+                signed_in_at: 0,
             },
         )
         .expect("state write");
@@ -650,14 +665,25 @@ mod weekly_notice_tests {
     }
 
     #[test]
-    fn a_signed_in_person_gets_no_notice_and_no_record() {
+    fn a_signed_in_person_reads_credentials_once_then_not_again() {
         let root = tempfile::tempdir().expect("temp dir");
         let account = CountingAccount::signed_in();
         print_weekly_notice(root.path(), &account, eligible());
-        assert_eq!(account.reads(), 1);
+        let reads_after_first = account.reads();
+        let state = native_weekly::read_state(root.path());
+        assert!(
+            state.signed_in_at > 0,
+            "the signed-in check must be recorded"
+        );
         assert_eq!(
-            native_weekly::read_state(root.path()),
-            weekly::WeeklyNoticeState::default()
+            state.shown_count, 0,
+            "the record must not consume the notice budget"
+        );
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(
+            account.reads(),
+            reads_after_first,
+            "a recorded signed-in check must skip the credential read on the next run"
         );
     }
 }

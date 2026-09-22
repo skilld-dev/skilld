@@ -18,7 +18,8 @@ pub const NOTICE_LIMIT: u32 = 3;
 /// What the CLI prints. Two lines, no color, stderr only.
 pub const NOTICE_MESSAGE: &str = "The weekly email covers Skills you liked that changed, plus what trended.\nRun skilld auth login to get it. Turn it off at any time.";
 
-/// How many notices this installation has printed, and when the last one was.
+/// What this installation last recorded: the notices it printed and the last
+/// confirmed signed-in check.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeeklyNoticeState {
     /// Unix seconds of the last notice. Zero means none yet.
@@ -26,6 +27,10 @@ pub struct WeeklyNoticeState {
     pub shown_at: u64,
     #[serde(default)]
     pub shown_count: u32,
+    /// Unix seconds of the last confirmed signed-in check. Zero means none
+    /// yet. A recent one quiets the notice without touching the keychain.
+    #[serde(default)]
+    pub signed_in_at: u64,
 }
 
 /// Everything outside this module that the decision depends on.
@@ -56,10 +61,13 @@ pub fn should_show(state: &WeeklyNoticeState, context: NoticeContext, now: u64) 
     if state.shown_count >= NOTICE_LIMIT {
         return false;
     }
-    if state.shown_at == 0 {
+    // A notice or a confirmed sign-in in the last week quiets this run, so a
+    // signed-in person does not pay for the credential check on every run.
+    let last_check = state.shown_at.max(state.signed_in_at);
+    if last_check == 0 {
         return true;
     }
-    now.saturating_sub(state.shown_at) >= NOTICE_INTERVAL_SECONDS
+    now.saturating_sub(last_check) >= NOTICE_INTERVAL_SECONDS
 }
 
 /// The state to store after printing a notice.
@@ -67,6 +75,17 @@ pub fn record_shown(state: &WeeklyNoticeState, now: u64) -> WeeklyNoticeState {
     WeeklyNoticeState {
         shown_at: now,
         shown_count: state.shown_count.saturating_add(1),
+        signed_in_at: state.signed_in_at,
+    }
+}
+
+/// The state to store after a confirmed signed-in check, so later runs skip
+/// the credential read.
+pub fn record_signed_in(state: &WeeklyNoticeState, now: u64) -> WeeklyNoticeState {
+    WeeklyNoticeState {
+        shown_at: state.shown_at,
+        shown_count: state.shown_count,
+        signed_in_at: now,
     }
 }
 
@@ -145,9 +164,27 @@ mod tests {
         let state = WeeklyNoticeState {
             shown_at: 1_000,
             shown_count: 1,
+            signed_in_at: 0,
         };
         assert!(!should_show(&state, eligible(), 1_000 + WEEK - 1));
         assert!(should_show(&state, eligible(), 1_000 + WEEK));
+    }
+
+    #[test]
+    fn waits_a_week_after_a_recorded_signed_in_check() {
+        let state = record_signed_in(&WeeklyNoticeState::default(), 1_000);
+        assert!(!should_show(&state, eligible(), 1_000 + WEEK - 1));
+        assert!(should_show(&state, eligible(), 1_000 + WEEK));
+    }
+
+    #[test]
+    fn a_recent_signed_in_check_quiets_a_due_notice() {
+        let state = WeeklyNoticeState {
+            shown_at: 1_000,
+            shown_count: 1,
+            signed_in_at: 1_000 + 2 * WEEK,
+        };
+        assert!(!should_show(&state, eligible(), 1_000 + 2 * WEEK + 1));
     }
 
     #[test]
@@ -155,6 +192,7 @@ mod tests {
         let state = WeeklyNoticeState {
             shown_at: 1_000,
             shown_count: NOTICE_LIMIT,
+            signed_in_at: 0,
         };
         assert!(!should_show(&state, eligible(), 1_000 + WEEK * 520));
     }
@@ -167,6 +205,7 @@ mod tests {
             WeeklyNoticeState {
                 shown_at: 1_000,
                 shown_count: 1,
+                signed_in_at: 0,
             }
         );
         let second = record_shown(&first, 1_000 + WEEK);
@@ -175,10 +214,28 @@ mod tests {
     }
 
     #[test]
+    fn recording_a_signed_in_check_keeps_the_notice_budget() {
+        let state = WeeklyNoticeState {
+            shown_at: 500,
+            shown_count: 2,
+            signed_in_at: 0,
+        };
+        assert_eq!(
+            record_signed_in(&state, 1_000),
+            WeeklyNoticeState {
+                shown_at: 500,
+                shown_count: 2,
+                signed_in_at: 1_000,
+            }
+        );
+    }
+
+    #[test]
     fn a_backwards_clock_does_not_show_early() {
         let state = WeeklyNoticeState {
             shown_at: 10_000,
             shown_count: 1,
+            signed_in_at: 0,
         };
         assert!(!should_show(&state, eligible(), 500));
     }
