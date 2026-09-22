@@ -10,8 +10,11 @@ const fencedBlock = /```[^\n]*\n[\s\S]*?```/g
 /**
  * A Skill may report a file the project lacks, such as a missing entry point.
  * A line that denies a path states a fact about the project, not a pointer.
+ * A line that tells the Agent to create a file gives a task, not a pointer.
  */
 const denial = /\b(no|not|none|never|absent|missing|lacks|without|instead|rather|empty|undeclared|unavailable|nothing)\b|\bdoes ?n[o']t\b/i
+
+const creation = /\b(?:copy|create|write|generate)\b/i
 
 function fencedBlocks(markdown: string): ReadonlyArray<string> {
   return markdown.match(fencedBlock) ?? []
@@ -31,8 +34,8 @@ const pathExtension = /\.(?:md|mdx|json|jsonc|ts|tsx|mts|cts|js|mjs|cjs|jsx|vue|
 /** A release number such as `20.19.0` or `v20` states a version, never a path. */
 const versionShape = /^v?\d+(?:\.\d+)*$/i
 
-/** A product name such as `Node.js` names a tool, never a file. */
-const productName = /^[A-Z][a-z][A-Za-z0-9_]*\.[A-Za-z0-9]+$/
+/** A product name such as `Node.js` or `node.js` names a tool, never a file. */
+const productName = /^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9]+$/
 
 /**
  * A token counts as a file pointer only when it cannot be anything else.
@@ -74,8 +77,11 @@ function resolves(candidate: string, known: ReadonlySet<string>): boolean {
   const prefix = literalPrefix(candidate)
   if (prefix.length === 0)
     return true
-  // A directory pointer resolves when the project holds a file under it.
   for (const path of known) {
+    // A known template such as `.env.example` implies the file it is copied to.
+    if (path.startsWith(`${candidate}.`))
+      return true
+    // A directory pointer resolves when the project holds a file under it.
     if (path === prefix || path.startsWith(`${prefix}/`))
       return true
   }
@@ -96,8 +102,8 @@ export interface ProjectSkillInput {
  * search the Agent can repeat. The Agent cannot verify its own pointers.
  *
  * The Harness hides generated directories from the Agent, so a pointer at one is
- * invention like any other. A line that states a path is missing passes, because
- * reporting an absent file is a fact rather than a pointer.
+ * invention like any other. A line that states a path is missing, or that tells
+ * the Agent to create one, passes: it reports a fact or gives a task, not a pointer.
  */
 export function checkProjectSkill(input: ProjectSkillInput): ReadonlyArray<string> {
   const issues: string[] = []
@@ -105,7 +111,7 @@ export function checkProjectSkill(input: ProjectSkillInput): ReadonlyArray<strin
   const unknown = new Set<string>()
 
   for (const line of proseLines(input.markdown)) {
-    if (denial.test(line))
+    if (denial.test(line) || creation.test(line))
       continue
     for (const match of line.matchAll(inlineCode)) {
       const candidate = pathCandidate(match[1]!.trim())

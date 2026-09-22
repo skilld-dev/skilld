@@ -111,10 +111,44 @@ describe('project Skill navigation checks', () => {
   it('accepts a version and a product name in inline code', async () => {
     const body = conforming.replace(
       'The entry point is `src/index.ts`. The manifest is `package.json`.',
-      'The entry point is `src/index.ts`. The manifest is `package.json`. The project runs on `Node.js` `20.19.0`.',
+      'The entry point is `src/index.ts`. The manifest is `package.json`. The project runs on `Node.js` `20.19.0`. The runtime is `node.js` and `vue.js`.',
     )
 
     const { result } = await runProjectSkill(projectSkill(body))
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
+  it('accepts a file a line tells the Agent to copy from a template', async () => {
+    const projectDir = await makeProject()
+    await writeFile(join(projectDir, '.env.example'), 'SECRET=\n')
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-project-nav-out-'))
+    const body = [
+      '# Example project',
+      '',
+      'The entry point is `src/index.ts`.',
+      '',
+      'Copy `.env.example` to `.env` for local secrets.',
+      '',
+      '```sh',
+      'rg -n "export " src',
+      '```',
+      '',
+    ].join('\n')
+    const { harness } = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        await sandbox.writeTextFile({
+          path: join(workDir, 'skilld-output/example-project/SKILL.md'),
+          content: projectSkill(body),
+        })
+      },
+    })
+
+    const result = await createSkillHarness({ harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'ProjectSkill',
+      projectDir,
+      destination: { rootDir: destinationRoot, name: 'example-project' },
+    })
 
     expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
   })
