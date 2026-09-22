@@ -47,14 +47,14 @@ mod tests {
         let state = WeeklyNoticeState {
             shown_at: 4_200,
             shown_count: 2,
-            signed_in_at: 4_100,
+            checked_at: 4_100,
         };
         write_state(root.path(), &state).expect("write");
         assert_eq!(read_state(root.path()), state);
     }
 
     #[test]
-    fn a_state_written_before_signed_in_checks_reads_back() {
+    fn a_state_written_before_checks_were_recorded_reads_back() {
         let root = tempfile::tempdir().expect("temp dir");
         fs::write(
             root.path().join(STATE_FILE),
@@ -66,7 +66,25 @@ mod tests {
             WeeklyNoticeState {
                 shown_at: 10,
                 shown_count: 1,
-                signed_in_at: 0,
+                checked_at: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn a_state_written_by_the_previous_field_name_reads_back() {
+        let root = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            root.path().join(STATE_FILE),
+            br#"{"shown_at":10,"shown_count":1,"signed_in_at":20}"#,
+        )
+        .expect("write");
+        assert_eq!(
+            read_state(root.path()),
+            WeeklyNoticeState {
+                shown_at: 10,
+                shown_count: 1,
+                checked_at: 20,
             }
         );
     }

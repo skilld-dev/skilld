@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use skilld_auth::{
@@ -108,18 +109,23 @@ pub struct NativeAccount {
     clock: SystemClock,
     random: OsRandom,
     callbacks: NativeLoopbackListener,
-    credentials: KeychainCredentialStore,
+    credentials: Arc<dyn CredentialStore>,
 }
 
 impl NativeAccount {
     pub fn new() -> Self {
+        Self::with_credentials(Arc::new(KeychainCredentialStore::new()))
+    }
+
+    /// The account backed by the given credential store.
+    pub fn with_credentials(credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
             http: NativeAuthHttp,
             browser: NativeBrowser,
             clock: SystemClock,
             random: OsRandom,
             callbacks: NativeLoopbackListener,
-            credentials: KeychainCredentialStore::new(),
+            credentials,
         }
     }
 
@@ -130,7 +136,7 @@ impl NativeAccount {
             clock: &self.clock,
             random: &self.random,
             callbacks: &self.callbacks,
-            credentials: &self.credentials,
+            credentials: self.credentials.as_ref(),
         }
     }
 
@@ -172,9 +178,23 @@ impl TokenProvider for NativeAccount {
 }
 
 impl AccountProvider for NativeAccount {
+    /// What `skilld auth status` prints: only a fresh credential counts.
     fn status(&self) -> Result<bool, CommandError> {
         status(&self.dependencies())
             .map(|status| matches!(status, AuthStatus::Authenticated(_)))
+            .map_err(command_auth_error)
+    }
+
+    /// Whether the person has an account at all. An expired token still
+    /// belongs to an account that already receives the weekly, so it counts.
+    fn has_account(&self) -> Result<bool, CommandError> {
+        status(&self.dependencies())
+            .map(|status| {
+                matches!(
+                    status,
+                    AuthStatus::Authenticated(_) | AuthStatus::Expired { .. }
+                )
+            })
             .map_err(command_auth_error)
     }
 

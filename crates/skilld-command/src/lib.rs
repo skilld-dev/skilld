@@ -1503,7 +1503,14 @@ impl SkillChooser for EveryListedSkill {
 }
 
 pub trait AccountProvider: Send + Sync {
+    /// Whether the person can act right now. `skilld auth status` prints this.
     fn status(&self) -> Result<bool, CommandError>;
+
+    /// Whether the person has an account at all, even one whose token
+    /// expired. The weekly notice asks this, because an account already
+    /// receives the weekly.
+    fn has_account(&self) -> Result<bool, CommandError>;
+
     fn login(&self) -> Result<(), CommandError>;
     fn logout(&self) -> Result<(), CommandError>;
 }
