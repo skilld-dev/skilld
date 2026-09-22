@@ -785,7 +785,7 @@ fn v2_command(mut args: Vec<OsString>) -> V2Command {
             return V2Command::Removed(CommandError::usage(
                 "REMOVED_COMMAND",
                 format!(
-                    "skilld v3 has no author command. Ask your Agent to run the generate-package-skill or review-skill Skill, or use skilld-harness. See {MIGRATION_GUIDE}"
+                    "skilld v3 has no author command. Ask your Agent to run the generate-package-skill, generate-project-skill, or review-skill Skill, or use skilld-harness. See {MIGRATION_GUIDE}"
                 ),
             ));
         }

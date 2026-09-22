@@ -24,14 +24,28 @@ Ask for the destination only when the request does not provide one.
 
 ## Project navigation
 
-1. Identify the project name, purpose, key files, and main directories.
-2. Use project-relative paths for every file pointer.
-3. Add focused search commands for source and documentation.
-4. Keep search results linked to the real project files.
-5. Never add a generated directory prefix to a project-relative path.
-6. Tell the Agent when project changes require a new Skill run.
+The Skill must let an Agent find any part of the project without a prior index.
 
-Ignore dependency directories, version-control data, generated output, caches, and credentials.
+1. Name the project from its manifest. Use the directory name when no manifest names it.
+2. List the entry points the manifest declares, such as `main`, `module`, `types`, `exports`, and `bin`.
+3. List the source and documentation directories an Agent reads most.
+4. Use project-relative paths for every file pointer.
+5. Never add a generated directory prefix to a project-relative path.
+6. Give search commands the Agent can repeat, scoped to those directories.
+7. Prefer `rg` for search. Name the directories to skip in the command.
+8. Tell the Agent when project changes require a new Skill run.
+
+Write the search commands so their results point at real project files.
+
+Skip these paths while collecting project files:
+
+- version-control data, such as `.git`
+- dependency directories, such as `node_modules` and `vendor`
+- generated output, such as `dist`, `build`, `target`, `.output`, `.nuxt`, and `.next`
+- caches and reports, such as `coverage`
+- credential files, such as `.env` and any private key
+
+Skip any file larger than 512 KB.
 Do not follow symbolic links while collecting project files.
 
 ## Output

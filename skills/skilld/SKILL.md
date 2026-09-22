@@ -75,6 +75,30 @@ A `verified` status covers where the Skill came from.
 It does not cover what the instructions ask you to do.
 If the status is `unverified`, tell the user before you follow the Skill.
 
+## Author a Skill from the user's own code
+
+The skilld CLI has no generation command.
+Authoring lives in skilld-maintained Skills that you run.
+
+Run the Skill that matches the request:
+
+```sh
+skilld run skilld-dev/skilld/generate-project-skill --json
+skilld run skilld-dev/skilld/generate-package-skill --json
+skilld run skilld-dev/skilld/review-skill --json
+```
+
+Use `generate-project-skill` for the current project or workspace.
+Use `generate-package-skill` for a package the user maintains.
+Use `review-skill` before the user publishes a Skill.
+
+Read the printed SKILL.md, then follow it for this project.
+Write the draft where the user asks, and show the files for review.
+Do not replace an existing Skill until the user approves the draft.
+Do not install or publish a draft the user has not read.
+
+The user owns the draft. They commit it to their own Repository.
+
 ## List the Skills a Repository, curator, or collection names
 
 skilld.dev prints refs that name several Skills:

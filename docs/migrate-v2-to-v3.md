@@ -136,6 +136,7 @@ It cannot restore a v2 lockfile.
 | `skilld whoami` | Still works as `skilld auth status` |
 | `skilld logout` | Still works as `skilld auth logout` |
 | `skilld prepare` | Still works as `skilld install`, which restores the v3 lockfile |
+| `skilld search -p PACKAGE` | Not supported. v3 `skilld search` queries the registry. Run `generate-project-skill` so an Agent searches your files directly |
 | `skilld author package` | Run `generate-package-skill` with an Agent, or use Harness `PackageSkill` |
 | `skilld author validate` | Run `review-skill` with an Agent, or use Harness `ReviewSkill` |
 | `skilld author assemble` | Apply approved Agent changes, or let Harness promote checked output |

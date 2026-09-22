@@ -184,9 +184,19 @@ Run `skilld install --help` for every Agent target value.
 
 ## Author a Skill
 
-Run the skilld-maintained `generate-package-skill` Skill, or the Harness, to bootstrap a draft Skill for a package you maintain.
+Run a skilld-maintained Skill, or the Harness, to bootstrap a draft Skill you own.
+Use `generate-package-skill` for a package you maintain.
+Use `generate-project-skill` for the project you work in.
 Edit the draft, commit it to your Repository, and own it from there.
 skilld lists it with your name and a link to the file.
+
+```sh
+skilld run skilld-dev/skilld/generate-project-skill
+skilld run skilld-dev/skilld/generate-package-skill
+```
+
+A project Skill carries the search commands your Agent repeats against real files.
+It replaces the v2 local documentation index.
 
 The skilld-maintained Skills:
 
