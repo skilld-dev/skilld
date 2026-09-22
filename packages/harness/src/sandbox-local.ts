@@ -28,19 +28,43 @@ type SandboxProcess = Awaited<ReturnType<SandboxSession['spawn']>>
 
 const { signals } = constants
 
+/** The processes one session started, so that `stop` can reach all of them. */
+interface SessionProcesses {
+  /** Processes that have not closed yet. */
+  readonly live: Set<ChildProcessWithoutNullStreams>
+  /**
+   * Group identifiers, kept after the leader exits. A command like
+   * `agent &` leaves the shell dead and the agent alive in the same group.
+   */
+  readonly groups: Set<number>
+}
+
 /**
- * Terminate a process and every process it started.
+ * Terminate every process in a group.
  * A detached child leads a process group that shares its identifier.
+ * The kernel holds the identifier while the group has a member, so it stays
+ * ours to signal even after the leader exits.
  */
-function killProcessGroup(child: ChildProcessWithoutNullStreams): void {
-  if (child.pid === undefined || child.exitCode !== null)
-    return
+function killProcessGroup(pid: number): void {
   try {
-    process.kill(-child.pid, 'SIGTERM')
+    process.kill(-pid, 'SIGTERM')
   }
   catch (cause) {
-    // ESRCH means the group already exited. Anything else needs the fallback.
+    // ESRCH means the group already exited. Anything else is unexpected.
     if (errorCode(cause) !== 'ESRCH')
+      throw cause
+  }
+}
+
+/** Terminate a child's group, and the child alone if it leads no group. */
+function killChild(child: ChildProcessWithoutNullStreams): void {
+  if (child.pid === undefined)
+    return
+  try {
+    killProcessGroup(child.pid)
+  }
+  catch {
+    if (child.exitCode === null)
       child.kill('SIGTERM')
   }
 }
@@ -82,10 +106,30 @@ interface StartedProcess {
   readonly exited: Promise<{ exitCode: number }>
 }
 
+/**
+ * Kill the process when the caller aborts, and reject the returned promise.
+ * The listener is removed on close so that a shared signal does not collect
+ * one listener for every process the session runs.
+ */
+function watchAbort(child: ChildProcessWithoutNullStreams, abortSignal: AbortSignal): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const onAbort = (): void => {
+      killChild(child)
+      reject(abortSignal.reason ?? new Error('The sandbox process was aborted.'))
+    }
+    if (abortSignal.aborted) {
+      onAbort()
+      return
+    }
+    abortSignal.addEventListener('abort', onAbort, { once: true })
+    child.once('close', () => abortSignal.removeEventListener('abort', onAbort))
+  })
+}
+
 function startProcess(
   options: SandboxProcessOptions,
   root: string,
-  children: Set<ChildProcessWithoutNullStreams>,
+  processes: SessionProcesses,
 ): StartedProcess {
   // The process leads its own group so that killing it also kills what it
   // started. The OpenCode bridge starts OpenCode, which starts more processes.
@@ -94,32 +138,25 @@ function startProcess(
     env: { ...process.env, ...options.env },
     detached: true,
   })
-  children.add(child)
+  processes.live.add(child)
+  if (child.pid !== undefined)
+    processes.groups.add(child.pid)
 
   const exited = new Promise<{ exitCode: number }>((resolve) => {
     child.once('close', (code, signal) => {
-      children.delete(child)
+      processes.live.delete(child)
       resolve({ exitCode: code ?? (signal === null ? 1 : 128 + (signals[signal] ?? 0)) })
     })
   })
 
   const kill = async (): Promise<void> => {
-    killProcessGroup(child)
+    killChild(child)
     await exited
   }
 
   const aborted = options.abortSignal === undefined
     ? undefined
-    : new Promise<never>((_, reject) => {
-        const onAbort = (): void => {
-          killProcessGroup(child)
-          reject(options.abortSignal?.reason ?? new Error('The sandbox process was aborted.'))
-        }
-        if (options.abortSignal?.aborted === true)
-          onAbort()
-        else
-          options.abortSignal?.addEventListener('abort', onAbort, { once: true })
-      })
+    : watchAbort(child, options.abortSignal)
   // The abort rejection is reported through `wait`. Nothing else observes it.
   aborted?.catch(() => {})
 
@@ -135,7 +172,7 @@ function startProcess(
   }
 }
 
-function createSandboxSession(root: string, children: Set<ChildProcessWithoutNullStreams>): SandboxSession {
+function createSandboxSession(root: string, processes: SessionProcesses): SandboxSession {
   const readBinaryFile = async ({ path }: { path: string }): Promise<Uint8Array | null> =>
     readFile(path).then(
       value => Uint8Array.from(value),
@@ -183,13 +220,13 @@ function createSandboxSession(root: string, children: Set<ChildProcessWithoutNul
     },
 
     async spawn(options) {
-      return startProcess(options, root, children).handle
+      return startProcess(options, root, processes).handle
     },
 
     async run(options) {
       // An aborted `run` reports the exit code of the killed process.
       // Only `spawn` rejects its wait, because its caller holds the handle.
-      const { handle, exited } = startProcess(options, root, children)
+      const { handle, exited } = startProcess(options, root, processes)
       const [stdout, stderr, exit] = await Promise.all([
         readStream(handle.stdout),
         readStream(handle.stderr),
@@ -203,9 +240,10 @@ function createSandboxSession(root: string, children: Set<ChildProcessWithoutNul
 /**
  * Create a sandbox provider that runs Harness sessions on this computer.
  *
- * The session needs POSIX `sh` at `/bin/sh`, so it runs on macOS and Linux
- * and not on Windows. It exposes one port on
- * `127.0.0.1` for bridge-backed Harness adapters. It applies no isolation:
+ * The session needs POSIX `sh` at `/bin/sh` and GNU `find`, because the Harness
+ * inventories output with `find -printf`. It runs on Linux, and not on macOS or
+ * Windows. It exposes one port on `127.0.0.1` for bridge-backed Harness
+ * adapters. It applies no isolation:
  * every process reaches the whole computer and the caller's environment.
  */
 export function createLocalSandbox(options: CreateLocalSandboxOptions = {}): HarnessV1SandboxProvider {
@@ -216,14 +254,16 @@ export function createLocalSandbox(options: CreateLocalSandboxOptions = {}): Har
     async createSession(): Promise<HarnessV1NetworkSandboxSession> {
       const root = options.root ?? await mkdtemp(join(tmpdir(), 'skilld-local-sandbox-'))
       await mkdir(root, { recursive: true })
-      const children = new Set<ChildProcessWithoutNullStreams>()
-      const session = createSandboxSession(root, children)
+      const processes: SessionProcesses = { live: new Set(), groups: new Set() }
+      const session = createSandboxSession(root, processes)
       let ports: ReadonlyArray<number> = [options.port ?? await freePort()]
 
       const stop = async (): Promise<void> => {
-        for (const child of children)
-          killProcessGroup(child)
-        children.clear()
+        // Groups, not live children: a backgrounded process outlives its shell.
+        for (const pid of processes.groups)
+          killProcessGroup(pid)
+        processes.groups.clear()
+        processes.live.clear()
       }
 
       const endpoint = ({ port, protocol = 'http' }: { port: number, protocol?: 'http' | 'https' | 'ws' }): HarnessV1PortEndpoint =>

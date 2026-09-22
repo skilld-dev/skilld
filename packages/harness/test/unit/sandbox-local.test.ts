@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -14,6 +14,36 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
     chunks.push(result.value)
   }
   return Buffer.concat(chunks).toString('utf8')
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  }
+  catch (cause) {
+    return (cause as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+async function readPid(path: string): Promise<number> {
+  let pid = Number.NaN
+  await waitUntil(() => Number.isInteger(pid), 2000, async () => {
+    pid = Number(await readFile(path, 'utf8').then(value => value.trim(), () => ''))
+  })
+  if (!Number.isInteger(pid))
+    throw new Error('The backgrounded process never reported its identifier.')
+  return pid
+}
+
+async function waitUntil(condition: () => boolean, timeoutMs = 2000, probe?: () => Promise<void>): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await probe?.()
+    if (condition())
+      return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
 }
 
 describe('local sandbox commands', () => {
@@ -208,6 +238,18 @@ describe('local sandbox ports and lifecycle', () => {
     const session = await createLocalSandbox({ root, keepRoot: true }).createSession()
     await session.destroy()
     await expect(lstat(root).then(entry => entry.isDirectory())).resolves.toBe(true)
+  })
+
+  it('stops a backgrounded process after its parent shell exits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skilld-sandbox-test-'))
+    const session = await createLocalSandbox({ root }).createSession()
+    // The shell exits immediately, so the session only holds the group.
+    await session.spawn({ command: 'sleep 30 & echo $! > pid' })
+    const pid = await readPid(join(root, 'pid'))
+    expect(isRunning(pid)).toBe(true)
+    await session.destroy()
+    await waitUntil(() => !isRunning(pid))
+    expect(isRunning(pid)).toBe(false)
   })
 
   it('stops a running process when the session is destroyed', async () => {
