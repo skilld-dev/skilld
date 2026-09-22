@@ -1,12 +1,19 @@
-<h1>skilld</h1>
+<h1 align="center">
+<a href="https://skilld.dev"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo.svg">
+<img alt="skilld" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-light.svg" width="260">
+</picture></a>
+</h1>
 
-[![npm version](https://img.shields.io/npm/v/skilld?color=yellow)](https://npmjs.com/package/skilld)
-[![npm downloads](https://img.shields.io/npm/dm/skilld?color=yellow)](https://npm.chart.dev/skilld)
-[![license](https://img.shields.io/github/license/skilld-dev/skilld?color=yellow)](https://github.com/skilld-dev/skilld/blob/main/LICENSE)
+<p align="center">
+Curated agent skills by humans. Search, run, install, and keep them current.<br>One command, every Agent.
+</p>
 
-> 🪶 Curated agent skills by humans. Search, run, install, and keep them current. One command, every Agent.
-
-<a href="https://skilld.dev"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/logos/logo-mark.svg"><img src=".github/logos/logo-mark-light.svg" alt="skilld logo" width="120"></picture></a>
+<p align="center">
+<a href="https://npmjs.com/package/skilld"><img alt="npm version" src="https://img.shields.io/npm/v/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+<a href="https://npm.chart.dev/skilld"><img alt="npm downloads" src="https://img.shields.io/npm/dm/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+<a href="https://github.com/skilld-dev/skilld/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/github/license/skilld-dev/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+</p>
 
 <p align="center">
 <table>
