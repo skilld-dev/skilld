@@ -1,5 +1,7 @@
 use skilld_core::{ListedOrigin, ListedSkill, MultiSkillRef, SkillListing};
-use skilld_native::select_ui::{PickerKey, PickerModel, PickerOutcome, SkillChoice, choices_for};
+use skilld_native::select_ui::{
+    PickerKey, PickerModel, PickerOutcome, SkillChoice, choices_for, render_snapshot,
+};
 
 fn choice(label: &str, selected: bool) -> SkillChoice {
     SkillChoice {
@@ -11,7 +13,7 @@ fn choice(label: &str, selected: bool) -> SkillChoice {
 
 fn model() -> PickerModel {
     PickerModel::new(
-        "vuejs/core names 3 Skills.",
+        "vuejs/core",
         vec![
             choice("alpha", true),
             choice("beta", true),
@@ -28,7 +30,7 @@ fn space_toggles_the_skill_under_the_cursor() {
     model.update(PickerKey::Confirm);
 
     assert_eq!(model.outcome(), Some(&PickerOutcome::Chose(vec![0, 2])));
-    assert_eq!(model.header(), "vuejs/core names 3 Skills. Chosen 2 of 3.");
+    assert_eq!(model.header(), "vuejs/core names 3 Skills. 2 chosen.");
 }
 
 #[test]
@@ -62,7 +64,7 @@ fn cancelling_chooses_no_skill() {
 }
 
 #[test]
-fn every_listed_skill_starts_chosen() {
+fn no_listed_skill_starts_chosen() {
     let listing = SkillListing {
         reference: MultiSkillRef::Repository {
             owner: "vuejs".to_owned(),
@@ -84,7 +86,46 @@ fn every_listed_skill_starts_chosen() {
         [SkillChoice {
             label: "vue".to_owned(),
             description: Some("Build Vue interfaces.".to_owned()),
-            selected: true,
+            selected: false,
         }]
+    );
+}
+
+#[test]
+fn the_picker_aligns_names_and_cuts_a_description_that_does_not_fit() {
+    let mut model = PickerModel::new(
+        "skilld-dev/vue-ecosystem-skills",
+        vec![
+            SkillChoice {
+                label: "floating-ui-vue-skilld".to_owned(),
+                description: Some(
+                    "Floating UI for Vue. ALWAYS use when writing code importing it.".to_owned(),
+                ),
+                selected: false,
+            },
+            SkillChoice {
+                label: "pinia-skilld".to_owned(),
+                description: Some("Intuitive, type safe and flexible Store for Vue.".to_owned()),
+                selected: false,
+            },
+        ],
+    );
+    model.update(PickerKey::Toggle);
+
+    let frame = render_snapshot(&model, 72, 8, false);
+
+    assert_eq!(
+        frame,
+        [
+            "skilld-dev/vue-ecosystem-skills names 2 Skills. 1 chosen",
+            "",
+            "\u{276f} \u{25cf} floating-ui-vue-skilld  Floating UI for Vue. ALWAYS use when writin\u{2026}",
+            "  \u{25cb} pinia-skilld            Intuitive, type safe and flexible Store for\u{2026}",
+            "",
+            "",
+            "",
+            "space choose   a all   enter install   esc cancel",
+        ]
+        .join("\n")
     );
 }
