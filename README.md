@@ -1,12 +1,21 @@
-<h1>skilld</h1>
+<h1 align="center">
+<a href="https://skilld.dev"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-mark.svg">
+<img alt="" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-mark-light.svg" width="90">
+</picture></a>
+<br>
+skilld
+</h1>
 
-[![npm version](https://img.shields.io/npm/v/skilld?color=yellow)](https://npmjs.com/package/skilld)
-[![npm downloads](https://img.shields.io/npm/dm/skilld?color=yellow)](https://npm.chart.dev/skilld)
-[![license](https://img.shields.io/github/license/skilld-dev/skilld?color=yellow)](https://github.com/skilld-dev/skilld/blob/main/LICENSE)
+<p align="center">
+Open source, privacy friendly Agent Skills, curated by humans.<br>Search, run, install, and keep them current.
+</p>
 
-> 🪶 Curated agent skills by humans. Search, run, install, and keep them current. One command, every Agent.
-
-<a href="https://skilld.dev"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/logos/logo-mark.svg"><img src=".github/logos/logo-mark-light.svg" alt="skilld logo" width="120"></picture></a>
+<p align="center">
+<a href="https://npmjs.com/package/skilld"><img alt="npm version" src="https://img.shields.io/npm/v/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+<a href="https://npm.chart.dev/skilld"><img alt="npm downloads" src="https://img.shields.io/npm/dm/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+<a href="https://github.com/skilld-dev/skilld/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/github/license/skilld-dev/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+</p>
 
 <p align="center">
 <table>
@@ -20,20 +29,22 @@
 
 ## Features
 
-- 👤 **Every Skill has a human author.** A maintainer wrote it in their own GitHub Repository. skilld.dev lists it under their name with a link to the source file.
-- 📖 **Read before you run.** `skilld run` prints `SKILL.md` and installs nothing. Your Agent follows it for this session only.
-- 🔁 **Know when the source moved.** skilld records the source commit. `skilld update --check` reports each update relation, and `skilld outdated` lists what fell behind.
-- 🎯 **One command, every Agent.** `skilld install` detects your Agent targets. Claude Code, Codex, Cursor, Gemini CLI, and the rest get the same Skill.
-- 🔏 **Verified delivery.** skilld.dev builds an immutable Artifact from an exact commit. The CLI checks its digest and attestation before it writes a file.
-- 🦀 **Native binary, no runtime.** The npm package selects a native executable for your system. No JavaScript engine, no fallback.
+- 📖 **Try a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
+- 🎯 **One install, 19 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each. Claude Code, Codex, Cursor, Gemini CLI, Zed, and 14 more.
+- 🦀 **One native binary, no runtime to install.** Startup is under a millisecond. Install it with `curl` and you need no Node.js at all.
+- 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
+- 🔍 **No telemetry.** skilld sends no analytics. Account credentials go to your operating system keychain, never a plain text file.
 
 ## What is skilld?
 
-skilld is a curated registry of agent Skills that real maintainers wrote in their own GitHub repositories, usable with one command in every Agent.
+skilld is a curated registry of agent Skills.
+Real maintainers write them in their own GitHub repositories.
+One command loads one into any Agent.
 
 A Skill is a directory with a `SKILL.md` file in the [Agent Skills](https://agentskills.io) format.
-Install-count leaderboards and generated doc dumps tell you a Skill is popular.
-skilld tells you who wrote it, links the exact file, and tracks the commit it came from, so you can read it before your Agent follows it.
+Most Skill directories rank by install count, or ship a generated doc dump.
+skilld names the author, links the exact file, and records the commit it came from.
+Read it before your Agent follows it.
 
 The `skilld` CLI searches, runs, installs, updates, verifies, and removes Skills.
 It contains no Skill generation logic and no Agent runtime.
@@ -135,6 +146,9 @@ Restart skilld to use the new version.
 An npm install prints the upgrade command instead.
 Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
 See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
+
+The npm package selects the same native executable for your system.
+It carries no JavaScript engine and no fallback.
 
 ## Commands
 
