@@ -108,6 +108,32 @@ describe('project Skill navigation checks', () => {
     expect(result.error.issues).toContain('SKILL.md points at a path the project does not contain: src/server/routes.ts.')
   })
 
+  it('accepts a version and a product name in inline code', async () => {
+    const body = conforming.replace(
+      'The entry point is `src/index.ts`. The manifest is `package.json`.',
+      'The entry point is `src/index.ts`. The manifest is `package.json`. The project runs on `Node.js` `20.19.0`.',
+    )
+
+    const { result } = await runProjectSkill(projectSkill(body))
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
+  it('accepts a bare inline search command with no arguments', async () => {
+    const body = [
+      '# Example project',
+      '',
+      'The entry point is `src/index.ts`.',
+      '',
+      'Search the source with `rg`.',
+      '',
+    ].join('\n')
+
+    const { result } = await runProjectSkill(projectSkill(body))
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
   it('refuses a project Skill that gives the Agent no search command', async () => {
     const body = ['# Example project', '', 'The entry point is `src/index.ts`.', ''].join('\n')
 
