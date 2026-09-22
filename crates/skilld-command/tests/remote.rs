@@ -1576,6 +1576,46 @@ fn a_missing_collection_is_a_source_not_found_error() {
     );
 }
 
+#[test]
+fn a_rate_limited_resolution_says_how_long_to_wait() {
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "failed",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "code": "RATE_LIMITED",
+            "retryable": true,
+            "retryAfterSeconds": 1_500,
+        }))
+        .unwrap(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "RATE_LIMITED");
+    assert_eq!(error.message, "the Resolution failed. Retry in 25 minutes.");
+}
+
+#[test]
+fn a_retryable_resolution_without_a_wait_says_only_that_it_may_be_retried() {
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "failed",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "code": "SERVICE_UNAVAILABLE",
+            "retryable": true,
+        }))
+        .unwrap(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.message, "the Resolution failed and may be retried");
+}
+
 fn skilld_selector() -> RemoteSelector {
     RemoteSelector::parse("skilld-dev/skilld/skilld").unwrap()
 }

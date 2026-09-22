@@ -253,6 +253,8 @@ export interface components {
             code: components["schemas"]["ProblemCode"];
             resolutionId: components["schemas"]["ResolutionId"];
             retryable: boolean;
+            /** @description How long to wait before the same request can succeed. The service sends it when it knows the wait, such as a rate limit that names its reset. A client without it retries on its own schedule. */
+            retryAfterSeconds?: number;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
