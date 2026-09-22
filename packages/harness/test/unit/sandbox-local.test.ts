@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -16,31 +16,15 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  }
-  catch (cause) {
-    return (cause as NodeJS.ErrnoException).code !== 'ESRCH'
-  }
+async function beats(path: string): Promise<number> {
+  const content = await readFile(path, 'utf8').catch(() => '')
+  return content.split('\n').filter(line => line !== '').length
 }
 
-async function readPid(path: string): Promise<number> {
-  let pid = Number.NaN
-  await waitUntil(() => Number.isInteger(pid), 2000, async () => {
-    pid = Number(await readFile(path, 'utf8').then(value => value.trim(), () => ''))
-  })
-  if (!Number.isInteger(pid))
-    throw new Error('The backgrounded process never reported its identifier.')
-  return pid
-}
-
-async function waitUntil(condition: () => boolean, timeoutMs = 2000, probe?: () => Promise<void>): Promise<void> {
+async function waitUntil(condition: () => Promise<boolean>, timeoutMs = 4000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    await probe?.()
-    if (condition())
+    if (await condition())
       return
     await new Promise(resolve => setTimeout(resolve, 20))
   }
@@ -242,14 +226,18 @@ describe('local sandbox ports and lifecycle', () => {
 
   it('stops a backgrounded process after its parent shell exits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skilld-sandbox-test-'))
-    const session = await createLocalSandbox({ root }).createSession()
-    // The shell exits immediately, so the session only holds the group.
-    await session.spawn({ command: 'sleep 30 & echo $! > pid' })
-    const pid = await readPid(join(root, 'pid'))
-    expect(isRunning(pid)).toBe(true)
+    const beat = join(root, 'beat')
+    const session = await createLocalSandbox({ root, keepRoot: true }).createSession()
+    // The shell exits at once, so only the process group holds the loop.
+    await session.spawn({ command: 'sh -c \'while :; do echo x >> beat; sleep 0.05; done\' & exit 0' })
+    await waitUntil(async () => await beats(beat) > 1)
+    expect(await beats(beat)).toBeGreaterThan(1)
+
     await session.destroy()
-    await waitUntil(() => !isRunning(pid))
-    expect(isRunning(pid)).toBe(false)
+    const afterDestroy = await beats(beat)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(await beats(beat)).toBe(afterDestroy)
+    await rm(root, { recursive: true, force: true })
   })
 
   it('stops a running process when the session is destroyed', async () => {
