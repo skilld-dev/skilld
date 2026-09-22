@@ -302,6 +302,11 @@ It makes network requests only for these reasons:
 The upgrade check never runs in CI or inside an Agent.
 Set `SKILLD_NO_UPGRADE=1` to turn it off.
 
+At a terminal, a signed-out person sees a short note about the weekly email.
+It prints to stderr at most three times, a week apart, and sends nothing.
+It never prints in CI, inside an Agent, or when output is piped.
+Set `SKILLD_NO_WEEKLY=1` to turn it off.
+
 ## Harness
 
 Use [`skilld-harness`](./packages/harness) when an application or CI needs strict output checks.

@@ -7,6 +7,7 @@ mod provenance;
 mod remote;
 mod run;
 pub mod upgrade;
+pub mod weekly;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;

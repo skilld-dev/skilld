@@ -11,6 +11,9 @@ use std::sync::Arc;
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::upgrade::{InstallChannel, UpgradeNotice};
+use skilld_command::AccountProvider;
+use skilld_command::weekly::{self, NoticeContext};
+use skilld_native::weekly as native_weekly;
 use skilld_command::{
     CommandError, CommandPlatform, DetectionEnvironment, Host, InstalledSkill, LocalHost,
     NativeRemoteConfig, OutputContext, SkilldRemote, TargetRoots, interactive_update_requested,
@@ -70,6 +73,7 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
+    let notice_root = global_root.clone();
     let detection = detection_environment();
     let output = OutputContext::auto(
         std::io::stdout().is_terminal(),
@@ -91,6 +95,10 @@ fn main() -> ExitCode {
     };
     let remote_progress = status.remote_progress();
     let account = Arc::new(NativeAccount::new());
+    let auth_command = is_auth_command(args.iter().map(|arg| arg.to_string_lossy()));
+    // A keychain read can fail on a locked or absent store. Treat that as
+    // signed in, so a person who cannot be asked is never nagged.
+    let signed_in = account.status().unwrap_or(true);
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
         .with_detection_environment(detection.clone())
@@ -146,6 +154,7 @@ fn main() -> ExitCode {
                     ExitCode::from(2)
                 } else {
                     print_upgrade_notice(upgrade_notice.as_ref());
+                    print_weekly_notice(&notice_root, signed_in, auth_command);
                     ExitCode::from(exit_code)
                 }
             }
@@ -162,6 +171,7 @@ fn main() -> ExitCode {
     let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
     gated.finish_status();
     print_upgrade_notice(upgrade_notice.as_ref());
+    print_weekly_notice(&notice_root, signed_in, auth_command);
     ExitCode::from(result.exit_code)
 }
 
@@ -238,6 +248,39 @@ fn print_upgrade_notice(notice: Option<&UpgradeNotice>) {
     if let Some(notice) = notice {
         eprintln!("{}", notice.message());
     }
+}
+
+/// Tells a signed-out person that an account gets the weekly email.
+///
+/// It prints to stderr, so a `skilld run` piped into an Agent never carries it.
+/// The same conditions as the upgrade check apply: a terminal, no CI, no Agent.
+fn print_weekly_notice(data_root: &std::path::Path, signed_in: bool, auth_command: bool) {
+    let context = NoticeContext {
+        signed_in,
+        auth_command,
+        terminal: std::io::stderr().is_terminal(),
+        suppressed: environment_enabled("CI")
+            || environment_present("SKILLD_NO_WEEKLY")
+            || active_agent_detected(),
+    };
+    let state = native_weekly::read_state(data_root);
+    let now = cli_upgrade::unix_now();
+    if !weekly::should_show(&state, context, now) {
+        return;
+    }
+    eprintln!("{}", weekly::NOTICE_MESSAGE);
+    // A notice that printed but did not record would repeat every run, so a
+    // failed write is worth surfacing rather than swallowing.
+    if let Err(error) = native_weekly::write_state(data_root, &weekly::record_shown(&state, now)) {
+        eprintln!("SERVICE_UNAVAILABLE: the weekly notice state could not be stored: {error}");
+    }
+}
+
+/// Whether the command names the `auth` group, which already covers sign-in.
+fn is_auth_command<'a>(args: impl Iterator<Item = std::borrow::Cow<'a, str>>) -> bool {
+    args.skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .is_some_and(|arg| arg == "auth")
 }
 
 fn run_search_output_probe() -> ExitCode {

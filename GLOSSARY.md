@@ -52,6 +52,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld outdated --all` | system-wide outdated Skill report |
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
+| `SKILLD_NO_WEEKLY` | weekly notice opt-out |
 | `skilld auth status` | account authentication status |
 | `skilld auth logout` | account logout |
 | `skilld config get` | configuration read |
@@ -234,6 +235,16 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 **Never:** adapter, platform, destination type.
 
 **Casing:** `Agent target` in prose, `AgentTarget` in types.
+
+### the weekly
+
+**Is:** the one email an account gets: Skills you liked that changed, plus what trended. Opt-out, on by default. skilld.dev owns it; the CLI only tells a signed-out person it exists.
+
+**Use for:** "the weekly", lowercase, in CLI output and documentation.
+
+**Never:** newsletter, roundup, trending digest, notification.
+
+**Casing:** `the weekly` in sentences.
 
 ### Curator
 
