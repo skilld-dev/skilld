@@ -84,6 +84,17 @@ describe('project Skill navigation checks', () => {
     expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
   })
 
+  it('accepts a denial sentence wrapped across two prose lines', async () => {
+    const body = conforming.replace(
+      'The entry point is `src/index.ts`. The manifest is `package.json`.',
+      'The project lacks\n`src/store.ts` so the import must be added first.',
+    )
+
+    const { result } = await runProjectSkill(projectSkill(body))
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
   it('accepts a generated path a line puts off limits', async () => {
     const body = conforming.replace(
       'The entry point is `src/index.ts`.',

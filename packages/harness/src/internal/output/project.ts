@@ -9,8 +9,10 @@ const fencedBlock = /```[^\n]*\n[\s\S]*?```/g
 
 /**
  * A Skill may report a file the project lacks, such as a missing entry point.
- * A line that denies a path states a fact about the project, not a pointer.
- * A line that tells the Agent to create a file gives a task, not a pointer.
+ * A sentence that denies a path states a fact about the project, not a pointer.
+ * A sentence that tells the Agent to create a file gives a task, not a pointer.
+ * The check reads whole paragraphs, so a hard-wrapped denial still covers the
+ * code spans in its own sentence.
  */
 const denial = /\b(no|not|none|never|absent|missing|lacks|without|instead|rather|empty|undeclared|unavailable|nothing)\b|\bdoes ?n[o']t\b/i
 
@@ -20,9 +22,17 @@ function fencedBlocks(markdown: string): ReadonlyArray<string> {
   return markdown.match(fencedBlock) ?? []
 }
 
-/** Prose lines, with fenced commands removed so a command never reads as a pointer. */
-function proseLines(markdown: string): ReadonlyArray<string> {
-  return markdown.replace(fencedBlock, '').split('\n')
+/**
+ * Prose paragraphs, with fenced commands removed so a command never reads as a
+ * pointer. A soft-wrapped sentence keeps its words together: the lines of a
+ * paragraph join before any check runs.
+ */
+function proseParagraphs(markdown: string): ReadonlyArray<string> {
+  return markdown
+    .replace(fencedBlock, '')
+    .split(/\n[ \t]*\n/)
+    .map(paragraph => paragraph.replace(/\n/g, ' ').trim())
+    .filter(paragraph => paragraph.length > 0)
 }
 
 /**
@@ -102,18 +112,19 @@ export interface ProjectSkillInput {
  * search the Agent can repeat. The Agent cannot verify its own pointers.
  *
  * The Harness hides generated directories from the Agent, so a pointer at one is
- * invention like any other. A line that states a path is missing, or that tells
- * the Agent to create one, passes: it reports a fact or gives a task, not a pointer.
+ * invention like any other. A sentence that states a path is missing, or that
+ * tells the Agent to create one, passes: it reports a fact or gives a task, not
+ * a pointer. The sentence may wrap across prose lines within its paragraph.
  */
 export function checkProjectSkill(input: ProjectSkillInput): ReadonlyArray<string> {
   const issues: string[] = []
   const known = new Set([...input.projectPaths, ...input.outputPaths])
   const unknown = new Set<string>()
 
-  for (const line of proseLines(input.markdown)) {
-    if (denial.test(line) || creation.test(line))
+  for (const paragraph of proseParagraphs(input.markdown)) {
+    if (denial.test(paragraph) || creation.test(paragraph))
       continue
-    for (const match of line.matchAll(inlineCode)) {
+    for (const match of paragraph.matchAll(inlineCode)) {
       const candidate = pathCandidate(match[1]!.trim())
       if (candidate !== null && !resolves(candidate, known))
         unknown.add(candidate)
