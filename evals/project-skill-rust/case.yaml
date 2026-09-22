@@ -1,0 +1,17 @@
+schema_version: '1.0'
+name: project-skill-rust
+description: A project Skill reads the project's own manifest, not a JavaScript one, and finds its real entry point.
+tags: [project-skill]
+runs: 2
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+  prompt: |
+    Draft an Agent Skill for this project so a future session can navigate it
+    without reading every file first. Write it to `skills/ledgerd/SKILL.md`.
+
+    End with a short summary that quotes one search command from the Skill and
+    lists every project path the Skill names and
+    the entry point it found.

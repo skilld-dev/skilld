@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillHarness } from '../../src/index.ts'
-import { createFakeHarness, createFakeSandboxProvider, skillSource } from '../support/fakes.ts'
+import { createFakeHarness, createFakeSandboxProvider, projectSkillBody, skillSource } from '../support/fakes.ts'
 
 async function makePackage() {
   const root = await mkdtemp(join(tmpdir(), 'skilld-package-'))
@@ -258,7 +258,7 @@ describe('createSkillHarness', () => {
     const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
     const currentDir = join(destinationRoot, 'example-project')
     await mkdir(join(currentDir, 'references'), { recursive: true })
-    await writeFile(join(currentDir, 'SKILL.md'), skillSource('example-project', '# Old instructions\n'))
+    await writeFile(join(currentDir, 'SKILL.md'), skillSource('example-project', projectSkillBody('# Old instructions')))
     await writeFile(join(currentDir, 'references/old.md'), 'old reference\n')
     const fake = createFakeHarness({
       async onPrompt({ sandbox, workDir, options }) {
@@ -266,7 +266,7 @@ describe('createSkillHarness', () => {
         expect(promptText(options.prompt)).toContain('/input/current-skill')
         await sandbox.writeTextFile({
           path: join(workDir, 'skilld-output/example-project/SKILL.md'),
-          content: skillSource('example-project', '# New instructions\n'),
+          content: skillSource('example-project', projectSkillBody('# New instructions')),
         })
       },
     })

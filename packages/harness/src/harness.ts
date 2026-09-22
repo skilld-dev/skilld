@@ -237,7 +237,13 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         if (prepared.value.skillName === 'review-skill')
           return validateSkillReview(collected.value)
 
-        const validated = validateGeneratedSkill(prepared.value.outputName, collected.value)
+        const validated = validateGeneratedSkill(
+          prepared.value.outputName,
+          collected.value,
+          prepared.value.skillName === 'generate-project-skill'
+            ? prepared.value.source.files.map(file => file.path)
+            : undefined,
+        )
         if (validated._tag === 'Err')
           return validated
         if (!prepared.value.destination)
