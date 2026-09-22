@@ -52,18 +52,26 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Get Started
 
-Run a Skill once. You need no install and no project files:
+Find a Skill on [skilld.dev](https://skilld.dev/skills), or search from your terminal:
 
 ```sh
 npx skilld search vue
+```
+
+[Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
+Every Skill page names its [curator](https://skilld.dev/community) and links the source file on GitHub.
+
+Run one. skilld installs nothing and writes no file:
+
+```sh
 npx skilld run antfu/skills/vue
 ```
 
-`skilld run` prints `SKILL.md` to stdout and writes no file.
-Ask your Agent to run the command and follow the printed instructions.
+That prints [`vue` by antfu](https://skilld.dev/gh/antfu/skills/vue) to stdout.
+Ask your Agent to run the command and follow what it prints.
 If you run it yourself, pass the output to your Agent.
 
-Install a Skill only when you want it in every session:
+Install a Skill when you want it in every session:
 
 ```sh
 npx skilld install antfu/skills/vue
@@ -83,24 +91,21 @@ An install writes files. If an Agent runs the install, it asks you first.
 
 Start with `skilld run`. Install when you reach for the same Skill again.
 
-If you use skilld often, install the CLI globally:
+### Teach your Agent the CLI
+
+Install the CLI and the skilld-maintained `skilld` Skill once.
+Your Agent then knows every command:
 
 ```sh
 npm install --global skilld
-```
-
-Teach your Agent the CLI with the skilld-maintained `skilld` Skill:
-
-```sh
 skilld install skilld --global
 ```
 
-Use `--agent` when you want an explicit Agent target.
-Repeat it for several targets. Use `--agent all` for every known target.
+Use `--agent` to name a target. Repeat it for several, or use `--agent all`.
 `-g` is the short form of `--global`.
 
 ```sh
-skilld install skilld --global --agent codex
+skilld install skilld -g --agent codex
 skilld install skilld -g --agent kiro --agent zed
 skilld install skilld -g --agent all
 ```
