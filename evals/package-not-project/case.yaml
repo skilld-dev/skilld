@@ -1,0 +1,17 @@
+schema_version: '1.0'
+name: package-not-project
+description: A Skill for a package's consumers uses the package Skill path, not the project one.
+tags: [project-skill, routing]
+runs: 2
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+  prompt: |
+    I maintain the `tinyfmt` package published on npm. Draft an Agent Skill that
+    teaches an Agent to use `tinyfmt` in someone else's codebase. Write it to
+    `skills/tinyfmt/SKILL.md`.
+
+    End with a short summary that says which skilld-maintained Skill you followed
+    and why.

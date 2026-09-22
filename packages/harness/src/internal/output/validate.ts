@@ -3,6 +3,7 @@ import type { Result } from '../result.ts'
 import type { CollectedFile } from './collect.ts'
 import { parseDocument } from 'yaml'
 import { isSkillName, normalizeOutputPath } from '../paths.ts'
+import { checkProjectSkill } from './project.ts'
 import { err, ok } from '../result.ts'
 
 const allowedFrontmatter = new Set([
@@ -35,6 +36,7 @@ const isStringMap = (value: unknown): boolean =>
 export const validateGeneratedSkill = (
   name: string,
   files: ReadonlyArray<CollectedFile>,
+  project?: ReadonlyArray<string>,
 ): Result<void, SkillRunError> => {
   const issues: string[] = []
   const skillFiles = files.filter(file => file.path === 'SKILL.md')
@@ -44,6 +46,13 @@ export const validateGeneratedSkill = (
   const source = decodeText(skillFiles[0]!.content)
   if (source === null)
     return invalid(['SKILL.md must contain valid UTF-8 text.'])
+  if (project !== undefined) {
+    issues.push(...checkProjectSkill({
+      markdown: source,
+      projectPaths: project,
+      outputPaths: files.map(file => file.path),
+    }))
+  }
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
   if (!match)
     return invalid(['SKILL.md must start with YAML frontmatter.'])

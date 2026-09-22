@@ -201,4 +201,18 @@ export function createFakeSandboxProvider() {
   }
 }
 
-export const skillSource = (name: string, body = '# Instructions\n\nUse the package API.\n'): string => `---\nname: ${name}\ndescription: Use ${name} when working with its public API.\n---\n\n${body}`
+/** A body that satisfies the project Skill navigation checks. */
+export const projectSkillBody = (heading = '# Instructions'): string => [
+  heading,
+  '',
+  'Read `package.json` for the name and the entry point.',
+  '',
+  'Search the source:',
+  '',
+  '```sh',
+  'rg -n "export " .',
+  '```',
+  '',
+].join('\n')
+
+export const skillSource = (name: string, body = projectSkillBody()): string => `---\nname: ${name}\ndescription: Use ${name} when working with its public API.\n---\n\n${body}`

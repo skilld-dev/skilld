@@ -18,6 +18,12 @@ Direct runs remain user reviewed.
 
 Harness runs apply deterministic checks before atomic promotion.
 
+A project Skill must point at prepared project files.
+
+The Harness rejects a pointer the prepared source does not contain.
+
+`evals` scores the same Skills on the direct path, where no check runs.
+
 ## Trust
 
 - `verified` records an Artifact with a valid attestation.

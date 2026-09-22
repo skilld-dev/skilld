@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, vi } from 'vitest'
 import { createSkillHarness } from '../../src/index.ts'
-import { createFakeHarness, createFakeSandboxProvider, skillSource } from '../support/fakes.ts'
+import { createFakeHarness, createFakeSandboxProvider, projectSkillBody, skillSource } from '../support/fakes.ts'
 
 const failures = vi.hoisted(() => ({ backup: false, lock: false, promotion: false }))
 
@@ -37,12 +37,12 @@ async function runReplacement() {
   const currentDir = join(destinationRoot, 'example-project')
   await writeFile(join(projectDir, 'package.json'), '{}\n')
   await mkdir(currentDir)
-  await writeFile(join(currentDir, 'SKILL.md'), skillSource('example-project', '# Old\n'))
+  await writeFile(join(currentDir, 'SKILL.md'), skillSource('example-project', projectSkillBody('# Old')))
   const fake = createFakeHarness({
     async onPrompt({ sandbox, workDir }) {
       await sandbox.writeTextFile({
         path: join(workDir, 'skilld-output/example-project/SKILL.md'),
-        content: skillSource('example-project', '# New\n'),
+        content: skillSource('example-project', projectSkillBody('# New')),
       })
     },
   })

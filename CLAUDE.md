@@ -22,6 +22,15 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Score the skilld-maintained Skills against scaffolded projects:
+
+```sh
+./scripts/eval-skills.sh
+```
+
+Every case runs a real Agent session and costs money. Read `evals/README.md`
+before changing a case or a grader.
+
 ## Product boundary
 
 The native `skilld` CLI searches, runs, installs, lists, views, removes, updates, and verifies Skills.
