@@ -2761,6 +2761,10 @@ fn a_second_direct_skill_reuses_the_repository_snapshot() {
                 size = skill.len()
             ),
         ),
+        // The tarball is tried first. This fixture predates it and carries
+        // placeholder blob SHAs, so the archive is absent and the blob path
+        // answers, which is exactly the fallback this Repository needs.
+        response(404, br#"{"message":"Not Found"}"#.to_vec()),
         blob_response(),
         blob_response(),
     ]));
@@ -2778,8 +2782,9 @@ fn a_second_direct_skill_reuses_the_repository_snapshot() {
     }
 
     // Two Skills, one Repository read, one commit read, one tree read, one
-    // blob each. GitHub rate limits an unauthenticated caller at 60 an hour.
-    assert_eq!(http.requests.lock().unwrap().len(), 5);
+    // tarball attempt for the Repository, one blob each. GitHub rate limits an
+    // unauthenticated caller at 60 an hour.
+    assert_eq!(http.requests.lock().unwrap().len(), 6);
 }
 
 #[test]
@@ -2805,6 +2810,9 @@ fn direct_github_access_resolves_an_exact_public_commit_without_tokens() {
                 skill.len()
             ),
         ),
+        // This fixture carries a placeholder blob SHA, so the tarball cannot
+        // serve it and the blob path answers.
+        response(404, br#"{"message":"Not Found"}"#.to_vec()),
         response(
             200,
             format!(
@@ -4138,4 +4146,496 @@ fn cli_restores_a_lockfile_that_records_the_legacy_skilld_prefix() {
             .unwrap()
             .contains("Source: skilld-dev/skills/example#commit:")
     );
+}
+
+// ---------------------------------------------------------------------------
+// Direct mode tarball delivery.
+//
+// Direct mode reads one GitHub request per file, against an unauthenticated
+// ceiling of 60 an hour. The Repository tarball is one request for every file
+// of every Skill, and it costs no REST quota. These tests build the archive
+// here, so they state the exact bytes the CLI must accept and reject.
+// ---------------------------------------------------------------------------
+
+const TAR_TOP: &str = "skilld-dev-skills-0123456";
+
+fn git_blob_sha(bytes: &[u8]) -> String {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// One ustar header block. `mode` is written the way GitHub writes it, which
+/// is not the mode the Git tree carries.
+fn tar_header(name: &str, size: usize, kind: u8, mode: u32) -> Vec<u8> {
+    let mut header = vec![0_u8; 512];
+    header[..name.len()].copy_from_slice(name.as_bytes());
+    header[100..107].copy_from_slice(format!("{mode:07o}").as_bytes());
+    header[108..115].copy_from_slice(b"0000000");
+    header[116..123].copy_from_slice(b"0000000");
+    header[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
+    header[136..147].copy_from_slice(b"00000000000");
+    header[156] = kind;
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    header[148..156].copy_from_slice(b"        ");
+    let checksum = header.iter().map(|byte| u32::from(*byte)).sum::<u32>();
+    header[148..154].copy_from_slice(format!("{checksum:06o}").as_bytes());
+    header[154] = 0;
+    header[155] = b' ';
+    header
+}
+
+fn tar_body(bytes: &[u8]) -> Vec<u8> {
+    let mut body = bytes.to_vec();
+    body.resize(bytes.len().div_ceil(512) * 512, 0);
+    body
+}
+
+/// One regular file entry, named inside GitHub's top level directory.
+fn tar_entry(path: &str, bytes: &[u8], mode: u32) -> Vec<u8> {
+    let name = format!("{TAR_TOP}/{path}");
+    let mut entry = tar_header(&name, bytes.len(), b'0', mode);
+    entry.extend(tar_body(bytes));
+    entry
+}
+
+/// One pax `x` extended header carrying the path, then the file itself under a
+/// truncated name. Git writes this shape for a path over 100 bytes.
+fn tar_pax_entry(path: &str, bytes: &[u8], mode: u32) -> Vec<u8> {
+    let name = format!("{TAR_TOP}/{path}");
+    let record_body = format!(" path={name}\n");
+    let mut length = record_body.len() + 2;
+    loop {
+        let record = format!("{length}{record_body}");
+        if record.len() == length {
+            let mut entry = tar_header("pax_global_header", record.len(), b'x', 0o664);
+            entry.extend(tar_body(record.as_bytes()));
+            entry.extend(tar_entry(&path[..40], bytes, mode));
+            return entry;
+        }
+        length = record.len();
+    }
+}
+
+fn tar_archive(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    let mut tar = tar_header(&format!("{TAR_TOP}/"), 0, b'5', 0o775);
+    for (path, bytes, mode) in files {
+        if path.len() > 90 {
+            tar.extend(tar_pax_entry(path, bytes, *mode));
+        } else {
+            tar.extend(tar_entry(path, bytes, *mode));
+        }
+    }
+    tar.extend(vec![0_u8; 1024]);
+    tar
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let carry = crc & 1;
+            crc >>= 1;
+            if carry == 1 {
+                crc ^= 0xedb8_8320;
+            }
+        }
+    }
+    !crc
+}
+
+/// One gzip member whose deflate stream is stored blocks. Storing keeps the
+/// fixture readable; the CLI inflates it through the same path as a compressed
+/// archive.
+fn gzip(payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff];
+    let mut chunks = payload.chunks(0xffff).peekable();
+    if chunks.peek().is_none() {
+        out.extend([0x01, 0x00, 0x00, 0xff, 0xff]);
+    }
+    while let Some(chunk) = chunks.next() {
+        let last = u8::from(chunks.peek().is_none());
+        out.push(last);
+        out.extend((chunk.len() as u16).to_le_bytes());
+        out.extend((!(chunk.len() as u16)).to_le_bytes());
+        out.extend(chunk);
+    }
+    out.extend(crc32(payload).to_le_bytes());
+    out.extend((payload.len() as u32).to_le_bytes());
+    out
+}
+
+fn tarball_response(files: &[(&str, &[u8], u32)]) -> HttpResponse {
+    response(200, gzip(&tar_archive(files)))
+}
+
+fn direct_repository_response() -> HttpResponse {
+    response(
+        200,
+        br#"{"private":false,"default_branch":"main"}"#.to_vec(),
+    )
+}
+
+fn direct_commit_response(sha: &str) -> HttpResponse {
+    response(
+        200,
+        format!(
+            r#"{{"sha":"{sha}","commit":{{"tree":{{"sha":"89abcdef0123456789abcdef0123456789abcdef"}}}}}}"#
+        ),
+    )
+}
+
+fn tree_blob(path: &str, bytes: &[u8], mode: &str) -> serde_json::Value {
+    json!({
+        "path": path,
+        "mode": mode,
+        "type": "blob",
+        "sha": git_blob_sha(bytes),
+        "size": bytes.len(),
+    })
+}
+
+fn direct_tree_response(entries: Vec<serde_json::Value>) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({ "truncated": false, "tree": entries })).unwrap(),
+    )
+}
+
+fn blob_response(bytes: &[u8]) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({
+            "content": STANDARD.encode(bytes),
+            "encoding": "base64",
+            "size": bytes.len(),
+        }))
+        .unwrap(),
+    )
+}
+
+fn direct_remote(http: Arc<FakeHttp>) -> SkilldRemote {
+    SkilldRemote::new(
+        http,
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_sleeper(Arc::new(NoSleep))
+}
+
+fn direct_selector(name: &str) -> RemoteSelector {
+    RemoteSelector::parse(&format!("github:skilld-dev/skills/skills/{name}")).unwrap()
+}
+
+fn file_bytes<'a>(prepared: &'a PreparedRemoteSkill, path: &str) -> &'a [u8] {
+    prepared
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .map(|file| file.bytes.as_slice())
+        .unwrap_or_else(|| panic!("the prepared Skill has no {path}"))
+}
+
+const DIRECT_SKILL: &[u8] = b"---\nname: example\ndescription: fixture\n---\n";
+const DIRECT_REFERENCE: &[u8] = b"# reference\n";
+const DIRECT_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+#[test]
+fn a_direct_install_reads_the_repository_tarball_once_instead_of_one_blob_per_file() {
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![
+            tree_blob("skills/example/SKILL.md", DIRECT_SKILL, "100644"),
+            tree_blob("skills/example/reference.md", DIRECT_REFERENCE, "100644"),
+        ]),
+        tarball_response(&[
+            ("skills/example/SKILL.md", DIRECT_SKILL, 0o664),
+            ("skills/example/reference.md", DIRECT_REFERENCE, 0o664),
+        ]),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(file_bytes(&prepared, "SKILL.md"), DIRECT_SKILL);
+    assert_eq!(file_bytes(&prepared, "reference.md"), DIRECT_REFERENCE);
+    // Repository, commit, tree, tarball. No request per file.
+    assert_eq!(request_paths(&http).len(), 4);
+    assert!(request_paths(&http)[3].contains(&format!("/tarball/{DIRECT_COMMIT}")));
+}
+
+#[test]
+fn a_file_the_tarball_does_not_carry_falls_back_to_the_blob_path() {
+    // `.gitattributes export-ignore` drops files from the archive silently.
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![
+            tree_blob("skills/example/SKILL.md", DIRECT_SKILL, "100644"),
+            tree_blob("skills/example/reference.md", DIRECT_REFERENCE, "100644"),
+        ]),
+        tarball_response(&[("skills/example/SKILL.md", DIRECT_SKILL, 0o664)]),
+        blob_response(DIRECT_SKILL),
+        blob_response(DIRECT_REFERENCE),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(prepared.files.len(), 2);
+    assert_eq!(file_bytes(&prepared, "reference.md"), DIRECT_REFERENCE);
+    assert_eq!(request_paths(&http).len(), 6);
+}
+
+#[test]
+fn a_tarball_file_that_misses_its_blob_sha_falls_back_to_the_blob_path() {
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![tree_blob(
+            "skills/example/SKILL.md",
+            DIRECT_SKILL,
+            "100644",
+        )]),
+        tarball_response(&[(
+            "skills/example/SKILL.md",
+            b"---\nname: example\ndescription: altered\n--\n".as_slice(),
+            0o664,
+        )]),
+        blob_response(DIRECT_SKILL),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(file_bytes(&prepared, "SKILL.md"), DIRECT_SKILL);
+    assert_eq!(request_paths(&http).len(), 5);
+}
+
+#[test]
+fn a_repository_past_the_tarball_size_gate_never_downloads_the_archive() {
+    let big = json!({
+        "path": "media/build.bin",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 200_u64 * 1024 * 1024,
+    });
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![
+            tree_blob("skills/example/SKILL.md", DIRECT_SKILL, "100644"),
+            big,
+        ]),
+        blob_response(DIRECT_SKILL),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(file_bytes(&prepared, "SKILL.md"), DIRECT_SKILL);
+    assert!(
+        request_paths(&http)
+            .iter()
+            .all(|path| !path.contains("/tarball/")),
+        "a 200 MiB Repository must not be downloaded for one Skill file"
+    );
+}
+
+#[test]
+fn a_pax_long_path_is_read_out_of_the_tarball() {
+    let long = format!("skills/example/{}/note.md", "a".repeat(120));
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![
+            tree_blob("skills/example/SKILL.md", DIRECT_SKILL, "100644"),
+            tree_blob(&long, DIRECT_REFERENCE, "100644"),
+        ]),
+        tarball_response(&[
+            ("skills/example/SKILL.md", DIRECT_SKILL, 0o664),
+            (long.as_str(), DIRECT_REFERENCE, 0o664),
+        ]),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(
+        file_bytes(&prepared, &format!("{}/note.md", "a".repeat(120))),
+        DIRECT_REFERENCE
+    );
+    assert_eq!(request_paths(&http).len(), 4);
+}
+
+#[test]
+fn the_file_mode_comes_from_the_git_tree_not_the_tar_header() {
+    // GitHub tarballs report 0664 and 0775, which no Git tree ever carries.
+    let script = b"#!/bin/sh\necho skilld\n";
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![
+            tree_blob("skills/example/SKILL.md", DIRECT_SKILL, "100644"),
+            tree_blob("skills/example/run.sh", script, "100755"),
+        ]),
+        tarball_response(&[
+            ("skills/example/SKILL.md", DIRECT_SKILL, 0o775),
+            ("skills/example/run.sh", script, 0o664),
+        ]),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    let mode = |path: &str| {
+        prepared
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap()
+            .mode
+    };
+    assert_eq!(mode("run.sh"), 0o755);
+    assert_eq!(mode("SKILL.md"), 0o644);
+}
+
+#[test]
+fn a_tarball_redirect_to_codeload_is_followed_exactly_once() {
+    let mut redirect = response(302, Vec::new());
+    redirect.headers.insert(
+        "location".to_owned(),
+        format!("https://codeload.github.com/skilld-dev/skills/legacy.tar.gz/{DIRECT_COMMIT}"),
+    );
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![tree_blob(
+            "skills/example/SKILL.md",
+            DIRECT_SKILL,
+            "100644",
+        )]),
+        redirect,
+        tarball_response(&[("skills/example/SKILL.md", DIRECT_SKILL, 0o664)]),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(file_bytes(&prepared, "SKILL.md"), DIRECT_SKILL);
+    let paths = request_paths(&http);
+    assert_eq!(paths.len(), 5);
+    assert!(paths[4].starts_with("https://codeload.github.com/"));
+}
+
+#[test]
+fn a_tarball_redirect_away_from_codeload_is_rejected_and_falls_back() {
+    let mut redirect = response(302, Vec::new());
+    redirect.headers.insert(
+        "location".to_owned(),
+        "https://codeload.github.com.example.com/skilld-dev/skills/legacy.tar.gz".to_owned(),
+    );
+    let http = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        direct_tree_response(vec![tree_blob(
+            "skills/example/SKILL.md",
+            DIRECT_SKILL,
+            "100644",
+        )]),
+        redirect,
+        blob_response(DIRECT_SKILL),
+    ]));
+    let remote = direct_remote(http.clone());
+
+    let prepared = remote.prepare(&direct_selector("example"), true).unwrap();
+
+    assert_eq!(file_bytes(&prepared, "SKILL.md"), DIRECT_SKILL);
+    let paths = request_paths(&http);
+    assert_eq!(paths.len(), 5);
+    assert!(
+        paths
+            .iter()
+            .all(|path| !path.contains("codeload.github.com.example.com")),
+        "the rejected redirect host was requested: {paths:?}"
+    );
+}
+
+/// The whole point of the change, measured rather than argued: every Skill of
+/// one Repository, through both paths, with the requests counted.
+#[test]
+fn installing_every_skill_of_a_repository_downloads_one_tarball() {
+    const SKILLS: usize = 33;
+    const FILES_PER_SKILL: usize = 5;
+
+    let names = (0..SKILLS)
+        .map(|index| format!("skill-{index:02}"))
+        .collect::<Vec<_>>();
+    let contents = names
+        .iter()
+        .map(|name| {
+            (0..FILES_PER_SKILL)
+                .map(|index| {
+                    let path = if index == 0 {
+                        format!("skills/{name}/SKILL.md")
+                    } else {
+                        format!("skills/{name}/reference-{index}.md")
+                    };
+                    let bytes = format!("---\nname: {name}\ndescription: fixture {index}\n---\n")
+                        .into_bytes();
+                    (path, bytes)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let flat = contents.iter().flatten().collect::<Vec<_>>();
+    let tree = direct_tree_response(
+        flat.iter()
+            .map(|(path, bytes)| tree_blob(path, bytes, "100644"))
+            .collect(),
+    );
+    let archive = flat
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice(), 0o664))
+        .collect::<Vec<_>>();
+
+    let with_tarball = Arc::new(FakeHttp::with([
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        tree.clone(),
+        tarball_response(&archive),
+    ]));
+    let remote = direct_remote(with_tarball.clone());
+    for name in &names {
+        remote.prepare(&direct_selector(name), true).unwrap();
+    }
+
+    // The per-blob path, measured on the same Repository: the tarball 404s, so
+    // every file is read one at a time.
+    let mut per_blob = vec![
+        direct_repository_response(),
+        direct_commit_response(DIRECT_COMMIT),
+        tree,
+        response(404, br#"{"message":"Not Found"}"#.to_vec()),
+    ];
+    per_blob.extend(flat.iter().map(|(_path, bytes)| blob_response(bytes)));
+    let without_tarball = Arc::new(FakeHttp::with(per_blob));
+    let remote = direct_remote(without_tarball.clone());
+    for name in &names {
+        remote.prepare(&direct_selector(name), true).unwrap();
+    }
+
+    // 33 Skills, 165 files: 169 requests become 4, and GitHub rate limits an
+    // unauthenticated caller at 60 an hour.
+    assert_eq!(without_tarball.requests.lock().unwrap().len(), 169);
+    assert_eq!(with_tarball.requests.lock().unwrap().len(), 4);
 }
