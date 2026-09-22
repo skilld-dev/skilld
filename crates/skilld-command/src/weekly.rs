@@ -36,14 +36,21 @@ pub struct NoticeContext {
     /// The command is an `auth` command, which says this already.
     pub auth_command: bool,
     /// stderr is a terminal a person is reading.
-    pub terminal: bool,
+    pub stderr_terminal: bool,
+    /// stdout is a terminal too. A run piped into an Agent stays quiet.
+    pub stdout_terminal: bool,
     /// An Agent, CI, or an explicit opt-out is present.
     pub suppressed: bool,
 }
 
 /// Whether to print the notice now.
 pub fn should_show(state: &WeeklyNoticeState, context: NoticeContext, now: u64) -> bool {
-    if context.signed_in || context.auth_command || context.suppressed || !context.terminal {
+    if context.signed_in
+        || context.auth_command
+        || context.suppressed
+        || !context.stderr_terminal
+        || !context.stdout_terminal
+    {
         return false;
     }
     if state.shown_count >= NOTICE_LIMIT {
@@ -73,14 +80,19 @@ mod tests {
         NoticeContext {
             signed_in: false,
             auth_command: false,
-            terminal: true,
+            stderr_terminal: true,
+            stdout_terminal: true,
             suppressed: false,
         }
     }
 
     #[test]
     fn shows_on_a_first_run() {
-        assert!(should_show(&WeeklyNoticeState::default(), eligible(), 1_000));
+        assert!(should_show(
+            &WeeklyNoticeState::default(),
+            eligible(),
+            1_000
+        ));
     }
 
     #[test]
@@ -108,11 +120,24 @@ mod tests {
             ..eligible()
         };
         let piped = NoticeContext {
-            terminal: false,
+            stderr_terminal: false,
             ..eligible()
         };
-        assert!(!should_show(&WeeklyNoticeState::default(), suppressed, 1_000));
+        assert!(!should_show(
+            &WeeklyNoticeState::default(),
+            suppressed,
+            1_000
+        ));
         assert!(!should_show(&WeeklyNoticeState::default(), piped, 1_000));
+    }
+
+    #[test]
+    fn stays_quiet_when_stdout_is_piped_but_stderr_is_a_terminal() {
+        let context = NoticeContext {
+            stdout_terminal: false,
+            ..eligible()
+        };
+        assert!(!should_show(&WeeklyNoticeState::default(), context, 1_000));
     }
 
     #[test]
