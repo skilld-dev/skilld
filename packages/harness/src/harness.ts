@@ -13,7 +13,7 @@ import type {
   SkillRunResult,
 } from './types.ts'
 import { lstat, realpath } from 'node:fs/promises'
-import { join, posix, resolve } from 'node:path'
+import { basename, join, posix, resolve } from 'node:path'
 import { HarnessAgent } from '@ai-sdk/harness/agent'
 import { parseOutputPolicy, parseSkillRun } from './internal/input.ts'
 import { collectSandboxOutput } from './internal/output/collect.ts'
@@ -29,6 +29,9 @@ interface PreparedRun {
   readonly skillName: 'generate-package-skill' | 'generate-project-skill' | 'review-skill'
   readonly outputName: string
   readonly source: PreparedSource
+  // Path under `input/source`. A reviewed Skill keeps its directory name, so
+  // review-skill can compare that name with the frontmatter `name`.
+  readonly sourceDir: string
   readonly current?: PreparedSource
   readonly destination?: SkillDestination
 }
@@ -82,14 +85,14 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
     const source = await collectHostDirectory(input.projectDir, policy, input.projectDir, signal)
     return source._tag === 'Err'
       ? source
-      : ok({ skillName: 'generate-project-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+      : ok({ skillName: 'generate-project-skill', outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
   }
 
   if (input._tag === 'ReviewSkill') {
     const source = await collectHostDirectory(input.skillDir, policy, input.skillDir, signal)
     return source._tag === 'Err'
       ? source
-      : ok({ skillName: 'review-skill', outputName: 'review', source: source.value })
+      : ok({ skillName: 'review-skill', outputName: 'review', source: source.value, sourceDir: basename(input.skillDir) })
   }
 
   if (input.source._tag === 'NpmPackage') {
@@ -98,7 +101,7 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
       return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
     return source._tag === 'Err'
       ? source
-      : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+      : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
   }
 
   const packageDir = resolveWithin(input.source.rootDir, input.source.packageDir)
@@ -116,7 +119,7 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
   const source = await collectHostDirectory(packageDir, policy, packageDir, signal)
   return source._tag === 'Err'
     ? source
-    : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, current: current.value, destination: input.destination })
+    : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
 }
 
 function requestContent(skill: HarnessV1Skill): string {
@@ -134,8 +137,12 @@ function renderRequest(template: string, sourcePath: string, currentSkillPath: s
     .replaceAll('{{SKILL_NAME}}', skillName)
 }
 
+function sourcePathOf(active: ActiveSandbox, prepared: PreparedRun): string {
+  return posix.join(active.workDir, 'input/source', prepared.sourceDir)
+}
+
 async function writePreparedSource(active: ActiveSandbox, prepared: PreparedRun, signal?: AbortSignal): Promise<void> {
-  const sourcePath = posix.join(active.workDir, 'input/source')
+  const sourcePath = sourcePathOf(active, prepared)
   const reset = await active.sandbox.run({
     command: 'rm -rf -- "$SKILLD_INPUT" "$SKILLD_OUTPUT" && mkdir -p -- "$SKILLD_INPUT"',
     env: {
@@ -245,7 +252,7 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     try {
       if (!active)
         return err({ _tag: 'AgentFailed', message: 'Harness did not provide its sandbox session.' })
-      const sourcePath = posix.join(active.workDir, 'input/source')
+      const sourcePath = sourcePathOf(active, prepared)
       const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
       const outputPath = posix.join(active.workDir, 'skilld-output', prepared.outputName)
       const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.outputName)

@@ -31,8 +31,10 @@ If a Skill already exists, treat its claims as input to test. Do not copy its la
 Documentation can be wrong. Observed behaviour wins.
 
 1. Create a minimal consumer fixture outside the package source. Install the recorded version, or link the local build.
+   To pack a local build, use the repository's package manager. In a pnpm workspace, run `pnpm pack`, because `npm pack` leaves `catalog:` versions.
 2. Use the consumer defaults. The package repository's own config and fixtures can turn defaults off.
 3. Run each example you plan to include. Compare the output with the claim: rendered HTML, return values, or type errors.
+   If a behaviour shows only in development, such as a dev warning, run the dev server and read its log.
 4. If the documentation and the behaviour disagree, write the behaviour and add the mismatch to the report.
 5. If you cannot run an example, keep it only when the types prove it. List it as untested in the report.
 
@@ -61,7 +63,9 @@ Cut:
 Shape:
 
 - Name the package and the tested version in the first paragraph. The frontmatter has no version field.
-- Use this order and drop empty sections: setup, automatic behaviour, common tasks, traps, version limits, config, debug.
+- Use this order and drop empty sections: setup, automatic behaviour, common tasks, integrations (such as Nuxt Content or i18n), traps, version limits, config, debug.
+- Put a config example that is also a common task under common tasks. The config section only lists options.
+- If a trap's detail lives in a reference, write one line in traps that links the reference. Keep the detail only in the reference.
 - Aim for 150 lines or fewer in `SKILL.md`. Never exceed 500.
 - Keep one file by default. Move a topic to `references/<topic>.md` only when it passes about 40 lines and applies to under a third of tasks, such as one integration.
 - Link each reference from `SKILL.md`. Keep references one level deep. Start a reference over 100 lines with a contents list.
@@ -90,8 +94,8 @@ Report to the user:
 - Each documentation and behaviour mismatch: the example, the documented result, and the observed result. These are package bugs for the maintainer.
 - Each untested example.
 - The source path or documentation URL behind each version-specific rule.
-- If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`.
-- If the README or docs have a `skilld add <package>` tip: replace it with a link to the Skill page, and add the badge from that page's README section. The page is `https://skilld.dev/gh/OWNER/REPOSITORY`, or `.../REPOSITORY/SKILL` when the Repository has more than one Skill. The page shows the current run command, so the README does not repeat it.
+- If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`. That flag is npm only; `pnpm pack` rejects it.
+- If the README or docs have a `skilld add <package>` tip: replace it with a link to the Skill page, and add the badge from that page's README section. The page is `https://skilld.dev/gh/OWNER/REPOSITORY`, or `.../REPOSITORY/SKILL` when the Repository has more than one Skill. The skilld.dev indexer skips `SKILL.md` files under test and fixture folders. The page shows the current run command, so the README does not repeat it.
 
 For a direct run, show the files for review, or open a pull request if the user asks.
 Replace an existing Skill only after the user approves it.
