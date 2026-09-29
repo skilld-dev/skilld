@@ -120,7 +120,7 @@ describe('npm package preparation', () => {
 
     expect(result).toMatchObject({
       _tag: 'Ok',
-      value: { warnings: ['Source file dist/bundle.js was left out: 2048 bytes exceeds the 1024 byte file limit.'] },
+      report: { warnings: ['Source file dist/bundle.js was left out: 2048 bytes exceeds the 1024 byte file limit.'] },
     })
   })
 

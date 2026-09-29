@@ -134,8 +134,7 @@ const findingLevels = new Set(['error', 'warning', 'note'])
 
 export const validateSkillReview = (
   files: ReadonlyArray<CollectedFile>,
-  warnings: ReadonlyArray<string>,
-): Result<Omit<SkillReview, 'usage' | 'steps'>, SkillRunError> => {
+): Result<SkillReview, SkillRunError> => {
   if (files.length !== 1 || files[0]?.path !== 'review.json')
     return invalid(['Review output must contain only review.json.'])
 
@@ -176,5 +175,5 @@ export const validateSkillReview = (
     findings.push(finding as unknown as SkillReviewFinding)
   }
 
-  return ok({ _tag: 'SkillReview', summary: review.summary, findings, warnings })
+  return ok({ _tag: 'SkillReview', summary: review.summary, findings })
 }

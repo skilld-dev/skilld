@@ -71,8 +71,8 @@ export type SkillRunEvent
 export interface SkillRunOptions {
   readonly signal?: AbortSignal
   /**
-   * Receives progress events while the Agent works. The run does not wait for a returned promise.
-   * If it throws or its promise rejects, the run continues and the result carries a warning.
+   * Receives progress events while the Agent works. The run does not wait for a returned promise or thenable.
+   * If it throws or its promise rejects, the run continues and the result report carries a warning.
    */
   readonly onEvent?: (event: SkillRunEvent) => void
 }
@@ -94,14 +94,6 @@ export interface GeneratedSkill {
   readonly outputDir: string
   readonly files: ReadonlyArray<SkillFile>
   readonly sourceAttempts: ReadonlyArray<SourceAttempt>
-  /**
-   * Source files the Harness left out for size, and cleanup problems after
-   * the new Skill reached its destination.
-   */
-  readonly warnings: ReadonlyArray<string>
-  readonly usage: SkillRunUsage
-  /** Model calls the Agent made. */
-  readonly steps: number
 }
 
 export interface SkillReviewFinding {
@@ -115,11 +107,6 @@ export interface SkillReview {
   readonly _tag: 'SkillReview'
   readonly summary: string
   readonly findings: ReadonlyArray<SkillReviewFinding>
-  /** Files of the reviewed Skill that the Harness left out for size. */
-  readonly warnings: ReadonlyArray<string>
-  readonly usage: SkillRunUsage
-  /** Model calls the Agent made. */
-  readonly steps: number
 }
 
 export type SkillRunError
@@ -144,9 +131,25 @@ export interface SkillRunValues {
   readonly ReviewSkill: SkillReview
 }
 
+/**
+ * What a Skill run cost, and what went wrong beside its outcome.
+ * Every result carries one, so a failed run still reports its cost.
+ */
+export interface SkillRunReport {
+  /** Tokens the Agent used. A run that failed before the Agent started reports no counts. */
+  readonly usage: SkillRunUsage
+  /** Model calls the Agent made. */
+  readonly steps: number
+  /**
+   * Source files the Harness left out for size, onEvent failures, and cleanup
+   * problems after the run.
+   */
+  readonly warnings: ReadonlyArray<string>
+}
+
 export type SkillRunResult<Tag extends SkillRun['_tag'] = SkillRun['_tag']>
-  = | { readonly _tag: 'Ok', readonly value: SkillRunValues[Tag] }
-    | { readonly _tag: 'Err', readonly error: SkillRunError }
+  = | { readonly _tag: 'Ok', readonly value: SkillRunValues[Tag], readonly report: SkillRunReport }
+    | { readonly _tag: 'Err', readonly error: SkillRunError, readonly report: SkillRunReport }
 
 export interface SkillHarness {
   readonly run: <Run extends SkillRun>(input: Run, options?: SkillRunOptions) => Promise<SkillRunResult<Run['_tag']>>

@@ -60,7 +60,7 @@ describe('skill run progress', () => {
 
     expect(result).toMatchObject({
       _tag: 'Ok',
-      value: { steps: 1, usage: { inputTokens: 120, cachedInputTokens: 100, outputTokens: 30 } },
+      report: { steps: 1, usage: { inputTokens: 120, cachedInputTokens: 100, outputTokens: 30 } },
     })
   })
 
@@ -79,7 +79,7 @@ describe('skill run progress', () => {
 
     expect(result._tag).toBe('Ok')
     if (result._tag === 'Ok')
-      expect(result.value.warnings).toEqual(['onEvent failed: progress bar broke'])
+      expect(result.report.warnings).toEqual(['onEvent failed: progress bar broke'])
   })
 
   it('reports a rejected async onEvent as a warning', async () => {
@@ -97,7 +97,7 @@ describe('skill run progress', () => {
 
     expect(result._tag).toBe('Ok')
     if (result._tag === 'Ok')
-      expect(result.value.warnings).toEqual(['onEvent failed: remote log down'])
+      expect(result.report.warnings).toEqual(['onEvent failed: remote log down'])
   })
 
   it('returns usage on a Skill review', async () => {
@@ -115,7 +115,7 @@ describe('skill run progress', () => {
 
     const result = await createSkillHarness({ harness, sandbox: createFakeSandboxProvider() }).run({ _tag: 'ReviewSkill', skillDir })
 
-    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'SkillReview', steps: 1, usage: { outputTokens: 30 } } })
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'SkillReview' }, report: { steps: 1, usage: { outputTokens: 30 } } })
   })
 })
 
@@ -131,5 +131,89 @@ describe('skill run result type', () => {
 
     expectTypeOf(run).returns.resolves.extract<{ _tag: 'Ok' }>().toHaveProperty('value').toEqualTypeOf<GeneratedSkill>()
     expectTypeOf(review).returns.resolves.extract<{ _tag: 'Ok' }>().toHaveProperty('value').toEqualTypeOf<SkillReview>()
+  })
+})
+
+describe('failed skill run report', () => {
+  it('reports usage, steps, and onEvent warnings when the Agent fails after a step', async () => {
+    const { harness } = createFakeHarness({ onPrompt: async () => {}, failAfterStep: new Error('model overloaded'), usage })
+
+    const result = await createSkillHarness({ harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '.' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    }, {
+      onEvent: () => {
+        throw new Error('progress bar broke')
+      },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Err',
+      error: { _tag: 'AgentFailed' },
+      report: {
+        steps: 1,
+        usage: { inputTokens: 120, cachedInputTokens: 100, outputTokens: 30 },
+        warnings: ['onEvent failed: progress bar broke'],
+      },
+    })
+  })
+
+  it('reports usage and steps when the output check fails', async () => {
+    const { harness } = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        await sandbox.writeTextFile({
+          path: join(workDir, 'skilld-output/example-package/SKILL.md'),
+          content: skillSource('another-name'),
+        })
+      },
+      usage,
+    })
+
+    const result = await createSkillHarness({ harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '.' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Err',
+      error: { _tag: 'InvalidSkill' },
+      report: { steps: 1, usage: { outputTokens: 30 }, warnings: [] },
+    })
+  })
+
+  it('reports no steps when the run fails before the Agent starts', async () => {
+    const { skillHarness } = packageHarness()
+
+    const result = await skillHarness.run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '../outside' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    })
+
+    expect(result).toEqual({
+      _tag: 'Err',
+      error: expect.objectContaining({ _tag: 'InvalidInput' }),
+      report: { steps: 0, usage: { inputTokens: undefined, cachedInputTokens: undefined, outputTokens: undefined }, warnings: [] },
+    })
+  })
+
+  it('reports a rejected custom thenable from onEvent as a warning', async () => {
+    const { skillHarness } = packageHarness()
+    const rejected: PromiseLike<void> = {
+      then: (_onFulfilled, onRejected) => {
+        onRejected?.(new Error('custom thenable broke'))
+        return rejected as PromiseLike<never>
+      },
+    }
+
+    const result = await skillHarness.run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '.' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    }, { onEvent: () => rejected })
+
+    expect(result).toMatchObject({ _tag: 'Ok', report: { warnings: ['onEvent failed: custom thenable broke'] } })
   })
 })

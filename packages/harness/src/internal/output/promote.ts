@@ -12,6 +12,12 @@ function pathError(message: string, path: string): Result<never, SkillRunError> 
 
 const missing = Symbol('missing')
 
+/** A Skill at its destination, and the cleanup problems left behind. */
+export interface PromotedSkill {
+  readonly skill: GeneratedSkill
+  readonly warnings: ReadonlyArray<string>
+}
+
 async function statOrMissing(path: string) {
   return lstat(path).catch(error => (error as NodeJS.ErrnoException).code === 'ENOENT' ? missing : Promise.reject(error))
 }
@@ -21,8 +27,7 @@ export const promoteSkill = async (
   name: string,
   files: ReadonlyArray<CollectedFile>,
   attempts: ReadonlyArray<SourceAttempt>,
-  sourceWarnings: ReadonlyArray<string>,
-): Promise<Result<Omit<GeneratedSkill, 'usage' | 'steps'>, SkillRunError>> => {
+): Promise<Result<PromotedSkill, SkillRunError>> => {
   const root = resolve(rootDir)
   let rootStat = await statOrMissing(root).catch(error => error as Error)
   if (rootStat instanceof Error)
@@ -111,7 +116,7 @@ export const promoteSkill = async (
   await unlink(lockPath).catch(error => lockCleanupErrors.push(error))
 
   if (promoted) {
-    const warnings: string[] = [...sourceWarnings]
+    const warnings: string[] = []
     if (lockCleanupErrors.length > 0) {
       const detail = lockCleanupErrors.map(error => error instanceof Error ? error.message : String(error)).join('; ')
       warnings.push(`Output lock cleanup failed at ${lockPath}: ${detail}`)
@@ -122,11 +127,13 @@ export const promoteSkill = async (
         warnings.push(`Previous Skill cleanup failed at ${backup}: ${backupCleanup.message}`)
     }
     return ok({
-      _tag: 'GeneratedSkill',
-      name,
-      outputDir: target,
-      files: files.map(file => ({ path: file.path, bytes: file.content.byteLength })),
-      sourceAttempts: attempts,
+      skill: {
+        _tag: 'GeneratedSkill',
+        name,
+        outputDir: target,
+        files: files.map(file => ({ path: file.path, bytes: file.content.byteLength })),
+        sourceAttempts: attempts,
+      },
       warnings,
     })
   }

@@ -20,31 +20,30 @@ function parseManifest(source: string): ReadonlyArray<string> {
   return Object.freeze([...value])
 }
 
-async function locateFile(path: string): Promise<string> {
-  for (const root of skillRoots) {
-    const value = await readFile(resolve(root, path), 'utf8').catch((error) => {
+/** Reads the first root that has `path`, and returns that root with the file. */
+async function locateFile(path: string, roots: ReadonlyArray<string>): Promise<{ root: string, content: string }> {
+  for (const root of roots) {
+    const content = await readFile(resolve(root, path), 'utf8').catch((error) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT')
         return null
       throw error
     })
-    if (value !== null)
-      return value
+    if (content !== null)
+      return { root, content }
   }
   throw new Error(`skilld-maintained Skill file is missing: ${path}`)
 }
 
-/** Lists the regular files in one Skill folder, such as `scripts`, from the first root that has it. */
-async function listFolder(path: string): Promise<ReadonlyArray<string>> {
-  for (const root of skillRoots) {
-    const entries = await readdir(resolve(root, path), { withFileTypes: true }).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-        return null
-      throw error
-    })
-    if (entries !== null)
-      return entries.filter(entry => entry.isFile()).map(entry => entry.name).sort()
-  }
-  return []
+/** Lists every regular file under `dir`, nested folders included, as sorted POSIX paths. */
+async function listFiles(dir: string, prefix = ''): Promise<ReadonlyArray<string>> {
+  const entries = await readdir(resolve(dir, prefix), { withFileTypes: true })
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory())
+      return listFiles(dir, path)
+    return entry.isFile() ? [path] : []
+  }))
+  return nested.flat().sort()
 }
 
 function splitSkill(source: string): { name: string, description: string, content: string } {
@@ -66,39 +65,44 @@ function splitSkill(source: string): { name: string, description: string, conten
   return { name: values.name, description: values.description, content: match[2]! }
 }
 
-export async function harnessSkillNames(): Promise<ReadonlyArray<string>> {
-  const source = await locateFile('harness-skills.json')
-  return parseManifest(source)
+export async function harnessSkillNames(roots: ReadonlyArray<string> = skillRoots): Promise<ReadonlyArray<string>> {
+  const { content } = await locateFile('harness-skills.json', roots)
+  return parseManifest(content)
 }
 
-export async function skilldMaintainedSkillNames(): Promise<ReadonlyArray<string>> {
-  const source = await locateFile('skilld-maintained-skills.json')
-  return parseManifest(source)
+export async function skilldMaintainedSkillNames(roots: ReadonlyArray<string> = skillRoots): Promise<ReadonlyArray<string>> {
+  const { content } = await locateFile('skilld-maintained-skills.json', roots)
+  return parseManifest(content)
 }
 
-export async function loadSkilldMaintainedSkill(name: string): Promise<HarnessV1Skill> {
-  const names = await skilldMaintainedSkillNames()
+/**
+ * Loads one skilld-maintained Skill. A Harness Skill also carries every supporting file
+ * in its folder, nested `scripts/` and `references/` folders included, so the Agent can read them.
+ * `roots` lists the folders to search, first match wins.
+ */
+export async function loadSkilldMaintainedSkill(name: string, roots: ReadonlyArray<string> = skillRoots): Promise<HarnessV1Skill> {
+  const names = await skilldMaintainedSkillNames(roots)
   if (!names.includes(name))
     throw new Error(`Unknown skilld-maintained Skill: ${name}`)
 
-  const source = await locateFile(`${name}/SKILL.md`)
+  const { root, content: source } = await locateFile(`${name}/SKILL.md`, roots)
   const skill = splitSkill(source)
   if (skill.name !== name)
     throw new Error(`skilld-maintained Skill name does not match its directory: ${name}`)
 
-  const harnessSkills = await harnessSkillNames()
+  const harnessSkills = await harnessSkillNames(roots)
   if (!harnessSkills.includes(name))
     return skill
 
-  const request = await locateFile(`${name}/assets/harness-request.md`)
-  const scripts = await Promise.all((await listFolder(`${name}/scripts`)).map(async file => ({
-    path: `scripts/${file}`,
-    content: await locateFile(`${name}/scripts/${file}`),
+  const skillDir = resolve(root, name)
+  const paths = (await listFiles(skillDir)).filter(path => path !== 'SKILL.md')
+  if (!paths.includes('assets/harness-request.md'))
+    throw new Error(`skilld-maintained Skill file is missing: ${name}/assets/harness-request.md`)
+  const files = await Promise.all(paths.map(async path => ({
+    path,
+    content: await readFile(resolve(skillDir, path), 'utf8'),
   })))
-  return {
-    ...skill,
-    files: [{ path: 'assets/harness-request.md', content: request }, ...scripts],
-  }
+  return { ...skill, files }
 }
 
 export const DEFAULT_OUTPUT_POLICY = Object.freeze({

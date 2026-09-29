@@ -68,7 +68,7 @@ describe('promotion cleanup', () => {
 
     expect(result).toMatchObject({
       _tag: 'Ok',
-      value: { warnings: [expect.stringContaining('Previous Skill')] },
+      report: { warnings: [expect.stringContaining('Previous Skill')] },
     })
     await expect(readFile(join(currentDir, 'SKILL.md'), 'utf8')).resolves.toContain('# New')
   })
@@ -80,7 +80,7 @@ describe('promotion cleanup', () => {
 
     expect(result).toMatchObject({
       _tag: 'Ok',
-      value: { warnings: [expect.stringContaining('Output lock')] },
+      report: { warnings: [expect.stringContaining('Output lock')] },
     })
     await expect(readFile(join(currentDir, 'SKILL.md'), 'utf8')).resolves.toContain('# New')
     await expect(readFile(join(destinationRoot, '.skilld-example-project.lock'), 'utf8')).resolves.toBe('')
