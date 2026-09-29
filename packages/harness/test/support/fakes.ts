@@ -30,6 +30,8 @@ export interface FakeHarnessOptions {
   readonly onPrompt: (context: FakePromptContext) => Promise<void>
   readonly failStart?: Error
   readonly failPrompt?: Error
+  /** Fails the turn after the fake Agent finishes one step, as a long run that dies midway. */
+  readonly failAfterStep?: Error
   /** Stream parts the fake Agent emits after it runs `onPrompt`, before `finish`. */
   readonly parts?: ReadonlyArray<HarnessV1StreamPart>
   /** Total usage on the `finish` part. */
@@ -90,6 +92,10 @@ export function createFakeHarness(settings: FakeHarnessOptions): {
           for (const part of settings.parts ?? [])
             promptOptions.emit(part)
           promptOptions.emit({ type: 'finish-step', finishReason: { unified: 'stop' }, usage: settings.usage ?? usage } as HarnessV1StreamPart)
+          if (settings.failAfterStep) {
+            const failure = Promise.reject(settings.failAfterStep)
+            return { submitToolResult: async () => {}, done: failure }
+          }
           promptOptions.emit({ type: 'finish', finishReason: { unified: 'stop' }, totalUsage: settings.usage ?? usage } as HarnessV1StreamPart)
           return {
             submitToolResult: async () => {},

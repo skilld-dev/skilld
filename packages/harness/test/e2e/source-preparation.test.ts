@@ -58,7 +58,7 @@ describe('local source preparation', () => {
 
     if (result._tag !== 'Ok' || result.value._tag !== 'GeneratedSkill')
       throw new Error('Expected a GeneratedSkill.')
-    expect(result.value.warnings).toEqual([
+    expect(result.report.warnings).toEqual([
       'Source file pnpm-lock.yaml was left out: 2048 bytes exceeds the 1024 byte file limit.',
     ])
     expect(JSON.parse(manifest).skippedFiles).toEqual([{ path: 'pnpm-lock.yaml', bytes: 2048 }])
@@ -89,9 +89,11 @@ describe('local source preparation', () => {
         _tag: 'SkillReview',
         summary: 'Clean.',
         findings: [],
-        warnings: ['Source file large.txt was left out: 2048 bytes exceeds the 1024 byte file limit.'],
+      },
+      report: {
         usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
         steps: 1,
+        warnings: ['Source file large.txt was left out: 2048 bytes exceeds the 1024 byte file limit.'],
       },
     })
   })
@@ -141,5 +143,30 @@ describe('sandbox session lifecycle', () => {
 
     expect(result).toMatchObject({ _tag: 'Err', error: { _tag: 'AgentFailed' } })
     expect(provider.destroyed()).toBe(1)
+  })
+  it('reports a sandbox cleanup failure on a failed run', async () => {
+    const provider = createFakeSandboxProvider()
+    const failingProvider = {
+      ...provider,
+      createSession: async () => ({
+        ...await provider.createSession(),
+        destroy: async () => {
+          throw new Error('sandbox gone')
+        },
+      }),
+    }
+    const fake = createFakeHarness({ onPrompt: async () => {}, failStart: new Error('no agent') })
+
+    const result = await createSkillHarness({ harness: fake.harness, sandbox: failingProvider }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '.' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Err',
+      error: { _tag: 'AgentFailed' },
+      report: { warnings: ['Sandbox session cleanup failed: sandbox gone'] },
+    })
   })
 })

@@ -13,6 +13,7 @@ export type {
   SkillRunError,
   SkillRunEvent,
   SkillRunOptions,
+  SkillRunReport,
   SkillRunResult,
   SkillRunUsage,
   SkillRunValues,

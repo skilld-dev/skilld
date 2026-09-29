@@ -42,10 +42,12 @@ const result = await skillHarness.run({
 
 Every run returns a tagged `Ok` or `Err` value.
 The input tag sets the `Ok` value: `PackageSkill` and `ProjectSkill` return a `GeneratedSkill`, and `ReviewSkill` returns a `SkillReview`.
-An `Ok` value carries `warnings`.
-They name each source file the Harness left out for size, and any cleanup problem after promotion.
-An `Ok` value also carries `usage` (input, cached input, and output tokens) and `steps`, the number of model calls.
+Both `Ok` and `Err` carry a `report`, so a failed run still reports its cost.
+`report.usage` holds input, cached input, and output tokens.
+`report.steps` is the number of model calls.
 A token count is `undefined` when the adapter does not report it.
+If the run fails before the Agent starts, `steps` is 0.
+`report.warnings` names each source file the Harness left out for size, each `onEvent` failure, and each cleanup problem.
 An `InvalidSkill` error lists each failed output check in `issues`.
 
 The Harness checks the rules that the generation Skills state:
@@ -78,7 +80,7 @@ The events are `StepStart`, `ToolCall`, and `StepFinish`. Steps count from 0.
 A `ToolCall` event arrives after the tool returns.
 If the adapter runs the tool itself, the event arrives when its step ends.
 The run does not wait for a promise that `onEvent` returns.
-If `onEvent` throws or its promise rejects, the run continues, and the `Ok` value carries the error as a warning.
+If `onEvent` throws, or its promise or thenable rejects, the run continues, and `report.warnings` carries the error.
 
 Pass `fetch` to `createSkillHarness` when the host owns HTTP access.
 The default adapter uses the Node global fetch implementation.

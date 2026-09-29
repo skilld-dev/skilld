@@ -5,13 +5,16 @@ import type { PreparedSource } from './internal/source/host.ts'
 import type { FetchClient } from './internal/source/npm.ts'
 import type {
   CreateSkillHarnessOptions,
+  GeneratedSkill,
   SkillDestination,
   SkillHarness,
   SkillOutputPolicy,
+  SkillReview,
   SkillRun,
   SkillRunError,
   SkillRunEvent,
   SkillRunOptions,
+  SkillRunReport,
   SkillRunResult,
   SkillRunUsage,
 } from './types.ts'
@@ -44,33 +47,66 @@ interface ActiveSandbox {
   readonly workDir: string
 }
 
-/** Forwards events to the caller and keeps each distinct failure as a warning. */
-interface EventSink {
+/** The outcome of one Skill run before the Harness attaches its report. */
+type RunOutcome = Result<GeneratedSkill | SkillReview, SkillRunError>
+
+/** Collects the cost of one Skill run and every warning beside its outcome. */
+interface RunLog {
+  /** Forwards an event to the caller and counts each finished step. */
   readonly emit: (event: SkillRunEvent) => void
-  readonly warnings: () => ReadonlyArray<string>
+  readonly warn: (warning: string) => void
+  /** Replaces the counted steps with the totals the Agent reported at its end. */
+  readonly settle: (usage: SkillRunUsage, steps: number) => void
+  readonly report: () => SkillRunReport
 }
 
-function createEventSink(onEvent: SkillRunOptions['onEvent']): EventSink {
-  const failures = new Set<string>()
-  // The Agent SDK drops callback errors, so surface them on the result instead.
+function addCount(total: number | undefined, count: number | undefined): number | undefined {
+  return total === undefined ? count : count === undefined ? total : total + count
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (typeof value === 'object' || typeof value === 'function')
+    && value !== null
+    && typeof (value as { then?: unknown }).then === 'function'
+}
+
+function createRunLog(onEvent: SkillRunOptions['onEvent']): RunLog {
+  const warnings: string[] = []
+  const eventFailures = new Set<string>()
+  let usage: SkillRunUsage = { inputTokens: undefined, cachedInputTokens: undefined, outputTokens: undefined }
+  let steps = 0
+  // The Agent SDK drops callback errors, so surface them on the report instead.
   const fail = (cause: unknown) => {
-    failures.add(`onEvent failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    eventFailures.add(`onEvent failed: ${cause instanceof Error ? cause.message : String(cause)}`)
   }
   return {
     emit: (event) => {
+      if (event._tag === 'StepFinish') {
+        steps += 1
+        usage = {
+          inputTokens: addCount(usage.inputTokens, event.usage.inputTokens),
+          cachedInputTokens: addCount(usage.cachedInputTokens, event.usage.cachedInputTokens),
+          outputTokens: addCount(usage.outputTokens, event.usage.outputTokens),
+        }
+      }
       if (!onEvent)
         return
       try {
         const returned: unknown = onEvent(event)
-        // An async listener would otherwise reject unhandled and can end the host process.
-        if (returned instanceof Promise)
-          returned.catch(fail)
+        // An async listener or custom thenable would otherwise reject unhandled and can end the host process.
+        if (isPromiseLike(returned))
+          Promise.resolve(returned).catch(fail)
       }
       catch (cause) {
         fail(cause)
       }
     },
-    warnings: () => [...failures],
+    warn: warning => warnings.push(warning),
+    settle: (total, count) => {
+      usage = total
+      steps = count
+    },
+    report: () => ({ usage, steps, warnings: [...warnings, ...eventFailures] }),
   }
 }
 
@@ -89,7 +125,7 @@ function toUsage(usage: AgentUsage): SkillRunUsage {
   }
 }
 
-function cancelled(): SkillRunResult {
+function cancelled(): RunOutcome {
   return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
 }
 
@@ -227,7 +263,7 @@ async function writePreparedSource(active: ActiveSandbox, prepared: PreparedRun,
   })
 }
 
-function toAgentError(cause: unknown, signal?: AbortSignal): SkillRunResult {
+function toAgentError(cause: unknown, signal?: AbortSignal): RunOutcome {
   return signal?.aborted
     ? cancelled()
     : err({ _tag: 'AgentFailed', message: 'Harness Agent failed during the Skill run.', cause })
@@ -248,6 +284,15 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
   }
 
   async function runSkill(input: SkillRun, runOptions: SkillRunOptions): Promise<SkillRunResult> {
+    const log = createRunLog(runOptions.onEvent)
+    const outcome = await runLogged(input, runOptions, log)
+    const report = log.report()
+    return outcome._tag === 'Ok'
+      ? { _tag: 'Ok', value: outcome.value, report }
+      : { _tag: 'Err', error: outcome.error, report }
+  }
+
+  async function runLogged(input: SkillRun, runOptions: SkillRunOptions, log: RunLog): Promise<RunOutcome> {
     const parsed = parseSkillRun(input)
     if (parsed._tag === 'Err')
       return parsed
@@ -255,6 +300,8 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     const prepared = await prepareRun(parsed.value, policy, fetchClient, runOptions.signal)
     if (prepared._tag === 'Err')
       return prepared
+    for (const warning of skippedFileWarnings(prepared.value.source.skippedFiles, policy))
+      log.warn(warning)
 
     const skill = await loadSkilldMaintainedSkill(prepared.value.skillName)
     // The Harness creates and owns the sandbox session, and hands it to the
@@ -263,15 +310,10 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     const sandboxSession = await sandbox.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
     if (sandboxSession._tag === 'Err')
       return toAgentError(sandboxSession.error, runOptions.signal)
-    const result = await runAgent(prepared.value, skill, sandboxSession.value, createEventSink(runOptions.onEvent), runOptions.signal)
+    const result = await runAgent(prepared.value, skill, sandboxSession.value, log, runOptions.signal)
     const destroyed = await Promise.resolve(sandboxSession.value.destroy()).then(() => undefined, cause => cause as unknown)
-    if (destroyed === undefined)
-      return result
-    const warning = `Sandbox session cleanup failed: ${destroyed instanceof Error ? destroyed.message : String(destroyed)}`
-    if (result._tag === 'Ok')
-      return ok({ ...result.value, warnings: [...result.value.warnings, warning] })
-    // An Err result has no warnings. The cleanup failure must still reach the caller.
-    console.warn(`skilld-harness: ${warning}`)
+    if (destroyed !== undefined)
+      log.warn(`Sandbox session cleanup failed: ${destroyed instanceof Error ? destroyed.message : String(destroyed)}`)
     return result
   }
 
@@ -279,9 +321,9 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     prepared: PreparedRun,
     skill: HarnessV1Skill,
     sandboxSession: HarnessV1NetworkSandboxSession,
-    events: EventSink,
+    log: RunLog,
     signal?: AbortSignal,
-  ): Promise<SkillRunResult> {
+  ): Promise<RunOutcome> {
     let active: ActiveSandbox | undefined
     const userOnSession = sandboxConfig.onSession
     const agent = new HarnessAgent({
@@ -317,35 +359,27 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         abortSignal: signal,
         onStepStart: (event) => {
           step = event.stepNumber
-          events.emit({ _tag: 'StepStart', step })
+          log.emit({ _tag: 'StepStart', step })
         },
         onToolExecutionStart: ({ toolCall }) => {
-          events.emit({ _tag: 'ToolCall', step, toolName: toolCall.toolName, toolCallId: toolCall.toolCallId, input: toolCall.input })
+          log.emit({ _tag: 'ToolCall', step, toolName: toolCall.toolName, toolCallId: toolCall.toolCallId, input: toolCall.input })
         },
         onStepEnd: (result) => {
-          events.emit({ _tag: 'StepFinish', step: result.stepNumber, finishReason: result.finishReason, usage: toUsage(result.usage) })
+          log.emit({ _tag: 'StepFinish', step: result.stepNumber, finishReason: result.finishReason, usage: toUsage(result.usage) })
         },
       }).then(ok, cause => err(cause))
       if (generated._tag === 'Err')
         return toAgentError(generated.error, signal)
+      log.settle(toUsage(generated.value.totalUsage), generated.value.steps.length)
       if (signal?.aborted)
         return cancelled()
-      const report = {
-        usage: toUsage(generated.value.totalUsage),
-        steps: generated.value.steps.length,
-      }
-      const withReport = <Value extends { readonly warnings: ReadonlyArray<string> }>(value: Value) =>
-        ({ ...value, ...report, warnings: [...value.warnings, ...events.warnings()] })
 
       const collected = await collectSandboxOutput(active.sandbox, outputPath, policy, signal)
       if (collected._tag === 'Err')
         return collected
 
-      const sourceWarnings = skippedFileWarnings(prepared.source.skippedFiles, policy)
-      if (prepared.skillName === 'review-skill') {
-        const review = validateSkillReview(collected.value, sourceWarnings)
-        return review._tag === 'Err' ? review : ok(withReport(review.value))
-      }
+      if (prepared.skillName === 'review-skill')
+        return validateSkillReview(collected.value)
 
       const validated = validateGeneratedSkill(
         prepared.outputName,
@@ -363,9 +397,12 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         prepared.destination.name,
         collected.value,
         prepared.source.attempts,
-        sourceWarnings,
       )
-      return promoted._tag === 'Err' ? promoted : ok(withReport(promoted.value))
+      if (promoted._tag === 'Err')
+        return promoted
+      for (const warning of promoted.value.warnings)
+        log.warn(warning)
+      return ok(promoted.value.skill)
     }
     finally {
       await session.destroy()
