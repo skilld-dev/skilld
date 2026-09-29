@@ -6,110 +6,107 @@ description: Generate or update an Agent Skill that teaches consumers one npm or
 # Generate a package Skill
 
 Write a short Skill that stops an Agent from misusing one package version.
-The reader already knows the language, the framework, and the domain.
-Write only what it would get wrong without the Skill.
+The reader knows the language, the framework, and the domain. Write only what it would get wrong.
 
 ## Inputs
 
-Use the package name, package directory, or prepared package source.
-Ask for the destination only when the request does not give one.
-In a monorepo, put the Skill inside the published package directory, so the package ships it.
-Write one Skill for the installed package, unless a second package has distinct users.
+Take a package name, directory, or prepared source. Ask for the destination only when it is missing.
+In a monorepo, put the Skill in the published package directory.
+Write one Skill per installed package, unless a second package has distinct users.
 `assets/` holds the Harness request. A direct run ignores it.
 
 ## 1. Research
 
 1. Record the exact package version.
 2. Read the manifest, every exported entry point, and the public types.
-3. If the package is a framework module, read what it registers at setup: auto-imports, components, the config key and its defaults, hooks, and server routes. For a Nuxt module, `defineNuxtModule` in the module entry registers them.
-4. If the package re-exports or wraps another package, or its API depends on a peer dependency, record the version the consumer gets. Read that version's types or tagged source. Never read a default branch.
-5. Read the current official documentation and examples.
-6. Read release notes only for breaking changes and removed APIs.
+3. For a framework module, read what setup registers: auto-imports, components, the config key and defaults, hooks, server routes.
+4. If the package wraps, re-exports, or peers on another package, read the types or tagged source of the version the consumer gets, never a default branch.
+5. Read the current official docs and examples, and release notes only for breaking changes and removed APIs.
 
-If a Skill already exists, treat its claims as input to test. Do not copy its layout.
+Test an existing Skill's claims; do not copy its layout.
 
 ## 2. Test the examples
 
-Documentation can be wrong. Observed behaviour wins.
+Observed behaviour beats documentation.
 
 1. Create a minimal consumer fixture outside the package source. Install the recorded version, or link the local build.
-   To pack a local build, use the repository's package manager. In a pnpm workspace, run `pnpm pack`, because `npm pack` leaves `catalog:` versions.
-   Install only the package and the peers the documentation names. A resolution error is a finding.
-2. Use the consumer defaults. The package repository's own config and fixtures can turn defaults off.
-   In a Nuxt fixture, keep test modules out of `modules/`, because Nuxt registers every module in that folder.
-   One fixture page can exercise many examples, so each build tests more claims.
-3. Run each example you plan to include. Compare the output with the claim: rendered HTML, return values, type errors, build logs, exit codes, or report files.
-   For a framework module, test each mode it supports. Read dev warnings in the dev server log, prerender results in the build output, and runtime results from the built production server.
+   Before packing, build the package and its native code (NAPI, WASM); `prepack` can need them.
+   Pack with the repository's package manager: `npm pack` leaves pnpm `catalog:` versions.
+   Install only the package and documented peers. A resolution error is a finding.
+2. Use consumer defaults. The package repository's config and fixtures can turn them off.
+   In Nuxt, keep test modules out of `modules/`; Nuxt registers every module there.
+   One fixture page can exercise many examples.
+3. Run each example you include. Compare output with the claim: HTML, return values, type errors, build logs, exit codes, report files.
+   Test each mode: framework modes, export conditions (`node`, `workerd`, `edge-light`, `browser`, CDN or IIFE build), and each CLI binary with a config file and with flags.
+   Wrap every run in `timeout 120`.
+   Grep the package for agent and CI detection, such as `CLAUDECODE` or `CI`; unset each variable it reads with `env -u VAR`.
+   Read dev warnings in the dev log, prerender results in build output, and runtime results from the production server.
    If a trap says nothing happens, run it and confirm the silence.
-   To fetch pages from a server, run this Skill's [scripts/serve-fixture.mjs](scripts/serve-fixture.mjs), for example `node SKILL_DIR/scripts/serve-fixture.mjs --fetch / -- node .output/server/index.mjs` from the fixture directory.
-   It uses a free port, fetches with `Accept: text/html`, and stops only its own process group.
-   Without `--fetch`, it holds the server until SIGTERM. Run that with your tool's background option, because `&` and `nohup` die when the shell call ends.
-   Never kill by port or with `pkill -f`. Another Agent can own that process, and the pattern can match your own shell.
-   In a browser test, set a desktop browser user agent. A package can treat `HeadlessChrome` as a bot.
-4. If the documentation and the behaviour disagree, write the behaviour and add the mismatch to the report.
-5. If you cannot run an example, keep it only when the types prove it. List it as untested in the report.
+   To fetch from a server, run [scripts/serve-fixture.mjs](scripts/serve-fixture.mjs) in the fixture: `node SKILL_DIR/scripts/serve-fixture.mjs --fetch / -- node .output/server/index.mjs`.
+   For a binary, use `--fetch-raw PATH --out DIR`. `DIR/responses.json` lists each status and content type.
+   Without `--fetch`, it holds the server until SIGTERM. Background it with your tool's option; `&` and `nohup` die with the shell call.
+   Never kill by port or with `pkill -f`: another Agent can own that process.
+   In a browser, set a desktop user agent; a package can treat `HeadlessChrome` as a bot.
+4. If documentation and behaviour disagree, write the behaviour and report the mismatch.
+5. Keep an unrunnable example only when the types prove it; report it untested.
 
-Do not fix the package or its documentation in the Skill change.
+Do not fix the package or its docs in the Skill change.
 
 ## 3. Write
 
 Include:
 
-- Setup steps that differ from the framework default, such as a required config key.
+- Setup that differs from the framework default, such as a required config key.
 - What the package does automatically, and how to turn it off.
-- Traps: silent failures, plausible but wrong calls, documentation mismatches, and version limits.
-- One small example per common task, when the correct call is not obvious from the types.
-- Breaking changes an Agent trained on an older version would repeat. Show the old call and the new call.
+- Traps: silent failures, plausible wrong calls, documentation mismatches, version limits.
+- One small example per common task the types do not make obvious.
+- Breaking changes an Agent trained on an older version would repeat: old call, new call.
 - A deploy section, such as CI cache or Cloudflare, when most traps live there.
 
 Cut:
 
-- Explanations of the domain, the framework, or the language.
-- Config options whose name and type explain them. Link the config reference instead. Keep a table when the values are the API, such as priority numbers.
-- Internals the consumer cannot act on, such as tree shaking or tag priority.
-- Changelog paraphrase, fixed bugs, and release history.
-- Generic debug advice, such as "view the page source" or public validators.
-- `path:line` citations. The consumer does not read the package source. Put evidence in the report.
-- Any second copy of content, including a list that repeats the inline reference links.
+- Self-explanatory config options; link the config reference. Keep a table when values are the API, such as priorities.
+- Internals the consumer cannot act on, such as tree shaking.
+- Changelog paraphrase, fixed bugs, release history.
+- Generic debug advice, such as "view source" or public validators.
+- `path:line` citations. Put evidence in the report.
+- Any second copy of content, such as a list repeating inline reference links.
 
 Shape:
 
-- Name the package and the tested version in the first paragraph. The frontmatter has no version field.
-- Use this order and drop empty sections: setup, automatic behaviour, common tasks, integrations (such as Nuxt Content or i18n), traps, version limits, config, debug.
-- Put a config example that is also a common task under common tasks. The config section only lists options.
-- Write each code block as a complete module with its imports. The repository ESLint config can lint fenced code.
-- If a trap's detail lives in a reference, write one line in traps that links the reference. Keep the detail only in the reference.
-- Aim for 150 lines or fewer in `SKILL.md`. Never exceed 500.
-- Keep one file by default. Move a topic to `references/<topic>.md` only when it passes about 40 lines and applies to under a third of tasks, such as one integration.
-- Link each reference from `SKILL.md`. Keep references one level deep. Start a reference over 100 lines with a contents list.
+- Name the package and tested version in the first paragraph, not the frontmatter.
+- Order, dropping empty sections: setup, automatic behaviour, common tasks, integrations, traps, version limits, config, debug.
+- A config example that is a common task goes there; the config section only lists options.
+- Write each code block as a complete module with imports. ESLint can lint fenced code.
+- A trap detailed in a reference gets one linking line in traps.
+- Aim for 150 lines and about 2,000 tokens in `SKILL.md`. Never exceed 500 lines.
+- Keep one file. Move a topic to `references/<topic>.md` only past about 40 lines and when under a third of tasks need it.
+- Link each reference from `SKILL.md`, one level deep. A reference over 100 lines starts with contents.
 - Write at most eight reference files. Add `scripts/` only when running code beats reading it.
 - Never include credentials, caches, build output, or dependency directories.
 
 The frontmatter contains only `name` and `description`.
 The name uses lowercase letters, numbers, and single hyphens, at most 64 characters, and matches the directory.
-The description is at most 1024 characters in the third person. It says what the Skill does, then when to use it, with the words a user types: the package name, main exports, the config key, and error symptoms.
-
-- Good: `Add and debug Schema.org JSON-LD in Nuxt with nuxt-schema-org. Use when a task mentions structured data, rich results, useSchemaOrg, defineArticle, or the schemaOrg config key.`
-- Bad: `Helps with nuxt-schema-org.`
+For a scoped package, drop the `@` and replace `/` with a hyphen: `@nuxtjs/seo` becomes `nuxtjs-seo`.
+The description, at most 1024 characters in third person, says what the Skill does, then when to use it, in the words a user types: package name, main exports, config key, error symptoms.
+Good: `Add and debug Schema.org JSON-LD in Nuxt with nuxt-schema-org. Use when a task mentions structured data, rich results, useSchemaOrg, defineArticle, or the schemaOrg config key.`
 
 ## 4. Check and report
 
-Before you finish, confirm:
+Before finishing, confirm:
 
-- Each example ran against the recorded version, or the report lists it as untested.
-- Each sentence tells the reader something it would otherwise get wrong.
-- Each reference is linked from `SKILL.md`, and no file is unlinked. Delete stale files from an earlier Skill.
+- Each example ran against the recorded version, or is reported untested.
+- Each reference is linked. Delete stale files from an earlier Skill.
 - The frontmatter follows the rules above.
 
 Report to the user:
 
 - The files and the tested version.
-- Each documentation and behaviour mismatch: the example, the documented result, and the observed result. These are package bugs for the maintainer.
-- Each untested example.
+- Each untested example, and each mismatch: example, documented result, observed result. These are package bugs.
 - The source path or documentation URL behind each version-specific rule.
-- If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`. That flag is npm only; `pnpm pack` rejects it.
-- If the README or docs have a `skilld add <package>` tip, replace it with the tip below, in the same place. Add the badge after the other badges.
-  Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. If the Repository has more than one Skill, add `/SKILL` to both the page path and the badge path. The skilld.dev indexer skips `SKILL.md` files under test and fixture folders. The page shows the run command, so the README does not repeat it.
+- If the package ships the Skill, add its directory to `files` in `package.json`. After one build, list packed files with `npm pack --dry-run --ignore-scripts`; `pnpm pack` rejects that flag.
+- Replace any README or docs `skilld add <package>` tip in place with the tip below. Add the badge after the others.
+  Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. If the Repository has several Skills, add `/SKILL` to the page and badge paths. The skilld.dev indexer skips `SKILL.md` under test and fixture folders. The README omits the run command; the page shows it.
 
 ```html
 <a href="https://skilld.dev/gh/OWNER/REPOSITORY">
@@ -126,6 +123,6 @@ Report to the user:
 > Using an AI agent? Get the PACKAGE Skill on [skilld.dev/gh/OWNER/REPOSITORY](https://skilld.dev/gh/OWNER/REPOSITORY).
 ```
 
-For a direct run, show the files for review, or open a pull request if the user asks.
-Replace an existing Skill only after the user approves it.
-A direct run has no Harness checks. Do not claim that it passed them.
+For a direct run, show the files for review, or open a pull request if asked.
+Replace an existing Skill only with user approval.
+A direct run has no Harness checks; never claim it passed them.
