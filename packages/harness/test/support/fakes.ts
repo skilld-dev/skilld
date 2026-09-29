@@ -30,6 +30,10 @@ export interface FakeHarnessOptions {
   readonly onPrompt: (context: FakePromptContext) => Promise<void>
   readonly failStart?: Error
   readonly failPrompt?: Error
+  /** Stream parts the fake Agent emits after it runs `onPrompt`, before `finish`. */
+  readonly parts?: ReadonlyArray<HarnessV1StreamPart>
+  /** Total usage on the `finish` part. */
+  readonly usage?: typeof usage
 }
 
 const usage = {
@@ -83,7 +87,10 @@ export function createFakeHarness(settings: FakeHarnessOptions): {
             workDir: options.sessionWorkDir,
           })
           promptOptions.emit({ type: 'stream-start' })
-          promptOptions.emit({ type: 'finish', finishReason: { unified: 'stop' }, totalUsage: usage } as HarnessV1StreamPart)
+          for (const part of settings.parts ?? [])
+            promptOptions.emit(part)
+          promptOptions.emit({ type: 'finish-step', finishReason: { unified: 'stop' }, usage: settings.usage ?? usage } as HarnessV1StreamPart)
+          promptOptions.emit({ type: 'finish', finishReason: { unified: 'stop' }, totalUsage: settings.usage ?? usage } as HarnessV1StreamPart)
           return {
             submitToolResult: async () => {},
             done: Promise.resolve(),

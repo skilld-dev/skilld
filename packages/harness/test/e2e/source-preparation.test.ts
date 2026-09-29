@@ -90,6 +90,8 @@ describe('local source preparation', () => {
         summary: 'Clean.',
         findings: [],
         warnings: ['Source file large.txt was left out: 2048 bytes exceeds the 1024 byte file limit.'],
+        usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+        steps: 1,
       },
     })
   })

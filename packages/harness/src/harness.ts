@@ -10,7 +10,10 @@ import type {
   SkillOutputPolicy,
   SkillRun,
   SkillRunError,
+  SkillRunEvent,
+  SkillRunOptions,
   SkillRunResult,
+  SkillRunUsage,
 } from './types.ts'
 import { lstat, realpath } from 'node:fs/promises'
 import { join, posix, resolve } from 'node:path'
@@ -36,6 +39,45 @@ interface PreparedRun {
 interface ActiveSandbox {
   readonly sandbox: SandboxSession
   readonly workDir: string
+}
+
+/** Forwards events to the caller and keeps each distinct failure as a warning. */
+interface EventSink {
+  readonly emit: (event: SkillRunEvent) => void
+  readonly warnings: () => ReadonlyArray<string>
+}
+
+function createEventSink(onEvent: SkillRunOptions['onEvent']): EventSink {
+  const failures = new Set<string>()
+  return {
+    emit: (event) => {
+      if (!onEvent)
+        return
+      try {
+        onEvent(event)
+      }
+      catch (cause) {
+        // The Agent SDK drops callback errors, so surface them on the result instead.
+        failures.add(`onEvent failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+      }
+    },
+    warnings: () => [...failures],
+  }
+}
+
+/** The fields this package reads from the Agent SDK usage report. */
+interface AgentUsage {
+  readonly inputTokens: number | undefined
+  readonly inputTokenDetails: { readonly cacheReadTokens: number | undefined }
+  readonly outputTokens: number | undefined
+}
+
+function toUsage(usage: AgentUsage): SkillRunUsage {
+  return {
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.inputTokenDetails.cacheReadTokens,
+    outputTokens: usage.outputTokens,
+  }
 }
 
 function cancelled(): SkillRunResult {
@@ -186,39 +228,45 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
   const sandbox = options.sandbox
 
   return {
-    run: async (input, runOptions = {}): Promise<SkillRunResult> => {
-      const parsed = parseSkillRun(input)
-      if (parsed._tag === 'Err')
-        return parsed
+    // Each input tag maps to one Skill, and that Skill decides the value tag,
+    // so the wide result is the narrowed result for this input.
+    run: <Run extends SkillRun>(input: Run, runOptions: SkillRunOptions = {}) =>
+      runSkill(input, runOptions) as Promise<SkillRunResult<Run['_tag']>>,
+  }
 
-      const prepared = await prepareRun(parsed.value, policy, fetchClient, runOptions.signal)
-      if (prepared._tag === 'Err')
-        return prepared
+  async function runSkill(input: SkillRun, runOptions: SkillRunOptions): Promise<SkillRunResult> {
+    const parsed = parseSkillRun(input)
+    if (parsed._tag === 'Err')
+      return parsed
 
-      const skill = await loadSkilldMaintainedSkill(prepared.value.skillName)
-      // The Harness creates and owns the sandbox session, and hands it to the
-      // Agent. The Agent never sees the provider, so it never destroys the
-      // session itself, and the deprecated provider path stays unused.
-      const sandboxSession = await sandbox.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
-      if (sandboxSession._tag === 'Err')
-        return toAgentError(sandboxSession.error, runOptions.signal)
-      const result = await runAgent(prepared.value, skill, sandboxSession.value, runOptions.signal)
-      const destroyed = await Promise.resolve(sandboxSession.value.destroy()).then(() => undefined, cause => cause as unknown)
-      if (destroyed === undefined)
-        return result
-      const warning = `Sandbox session cleanup failed: ${destroyed instanceof Error ? destroyed.message : String(destroyed)}`
-      if (result._tag === 'Ok')
-        return ok({ ...result.value, warnings: [...result.value.warnings, warning] })
-      // An Err result has no warnings. The cleanup failure must still reach the caller.
-      console.warn(`skilld-harness: ${warning}`)
+    const prepared = await prepareRun(parsed.value, policy, fetchClient, runOptions.signal)
+    if (prepared._tag === 'Err')
+      return prepared
+
+    const skill = await loadSkilldMaintainedSkill(prepared.value.skillName)
+    // The Harness creates and owns the sandbox session, and hands it to the
+    // Agent. The Agent never sees the provider, so it never destroys the
+    // session itself, and the deprecated provider path stays unused.
+    const sandboxSession = await sandbox.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
+    if (sandboxSession._tag === 'Err')
+      return toAgentError(sandboxSession.error, runOptions.signal)
+    const result = await runAgent(prepared.value, skill, sandboxSession.value, createEventSink(runOptions.onEvent), runOptions.signal)
+    const destroyed = await Promise.resolve(sandboxSession.value.destroy()).then(() => undefined, cause => cause as unknown)
+    if (destroyed === undefined)
       return result
-    },
+    const warning = `Sandbox session cleanup failed: ${destroyed instanceof Error ? destroyed.message : String(destroyed)}`
+    if (result._tag === 'Ok')
+      return ok({ ...result.value, warnings: [...result.value.warnings, warning] })
+    // An Err result has no warnings. The cleanup failure must still reach the caller.
+    console.warn(`skilld-harness: ${warning}`)
+    return result
   }
 
   async function runAgent(
     prepared: PreparedRun,
     skill: HarnessV1Skill,
     sandboxSession: HarnessV1NetworkSandboxSession,
+    events: EventSink,
     signal?: AbortSignal,
   ): Promise<SkillRunResult> {
     let active: ActiveSandbox | undefined
@@ -249,19 +297,42 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
       const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
       const outputPath = posix.join(active.workDir, 'skilld-output', prepared.outputName)
       const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.outputName)
-      const generated = await agent.generate({ session, prompt, abortSignal: signal }).then(ok, cause => err(cause))
+      let step = 0
+      const generated = await agent.generate({
+        session,
+        prompt,
+        abortSignal: signal,
+        onStepStart: (event) => {
+          step = event.stepNumber
+          events.emit({ _tag: 'StepStart', step })
+        },
+        onToolExecutionStart: ({ toolCall }) => {
+          events.emit({ _tag: 'ToolCall', step, toolName: toolCall.toolName, toolCallId: toolCall.toolCallId, input: toolCall.input })
+        },
+        onStepEnd: (result) => {
+          events.emit({ _tag: 'StepFinish', step: result.stepNumber, finishReason: result.finishReason, usage: toUsage(result.usage) })
+        },
+      }).then(ok, cause => err(cause))
       if (generated._tag === 'Err')
         return toAgentError(generated.error, signal)
       if (signal?.aborted)
         return cancelled()
+      const report = {
+        usage: toUsage(generated.value.totalUsage),
+        steps: generated.value.steps.length,
+      }
+      const withReport = <Value extends { readonly warnings: ReadonlyArray<string> }>(value: Value) =>
+        ({ ...value, ...report, warnings: [...value.warnings, ...events.warnings()] })
 
       const collected = await collectSandboxOutput(active.sandbox, outputPath, policy, signal)
       if (collected._tag === 'Err')
         return collected
 
       const sourceWarnings = skippedFileWarnings(prepared.source.skippedFiles, policy)
-      if (prepared.skillName === 'review-skill')
-        return validateSkillReview(collected.value, sourceWarnings)
+      if (prepared.skillName === 'review-skill') {
+        const review = validateSkillReview(collected.value, sourceWarnings)
+        return review._tag === 'Err' ? review : ok(withReport(review.value))
+      }
 
       const validated = validateGeneratedSkill(
         prepared.outputName,
@@ -274,13 +345,14 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         return validated
       if (!prepared.destination)
         return err({ _tag: 'InvalidInput', message: 'Skill destination is required.' })
-      return promoteSkill(
+      const promoted = await promoteSkill(
         prepared.destination.rootDir,
         prepared.destination.name,
         collected.value,
         prepared.source.attempts,
         sourceWarnings,
       )
+      return promoted._tag === 'Err' ? promoted : ok(withReport(promoted.value))
     }
     finally {
       await session.destroy()

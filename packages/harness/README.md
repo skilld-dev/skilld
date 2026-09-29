@@ -41,8 +41,11 @@ const result = await skillHarness.run({
 ```
 
 Every run returns a tagged `Ok` or `Err` value.
+The input tag sets the `Ok` value: `PackageSkill` and `ProjectSkill` return a `GeneratedSkill`, and `ReviewSkill` returns a `SkillReview`.
 An `Ok` value carries `warnings`.
 They name each source file the Harness left out for size, and any cleanup problem after promotion.
+An `Ok` value also carries `usage` (input, cached input, and output tokens) and `steps`, the number of model calls.
+A token count is `undefined` when the adapter does not report it.
 An `InvalidSkill` error lists each failed output check in `issues`.
 
 The Harness checks the rules that the generation Skills state:
@@ -51,6 +54,29 @@ The Harness checks the rules that the generation Skills state:
 - `SKILL.md` links every file under `references/`, by a Markdown link or an inline code path.
 - A package Skill keeps `SKILL.md` under 500 lines and writes at most eight reference files.
 - A project Skill points only at project files and gives at least one search command.
+
+A run can take several minutes. Pass `onEvent` to follow the Agent:
+
+```ts
+import type { SkillRun } from 'skilld-harness'
+import { createSkillHarness } from 'skilld-harness'
+
+declare const skillHarness: ReturnType<typeof createSkillHarness>
+declare const input: SkillRun
+
+await skillHarness.run(input, {
+  onEvent: (event) => {
+    if (event._tag === 'ToolCall')
+      console.log(`step ${event.step}: ${event.toolName}`)
+    if (event._tag === 'StepFinish')
+      console.log(`step ${event.step} used ${event.usage.outputTokens} output tokens`)
+  },
+})
+```
+
+The events are `StepStart`, `ToolCall`, and `StepFinish`. Steps count from 0.
+Some adapters report tool calls only when their step ends.
+If `onEvent` throws, the run continues, and the `Ok` value carries the error as a warning.
 
 Pass `fetch` to `createSkillHarness` when the host owns HTTP access.
 The default adapter uses the Node global fetch implementation.
