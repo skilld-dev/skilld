@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Start a fixture server on a free port, fetch paths as HTML, then stop its whole process group.
+// Start a fixture server on a free port, fetch paths, then stop its whole process group.
 //
-// Usage: node serve-fixture.mjs [--fetch PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...
+// Usage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...
 //
 // The script replaces `{port}` in each argument and sets PORT, NITRO_PORT, and NUXT_PORT.
 // It prints `ready http://localhost:PORT` on stderr when the server answers.
+// `--fetch` asks for HTML. `--fetch-raw` asks for any type, such as an image, and needs `--out`.
 // Each fetch prints `GET PATH STATUS CONTENT-TYPE BYTES` on stderr. The body goes to stdout, or to DIR when `--out` is set.
+// With `--out`, DIR/responses.json lists each path with its file, status, content type, and byte count.
 // Without `--fetch`, or with `--hold`, the server stays up until the hold time ends, the script gets SIGTERM, or its parent exits.
 // The script never kills by port or by name. It stops only the process group it started. POSIX only.
 
@@ -17,7 +19,7 @@ import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 
 function usage(message) {
-  process.stderr.write(`${message}\nUsage: node serve-fixture.mjs [--fetch PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...\n`)
+  process.stderr.write(`${message}\nUsage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...\n`)
   process.exit(2)
 }
 
@@ -39,8 +41,8 @@ function parseArgs(argv) {
     const value = argv[++index]
     if (value === undefined)
       usage(`${flag} needs a value.`)
-    if (flag === '--fetch')
-      options.fetch.push(value.startsWith('/') ? value : `/${value}`)
+    if (flag === '--fetch' || flag === '--fetch-raw')
+      options.fetch.push({ path: value.startsWith('/') ? value : `/${value}`, raw: flag === '--fetch-raw' })
     else if (flag === '--out')
       options.out = value
     else if (flag === '--hold')
@@ -52,6 +54,8 @@ function parseArgs(argv) {
   }
   if (options.command.length === 0)
     usage('Give the server command after --.')
+  if (options.fetch.some(request => request.raw) && options.out === undefined)
+    usage('--fetch-raw needs --out, because a binary body cannot go to stdout.')
   return options
 }
 
@@ -66,12 +70,24 @@ function freePort() {
   })
 }
 
-const LEADING_SLASHES = /^\/+/
-const UNSAFE_CHARACTERS = /[^\w.-]+/g
+const NOT_EXTENSION = /[^a-z0-9]+/g
 
-function fileName(path) {
-  const name = path.replace(LEADING_SLASHES, '').replace(UNSAFE_CHARACTERS, '_')
-  return `${name || 'index'}.html`
+function extension(contentType) {
+  // `image/svg+xml; charset=utf-8` becomes `svg`. An unknown type becomes `bin`.
+  const subtype = contentType?.split(';')[0].split('/')[1]?.split('+')[0].toLowerCase().replace(NOT_EXTENSION, '')
+  return subtype || 'bin'
+}
+
+// encodeURIComponent maps each path to one name, so `/a/b` and `/a_b` never share a file.
+// It always escapes `#`, so the `#N` suffix for a repeated name never matches a path.
+const usedNames = new Set()
+function fileName(path, contentType) {
+  const base = `${encodeURIComponent(path)}.${extension(contentType)}`
+  let name = base
+  for (let copy = 2; usedNames.has(name); copy++)
+    name = `${base.slice(0, base.lastIndexOf('.'))}#${copy}.${extension(contentType)}`
+  usedNames.add(name)
+  return name
 }
 
 const options = parseArgs(process.argv.slice(2))
@@ -109,6 +125,11 @@ function signalGroup(signal) {
   }
 }
 
+function kill() {
+  if (child.pid !== undefined)
+    signalGroup('SIGKILL')
+}
+
 let stopping
 function stop() {
   stopping ??= (async () => {
@@ -117,13 +138,20 @@ function stop() {
     signalGroup('SIGTERM')
     await Promise.race([exit, delay(5000)])
     // Kill any group member that ignored SIGTERM or outlived the leader.
-    signalGroup('SIGKILL')
+    kill()
   })()
   return stopping
 }
 
+// Keep the handlers after the first signal. Otherwise a second signal ends this script before the final kill.
+let signalled = false
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.once(signal, () => {
+  process.on(signal, () => {
+    if (signalled) {
+      kill()
+      process.exit(130)
+    }
+    signalled = true
     stop().then(() => process.exit(130))
   })
 }
@@ -135,12 +163,12 @@ setInterval(() => {
     stop().then(() => process.exit(130))
 }, 500).unref()
 
-async function waitUntilReady(path) {
+async function waitUntilReady({ path, raw }) {
   const deadline = Date.now() + options.timeout * 1000
   while (Date.now() < deadline) {
     if (exited)
       return { _tag: 'Exited' }
-    const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' }, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) })
+    const response = await fetch(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html' }, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) })
       .catch(() => undefined) // Connection refused while the server starts. Retry until the deadline.
     if (response && ![502, 503, 504].includes(response.status)) {
       await response.body?.cancel()
@@ -152,13 +180,19 @@ async function waitUntilReady(path) {
   return { _tag: 'TimedOut' }
 }
 
-async function fetchPath(path) {
-  const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' }, signal: AbortSignal.timeout(options.timeout * 1000) })
-  const body = await response.text()
-  process.stderr.write(`GET ${path} ${response.status} ${response.headers.get('content-type') ?? '-'} ${Buffer.byteLength(body)}\n`)
+const responses = []
+
+async function fetchPath({ path, raw }) {
+  const response = await fetch(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html' }, signal: AbortSignal.timeout(options.timeout * 1000) })
+  const body = Buffer.from(await response.arrayBuffer())
+  const contentType = response.headers.get('content-type')
+  process.stderr.write(`GET ${path} ${response.status} ${contentType ?? '-'} ${body.byteLength}\n`)
   if (options.out) {
+    const file = fileName(path, contentType)
     await mkdir(options.out, { recursive: true })
-    await writeFile(join(options.out, fileName(path)), body)
+    await writeFile(join(options.out, file), body)
+    responses.push({ path, file, status: response.status, contentType, bytes: body.byteLength })
+    await writeFile(join(options.out, 'responses.json'), `${JSON.stringify(responses, null, 2)}\n`)
   }
   else {
     process.stdout.write(`${body}\n`)
@@ -166,7 +200,7 @@ async function fetchPath(path) {
 }
 
 async function run() {
-  const ready = await waitUntilReady(options.fetch[0] ?? '/')
+  const ready = await waitUntilReady(options.fetch[0] ?? { path: '/', raw: false })
   if (ready._tag === 'Exited') {
     const { code, signal } = await exit
     process.stderr.write(`The server exited before it answered: code ${code}, signal ${signal}.\n`)
@@ -178,10 +212,10 @@ async function run() {
   }
   process.stderr.write(`ready ${origin}\n`)
   let status = 0
-  for (const path of options.fetch) {
+  for (const request of options.fetch) {
     // A crashed route or an unwritable DIR fails one path. Report it and keep going.
-    await fetchPath(path).catch((error) => {
-      process.stderr.write(`GET ${path} failed: ${error.cause?.message ?? error.message}\n`)
+    await fetchPath(request).catch((error) => {
+      process.stderr.write(`GET ${request.path} failed: ${error.cause?.message ?? error.message}\n`)
       status = 1
     })
   }

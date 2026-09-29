@@ -21,7 +21,7 @@ Write one Skill for the installed package, unless a second package has distinct 
 
 1. Record the exact package version.
 2. Read the manifest, every exported entry point, and the public types.
-3. If the package is a framework module, read what it registers at setup: auto-imports, components, the config key and its defaults, hooks, and server routes. For a Nuxt module, `defineNuxtModule` in the module entry registers them.
+3. If the package is a framework module, read what it registers at setup: auto-imports, components, the config key and its defaults, hooks, and server routes.
 4. If the package re-exports or wraps another package, or its API depends on a peer dependency, record the version the consumer gets. Read that version's types or tagged source. Never read a default branch.
 5. Read the current official documentation and examples.
 6. Read release notes only for breaking changes and removed APIs.
@@ -33,18 +33,22 @@ If a Skill already exists, treat its claims as input to test. Do not copy its la
 Documentation can be wrong. Observed behaviour wins.
 
 1. Create a minimal consumer fixture outside the package source. Install the recorded version, or link the local build.
-   To pack a local build, use the repository's package manager. In a pnpm workspace, run `pnpm pack`, because `npm pack` leaves `catalog:` versions.
+   To pack a local build, run the package build first, because `prepack` can need its output, and build native code (NAPI, WASM) too.
+   Use the repository's package manager. In a pnpm workspace, run `pnpm pack`, because `npm pack` leaves `catalog:` versions.
    Install only the package and the peers the documentation names. A resolution error is a finding.
 2. Use the consumer defaults. The package repository's own config and fixtures can turn defaults off.
    In a Nuxt fixture, keep test modules out of `modules/`, because Nuxt registers every module in that folder.
    One fixture page can exercise many examples, so each build tests more claims.
 3. Run each example you plan to include. Compare the output with the claim: rendered HTML, return values, type errors, build logs, exit codes, or report files.
-   For a framework module, test each mode it supports. Read dev warnings in the dev server log, prerender results in the build output, and runtime results from the built production server.
+   Test each mode: each framework mode, each export condition (`node`, `workerd`, `edge-light`, `browser`, a CDN or IIFE build), and for a CLI, each binary with a config file and with flags.
+   Wrap every run in `timeout 120`, so a hung process cannot stall the session.
+   Unset agent variables: grep the package for agent and CI detection, such as `CLAUDECODE` or `CI`, and run with `env -u VAR` for each one it reads.
+   Read dev warnings in the dev server log, prerender results in the build output, and runtime results from the built production server.
    If a trap says nothing happens, run it and confirm the silence.
    To fetch pages from a server, run this Skill's [scripts/serve-fixture.mjs](scripts/serve-fixture.mjs), for example `node SKILL_DIR/scripts/serve-fixture.mjs --fetch / -- node .output/server/index.mjs` from the fixture directory.
-   It uses a free port, fetches with `Accept: text/html`, and stops only its own process group.
+   For an image or other binary, use `--fetch-raw PATH --out DIR`. `DIR/responses.json` lists each status and content type.
    Without `--fetch`, it holds the server until SIGTERM. Run that with your tool's background option, because `&` and `nohup` die when the shell call ends.
-   Never kill by port or with `pkill -f`. Another Agent can own that process, and the pattern can match your own shell.
+   Never kill by port or with `pkill -f`: another Agent can own that process.
    In a browser test, set a desktop browser user agent. A package can treat `HeadlessChrome` as a bot.
 4. If the documentation and the behaviour disagree, write the behaviour and add the mismatch to the report.
 5. If you cannot run an example, keep it only when the types prove it. List it as untested in the report.
@@ -79,7 +83,7 @@ Shape:
 - Put a config example that is also a common task under common tasks. The config section only lists options.
 - Write each code block as a complete module with its imports. The repository ESLint config can lint fenced code.
 - If a trap's detail lives in a reference, write one line in traps that links the reference. Keep the detail only in the reference.
-- Aim for 150 lines or fewer in `SKILL.md`. Never exceed 500.
+- Aim for 150 lines and about 2,000 tokens in `SKILL.md`, because some repositories lint for tokens. Never exceed 500 lines.
 - Keep one file by default. Move a topic to `references/<topic>.md` only when it passes about 40 lines and applies to under a third of tasks, such as one integration.
 - Link each reference from `SKILL.md`. Keep references one level deep. Start a reference over 100 lines with a contents list.
 - Write at most eight reference files. Add `scripts/` only when running code beats reading it.
@@ -87,10 +91,10 @@ Shape:
 
 The frontmatter contains only `name` and `description`.
 The name uses lowercase letters, numbers, and single hyphens, at most 64 characters, and matches the directory.
+For a scoped package, drop the `@` and replace `/` with a hyphen: `@nuxtjs/sitemap` becomes `nuxtjs-sitemap`.
 The description is at most 1024 characters in the third person. It says what the Skill does, then when to use it, with the words a user types: the package name, main exports, the config key, and error symptoms.
 
 - Good: `Add and debug Schema.org JSON-LD in Nuxt with nuxt-schema-org. Use when a task mentions structured data, rich results, useSchemaOrg, defineArticle, or the schemaOrg config key.`
-- Bad: `Helps with nuxt-schema-org.`
 
 ## 4. Check and report
 
@@ -107,7 +111,7 @@ Report to the user:
 - Each documentation and behaviour mismatch: the example, the documented result, and the observed result. These are package bugs for the maintainer.
 - Each untested example.
 - The source path or documentation URL behind each version-specific rule.
-- If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`. That flag is npm only; `pnpm pack` rejects it.
+- If the package ships the Skill: add the Skill directory to `files` in `package.json`. To list the packed files without a rebuild, build once, then run `npm pack --dry-run --ignore-scripts`. `pnpm pack` rejects that flag.
 - If the README or docs have a `skilld add <package>` tip, replace it with the tip below, in the same place. Add the badge after the other badges.
   Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. If the Repository has more than one Skill, add `/SKILL` to both the page path and the badge path. The skilld.dev indexer skips `SKILL.md` files under test and fixture folders. The page shows the run command, so the README does not repeat it.
 
