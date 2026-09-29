@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
+use skilld_command::AccountProvider;
 use skilld_command::upgrade::{InstallChannel, UpgradeNotice};
+use skilld_command::weekly::{self, NoticeContext};
 use skilld_command::{
     CommandError, CommandPlatform, DetectionEnvironment, Host, InstalledSkill, LocalHost,
     NativeRemoteConfig, OutputContext, SkilldRemote, TargetRoots, interactive_update_requested,
@@ -29,6 +31,7 @@ use skilld_native::update_ui::{
 use skilld_native::upgrade::{
     self as cli_upgrade, InstallTarget, LAUNCHER_VARIABLE, NativeReleaseFetcher, WORKER_VARIABLE,
 };
+use skilld_native::weekly as native_weekly;
 use status::StatusLine;
 use terminal_size::Width;
 
@@ -70,6 +73,7 @@ fn main() -> ExitCode {
         }
     };
     let global_root = global_root();
+    let notice_root = global_root.clone();
     let detection = detection_environment();
     let output = OutputContext::auto(
         std::io::stdout().is_terminal(),
@@ -91,6 +95,7 @@ fn main() -> ExitCode {
     };
     let remote_progress = status.remote_progress();
     let account = Arc::new(NativeAccount::new());
+    let auth_command = is_auth_command(args.iter().map(|arg| arg.to_string_lossy()));
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
         .with_detection_environment(detection.clone())
@@ -99,7 +104,7 @@ fn main() -> ExitCode {
         .with_remote_provider(Arc::new(
             SkilldRemote::new(
                 Arc::new(NativeHttpAdapter::new()),
-                account,
+                account.clone(),
                 native_remote_config(),
             )
             .with_progress(remote_progress),
@@ -146,6 +151,11 @@ fn main() -> ExitCode {
                     ExitCode::from(2)
                 } else {
                     print_upgrade_notice(upgrade_notice.as_ref());
+                    print_weekly_notice(
+                        &notice_root,
+                        account.as_ref(),
+                        weekly_notice_context(auth_command),
+                    );
                     ExitCode::from(exit_code)
                 }
             }
@@ -162,6 +172,11 @@ fn main() -> ExitCode {
     let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
     gated.finish_status();
     print_upgrade_notice(upgrade_notice.as_ref());
+    print_weekly_notice(
+        &notice_root,
+        account.as_ref(),
+        weekly_notice_context(auth_command),
+    );
     ExitCode::from(result.exit_code)
 }
 
@@ -238,6 +253,77 @@ fn print_upgrade_notice(notice: Option<&UpgradeNotice>) {
     if let Some(notice) = notice {
         eprintln!("{}", notice.message());
     }
+}
+
+/// Tells a signed-out person that an account gets the weekly email.
+///
+/// It prints to stderr, so a `skilld run` piped into an Agent never carries it.
+/// The same conditions as the upgrade check apply: a terminal, no CI, no Agent.
+fn print_weekly_notice(
+    data_root: &std::path::Path,
+    account: &dyn AccountProvider,
+    context: NoticeContext,
+) {
+    let state = native_weekly::read_state(data_root);
+    let now = cli_upgrade::unix_now();
+    // Every cheaper check returns first, so CI, an Agent, a pipe, an auth
+    // command, a throttled notice, and a recent check never pay for the
+    // credential read.
+    if !weekly::should_show(
+        &state,
+        NoticeContext {
+            signed_in: false,
+            ..context
+        },
+        now,
+    ) {
+        return;
+    }
+    // An account holder already receives the weekly, so the notice only ever
+    // speaks to a person with no account. A keychain read can fail on a
+    // locked or absent store, which cannot tell those people apart, so an
+    // unaskable person counts as an account holder too. The completed check
+    // is recorded below either way.
+    if account.has_account().unwrap_or(true) {
+        // Record the completed check so later eligible runs short-circuit
+        // before this read, and a failing store pays it at most once a week.
+        // A notice that recorded nothing would send every run back to the
+        // keychain, so a failed write is worth surfacing rather than
+        // swallowing.
+        if let Err(error) =
+            native_weekly::write_state(data_root, &weekly::record_checked(&state, now))
+        {
+            eprintln!("SERVICE_UNAVAILABLE: the weekly notice state could not be stored: {error}");
+        }
+        return;
+    }
+    eprintln!("{}", weekly::NOTICE_MESSAGE);
+    // A notice that printed but did not record would repeat every run, so a
+    // failed write is worth surfacing rather than swallowing.
+    if let Err(error) = native_weekly::write_state(data_root, &weekly::record_shown(&state, now)) {
+        eprintln!("SERVICE_UNAVAILABLE: the weekly notice state could not be stored: {error}");
+    }
+}
+
+/// What the environment says about the weekly notice. The credential state is
+/// deliberately absent: `print_weekly_notice` reads it only if it can print.
+fn weekly_notice_context(auth_command: bool) -> NoticeContext {
+    NoticeContext {
+        signed_in: false,
+        auth_command,
+        stderr_terminal: std::io::stderr().is_terminal(),
+        stdout_terminal: std::io::stdout().is_terminal(),
+        suppressed: environment_enabled("CI")
+            || environment_present("SKILLD_NO_WEEKLY")
+            || active_agent_detected(),
+    }
+}
+
+/// Whether the command names the `auth` group, which already covers sign-in.
+fn is_auth_command<'a>(args: impl Iterator<Item = std::borrow::Cow<'a, str>>) -> bool {
+    args.skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .is_some_and(|arg| arg == "auth")
 }
 
 fn run_search_output_probe() -> ExitCode {
@@ -462,4 +548,262 @@ fn terminal_width() -> u16 {
                 .filter(|width| (20..=240).contains(width))
         })
         .unwrap_or(80)
+}
+
+#[cfg(test)]
+mod weekly_notice_tests {
+    use super::*;
+    use skilld_auth::{
+        BoundaryError, CredentialStore, SKILLD_ORIGIN, SecretString, StoredCredential,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// An account store that counts every credential read.
+    struct CountingAccount {
+        reads: AtomicUsize,
+        signed_in: AtomicBool,
+    }
+
+    impl CountingAccount {
+        fn signed_out() -> Self {
+            Self {
+                reads: AtomicUsize::new(0),
+                signed_in: AtomicBool::new(false),
+            }
+        }
+
+        fn signed_in() -> Self {
+            Self {
+                reads: AtomicUsize::new(0),
+                signed_in: AtomicBool::new(true),
+            }
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+    }
+
+    impl AccountProvider for CountingAccount {
+        fn status(&self) -> Result<bool, CommandError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.signed_in.load(Ordering::SeqCst))
+        }
+
+        fn has_account(&self) -> Result<bool, CommandError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.signed_in.load(Ordering::SeqCst))
+        }
+
+        fn login(&self) -> Result<(), CommandError> {
+            Ok(())
+        }
+
+        fn logout(&self) -> Result<(), CommandError> {
+            Ok(())
+        }
+    }
+
+    /// An account store whose check always fails, like a locked keychain.
+    struct FailingAccount {
+        checks: AtomicUsize,
+    }
+
+    impl FailingAccount {
+        fn checks(&self) -> usize {
+            self.checks.load(Ordering::SeqCst)
+        }
+    }
+
+    impl AccountProvider for FailingAccount {
+        fn status(&self) -> Result<bool, CommandError> {
+            self.has_account()
+        }
+
+        fn has_account(&self) -> Result<bool, CommandError> {
+            self.checks.fetch_add(1, Ordering::SeqCst);
+            Err(CommandError::operation(
+                "SERVICE_UNAVAILABLE",
+                "the account keychain failed",
+            ))
+        }
+
+        fn login(&self) -> Result<(), CommandError> {
+            Ok(())
+        }
+
+        fn logout(&self) -> Result<(), CommandError> {
+            Ok(())
+        }
+    }
+
+    /// A real credential store holding one fixed credential, so the account
+    /// check runs the actual stored-credential path.
+    struct FixedCredentialStore {
+        credential: Option<StoredCredential>,
+        loads: AtomicUsize,
+    }
+
+    impl FixedCredentialStore {
+        fn loads(&self) -> usize {
+            self.loads.load(Ordering::SeqCst)
+        }
+    }
+
+    impl CredentialStore for FixedCredentialStore {
+        fn load(&self, _origin: &str) -> Result<Option<StoredCredential>, BoundaryError> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.credential.clone())
+        }
+
+        fn save(&self, _credential: &StoredCredential) -> Result<(), BoundaryError> {
+            Ok(())
+        }
+
+        fn delete(&self, _origin: &str, _account: &str) -> Result<(), BoundaryError> {
+            Ok(())
+        }
+    }
+
+    fn eligible() -> NoticeContext {
+        NoticeContext {
+            signed_in: false,
+            auth_command: false,
+            stderr_terminal: true,
+            stdout_terminal: true,
+            suppressed: false,
+        }
+    }
+
+    #[test]
+    fn a_suppressed_run_never_reads_credentials() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let account = CountingAccount::signed_out();
+        print_weekly_notice(
+            root.path(),
+            &account,
+            NoticeContext {
+                suppressed: true,
+                ..eligible()
+            },
+        );
+        assert_eq!(account.reads(), 0);
+    }
+
+    #[test]
+    fn a_throttled_out_notice_never_reads_credentials() {
+        let root = tempfile::tempdir().expect("temp dir");
+        native_weekly::write_state(
+            root.path(),
+            &weekly::WeeklyNoticeState {
+                shown_at: 1,
+                shown_count: weekly::NOTICE_LIMIT,
+                checked_at: 0,
+            },
+        )
+        .expect("state write");
+        let account = CountingAccount::signed_out();
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(account.reads(), 0);
+    }
+
+    #[test]
+    fn a_piped_stdout_run_never_reads_credentials() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let account = CountingAccount::signed_out();
+        print_weekly_notice(
+            root.path(),
+            &account,
+            NoticeContext {
+                stdout_terminal: false,
+                ..eligible()
+            },
+        );
+        assert_eq!(account.reads(), 0);
+    }
+
+    #[test]
+    fn a_signed_out_person_gets_one_notice_and_a_record() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let account = CountingAccount::signed_out();
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(account.reads(), 1);
+        let state = native_weekly::read_state(root.path());
+        assert_eq!(state.shown_count, 1);
+        assert!(state.shown_at > 0);
+    }
+
+    #[test]
+    fn a_signed_in_person_reads_credentials_once_then_not_again() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let account = CountingAccount::signed_in();
+        print_weekly_notice(root.path(), &account, eligible());
+        let reads_after_first = account.reads();
+        let state = native_weekly::read_state(root.path());
+        assert!(state.checked_at > 0, "the signed-in check must be recorded");
+        assert_eq!(
+            state.shown_count, 0,
+            "the record must not consume the notice budget"
+        );
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(
+            account.reads(),
+            reads_after_first,
+            "a recorded signed-in check must skip the credential read on the next run"
+        );
+    }
+
+    #[test]
+    fn a_failing_store_records_its_check_so_the_next_run_skips_the_read() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let account = FailingAccount {
+            checks: AtomicUsize::new(0),
+        };
+        print_weekly_notice(root.path(), &account, eligible());
+        let state = native_weekly::read_state(root.path());
+        assert!(
+            state.checked_at > 0,
+            "a check that could not ask must still be recorded"
+        );
+        assert_eq!(
+            state.shown_count, 0,
+            "an unaskable person must not be nagged"
+        );
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(
+            account.checks(),
+            1,
+            "the recorded check must skip the read on the next run"
+        );
+    }
+
+    #[test]
+    fn an_account_with_an_expired_token_is_never_nagged() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(FixedCredentialStore {
+            credential: Some(StoredCredential {
+                origin: SKILLD_ORIGIN.to_owned(),
+                account: "harlan".to_owned(),
+                access_token: SecretString::new("expired"),
+                refresh_token: None,
+                expires_at: 1,
+                scopes: None,
+            }),
+            loads: AtomicUsize::new(0),
+        });
+        let account = NativeAccount::with_credentials(store.clone());
+        print_weekly_notice(root.path(), &account, eligible());
+        let state = native_weekly::read_state(root.path());
+        assert_eq!(
+            state.shown_count, 0,
+            "an account holder already gets the weekly, so nothing may print"
+        );
+        assert!(state.checked_at > 0, "the account check must be recorded");
+        print_weekly_notice(root.path(), &account, eligible());
+        assert_eq!(
+            store.loads(),
+            1,
+            "the second run must skip the credential read"
+        );
+    }
 }
