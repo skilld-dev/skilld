@@ -1,5 +1,5 @@
 import type { HarnessV1Skill } from '@ai-sdk/harness'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseDocument } from 'yaml'
@@ -31,6 +31,20 @@ async function locateFile(path: string): Promise<string> {
       return value
   }
   throw new Error(`skilld-maintained Skill file is missing: ${path}`)
+}
+
+/** Lists the regular files in one Skill folder, such as `scripts`, from the first root that has it. */
+async function listFolder(path: string): Promise<ReadonlyArray<string>> {
+  for (const root of skillRoots) {
+    const entries = await readdir(resolve(root, path), { withFileTypes: true }).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+        return null
+      throw error
+    })
+    if (entries !== null)
+      return entries.filter(entry => entry.isFile()).map(entry => entry.name).sort()
+  }
+  return []
 }
 
 function splitSkill(source: string): { name: string, description: string, content: string } {
@@ -77,9 +91,13 @@ export async function loadSkilldMaintainedSkill(name: string): Promise<HarnessV1
     return skill
 
   const request = await locateFile(`${name}/assets/harness-request.md`)
+  const scripts = await Promise.all((await listFolder(`${name}/scripts`)).map(async file => ({
+    path: `scripts/${file}`,
+    content: await locateFile(`${name}/scripts/${file}`),
+  })))
   return {
     ...skill,
-    files: [{ path: 'assets/harness-request.md', content: request }],
+    files: [{ path: 'assets/harness-request.md', content: request }, ...scripts],
   }
 }
 
