@@ -18,6 +18,13 @@ describe('skilld-maintained Skills', () => {
     ]))
   })
 
+  it('loads the scripts a Harness Skill links', async () => {
+    const skill = await loadSkilldMaintainedSkill('generate-package-skill')
+    const script = skill.files?.find(file => file.path === 'scripts/serve-fixture.mjs')
+
+    expect(script?.content).toContain('Usage: node serve-fixture.mjs')
+  })
+
   it('loads the direct skilld Skill without a Harness request', async () => {
     const skill = await loadSkilldMaintainedSkill('skilld')
 
