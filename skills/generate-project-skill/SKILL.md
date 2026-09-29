@@ -62,6 +62,7 @@ Keep the name at 64 characters or fewer.
 ## Quality checks
 
 - Describe when the Skill applies.
+- Do not explain the language, framework, or tools. The reader already knows them.
 - Use project terms exactly.
 - Point to source files instead of copying them.
 - Run project commands only when they add useful evidence.
