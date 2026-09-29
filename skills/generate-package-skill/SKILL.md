@@ -109,7 +109,7 @@ Report to the user:
 - The source path or documentation URL behind each version-specific rule.
 - If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`. That flag is npm only; `pnpm pack` rejects it.
 - If the README or docs have a `skilld add <package>` tip, replace it with the tip below, in the same place. Add the badge after the other badges.
-  Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. If the Repository has more than one `SKILL.md`, add `/SKILL` to both the page path and the badge path. The skilld.dev indexer counts every `SKILL.md` in the tree, test fixtures included. The page shows the run command, so the README does not repeat it.
+  Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. If the Repository has more than one Skill, add `/SKILL` to both the page path and the badge path. The skilld.dev indexer skips `SKILL.md` files under test and fixture folders. The page shows the run command, so the README does not repeat it.
 
 ```html
 <a href="https://skilld.dev/gh/OWNER/REPOSITORY">
