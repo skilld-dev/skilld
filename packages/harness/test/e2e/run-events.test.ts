@@ -82,6 +82,24 @@ describe('skill run progress', () => {
       expect(result.value.warnings).toEqual(['onEvent failed: progress bar broke'])
   })
 
+  it('reports a rejected async onEvent as a warning', async () => {
+    const { skillHarness } = packageHarness()
+
+    const result = await skillHarness.run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: await makePackage(), packageDir: '.' },
+      destination: { rootDir: await mkdtemp(join(tmpdir(), 'skilld-output-')), name: 'example-package' },
+    }, {
+      onEvent: async () => {
+        throw new Error('remote log down')
+      },
+    })
+
+    expect(result._tag).toBe('Ok')
+    if (result._tag === 'Ok')
+      expect(result.value.warnings).toEqual(['onEvent failed: remote log down'])
+  })
+
   it('returns usage on a Skill review', async () => {
     const skillDir = await mkdtemp(join(tmpdir(), 'skilld-review-'))
     await writeFile(join(skillDir, 'SKILL.md'), skillSource('review-me'))

@@ -71,8 +71,8 @@ export type SkillRunEvent
 export interface SkillRunOptions {
   readonly signal?: AbortSignal
   /**
-   * Receives progress events while the Agent works.
-   * If it throws, the run continues and the result carries a warning.
+   * Receives progress events while the Agent works. The run does not wait for a returned promise.
+   * If it throws or its promise rejects, the run continues and the result carries a warning.
    */
   readonly onEvent?: (event: SkillRunEvent) => void
 }

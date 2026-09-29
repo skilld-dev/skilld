@@ -49,16 +49,22 @@ interface EventSink {
 
 function createEventSink(onEvent: SkillRunOptions['onEvent']): EventSink {
   const failures = new Set<string>()
+  // The Agent SDK drops callback errors, so surface them on the result instead.
+  const fail = (cause: unknown) => {
+    failures.add(`onEvent failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+  }
   return {
     emit: (event) => {
       if (!onEvent)
         return
       try {
-        onEvent(event)
+        const returned: unknown = onEvent(event)
+        // An async listener would otherwise reject unhandled and can end the host process.
+        if (returned instanceof Promise)
+          returned.catch(fail)
       }
       catch (cause) {
-        // The Agent SDK drops callback errors, so surface them on the result instead.
-        failures.add(`onEvent failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        fail(cause)
       }
     },
     warnings: () => [...failures],

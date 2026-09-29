@@ -75,8 +75,10 @@ await skillHarness.run(input, {
 ```
 
 The events are `StepStart`, `ToolCall`, and `StepFinish`. Steps count from 0.
-Some adapters report tool calls only when their step ends.
-If `onEvent` throws, the run continues, and the `Ok` value carries the error as a warning.
+A `ToolCall` event arrives after the tool returns.
+If the adapter runs the tool itself, the event arrives when its step ends.
+The run does not wait for a promise that `onEvent` returns.
+If `onEvent` throws or its promise rejects, the run continues, and the `Ok` value carries the error as a warning.
 
 Pass `fetch` to `createSkillHarness` when the host owns HTTP access.
 The default adapter uses the Node global fetch implementation.
