@@ -90,7 +90,8 @@ Report to the user:
 - Each documentation and behaviour mismatch: the example, the documented result, and the observed result. These are package bugs for the maintainer.
 - Each untested example.
 - The source path or documentation URL behind each version-specific rule.
-- If the package ships the Skill: add the Skill directory to `files` in `package.json`, and replace `skilld add <package>` tips in the README and docs with `skilld run OWNER/REPOSITORY/SKILL`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`.
+- If the package ships the Skill: add the Skill directory to `files` in `package.json`. `npm pack --dry-run` runs `prepack`. To list the files without a rebuild, build once, then add `--ignore-scripts`.
+- If the README or docs have a `skilld add <package>` tip: replace it with a link to the Skill page, and add the badge from that page's README section. The page is `https://skilld.dev/gh/OWNER/REPOSITORY`, or `.../REPOSITORY/SKILL` when the Repository has more than one Skill. The page shows the current run command, so the README does not repeat it.
 
 For a direct run, show the files for review, or open a pull request if the user asks.
 Replace an existing Skill only after the user approves it.
