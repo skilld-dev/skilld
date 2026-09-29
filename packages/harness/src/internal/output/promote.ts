@@ -22,7 +22,7 @@ export const promoteSkill = async (
   files: ReadonlyArray<CollectedFile>,
   attempts: ReadonlyArray<SourceAttempt>,
   sourceWarnings: ReadonlyArray<string>,
-): Promise<Result<GeneratedSkill, SkillRunError>> => {
+): Promise<Result<Omit<GeneratedSkill, 'usage' | 'steps'>, SkillRunError>> => {
   const root = resolve(rootDir)
   let rootStat = await statOrMissing(root).catch(error => error as Error)
   if (rootStat instanceof Error)

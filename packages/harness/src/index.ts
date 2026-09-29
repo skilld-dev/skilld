@@ -11,7 +11,10 @@ export type {
   SkillReviewFinding,
   SkillRun,
   SkillRunError,
+  SkillRunEvent,
   SkillRunOptions,
   SkillRunResult,
+  SkillRunUsage,
+  SkillRunValues,
   SourceAttempt,
 } from './types.ts'

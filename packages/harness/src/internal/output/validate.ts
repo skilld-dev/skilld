@@ -135,7 +135,7 @@ const findingLevels = new Set(['error', 'warning', 'note'])
 export const validateSkillReview = (
   files: ReadonlyArray<CollectedFile>,
   warnings: ReadonlyArray<string>,
-): Result<SkillReview, SkillRunError> => {
+): Result<Omit<SkillReview, 'usage' | 'steps'>, SkillRunError> => {
   if (files.length !== 1 || files[0]?.path !== 'review.json')
     return invalid(['Review output must contain only review.json.'])
 

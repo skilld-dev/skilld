@@ -42,8 +42,39 @@ export interface SkillOutputPolicy {
   readonly maxOutputBytes: number
 }
 
+/** Token counts the Agent reported. A count is undefined when the Harness adapter does not report it. */
+export interface SkillRunUsage {
+  /** Every input token, cached ones included. */
+  readonly inputTokens: number | undefined
+  /** Input tokens read from the provider cache. */
+  readonly cachedInputTokens: number | undefined
+  readonly outputTokens: number | undefined
+}
+
+/** Progress of the Agent during a Skill run. A step is one model call. Steps count from 0. */
+export type SkillRunEvent
+  = | { readonly _tag: 'StepStart', readonly step: number }
+    | {
+      readonly _tag: 'ToolCall'
+      readonly step: number
+      readonly toolName: string
+      readonly toolCallId: string
+      readonly input: unknown
+    }
+    | {
+      readonly _tag: 'StepFinish'
+      readonly step: number
+      readonly finishReason: string
+      readonly usage: SkillRunUsage
+    }
+
 export interface SkillRunOptions {
   readonly signal?: AbortSignal
+  /**
+   * Receives progress events while the Agent works. The run does not wait for a returned promise.
+   * If it throws or its promise rejects, the run continues and the result carries a warning.
+   */
+  readonly onEvent?: (event: SkillRunEvent) => void
 }
 
 export interface SkillFile {
@@ -68,6 +99,9 @@ export interface GeneratedSkill {
    * the new Skill reached its destination.
    */
   readonly warnings: ReadonlyArray<string>
+  readonly usage: SkillRunUsage
+  /** Model calls the Agent made. */
+  readonly steps: number
 }
 
 export interface SkillReviewFinding {
@@ -83,6 +117,9 @@ export interface SkillReview {
   readonly findings: ReadonlyArray<SkillReviewFinding>
   /** Files of the reviewed Skill that the Harness left out for size. */
   readonly warnings: ReadonlyArray<string>
+  readonly usage: SkillRunUsage
+  /** Model calls the Agent made. */
+  readonly steps: number
 }
 
 export type SkillRunError
@@ -100,12 +137,19 @@ export type SkillRunError
     | { readonly _tag: 'PromotionFailed', readonly message: string, readonly path: string, readonly cause?: unknown }
     | { readonly _tag: 'Cancelled', readonly message: string }
 
-export type SkillRunResult
-  = | { readonly _tag: 'Ok', readonly value: GeneratedSkill | SkillReview }
+/** The value each Skill run input returns. */
+export interface SkillRunValues {
+  readonly PackageSkill: GeneratedSkill
+  readonly ProjectSkill: GeneratedSkill
+  readonly ReviewSkill: SkillReview
+}
+
+export type SkillRunResult<Tag extends SkillRun['_tag'] = SkillRun['_tag']>
+  = | { readonly _tag: 'Ok', readonly value: SkillRunValues[Tag] }
     | { readonly _tag: 'Err', readonly error: SkillRunError }
 
 export interface SkillHarness {
-  readonly run: (input: SkillRun, options?: SkillRunOptions) => Promise<SkillRunResult>
+  readonly run: <Run extends SkillRun>(input: Run, options?: SkillRunOptions) => Promise<SkillRunResult<Run['_tag']>>
 }
 
 export interface CreateSkillHarnessOptions {
