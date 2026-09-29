@@ -1,6 +1,6 @@
 import type { SkillOutputPolicy, SkillRunError } from '../../types.ts'
 import type { Result } from '../result.ts'
-import type { PreparedFile } from './host.ts'
+import type { PreparedFile, SkippedSourceFile } from './host.ts'
 import { Readable } from 'node:stream'
 import { createGunzip } from 'node:zlib'
 import { normalizeOutputPath } from '../paths.ts'
@@ -89,16 +89,22 @@ function entryContent(entry: PendingEntry): Buffer<ArrayBufferLike> {
     : Buffer.concat(entry.chunks, entry.size)
 }
 
+export interface ExtractedArchive {
+  readonly files: ReadonlyArray<PreparedFile>
+  readonly skippedFiles: ReadonlyArray<SkippedSourceFile>
+}
+
 export async function extractArchive(
   compressed: AsyncIterable<Uint8Array>,
   policy: SkillOutputPolicy,
   layout: ArchiveLayout,
-): Promise<Result<ReadonlyArray<PreparedFile>, SkillRunError>> {
+): Promise<Result<ExtractedArchive, SkillRunError>> {
   const source = Readable.from(compressed)
   const gunzip = createGunzip()
   source.on('error', error => gunzip.destroy(error))
   source.pipe(gunzip)
   const files: PreparedFile[] = []
+  const skippedFiles: SkippedSourceFile[] = []
   const seen = new Set<string>()
   const maxArchiveBytes = policy.maxSourceBytes + (policy.maxSourceFiles + 2) * blockBytes * 2
   let archiveBytes = 0
@@ -198,7 +204,7 @@ export async function extractArchive(
           continue
         }
         if (type !== '0' && type !== '\0')
-          return unavailable('Source archive contains a linked or special entry.')
+          return unavailable(`Source archive contains a linked or special entry: ${nextPath ?? headerPath}.`)
 
         const path = archivePath(nextPath ?? headerPath, layout)
         nextPath = null
@@ -212,6 +218,8 @@ export async function extractArchive(
           return unavailable('Source archive contains too many files.')
         if (size <= policy.maxSourceFileBytes && totalBytes + size > policy.maxSourceBytes)
           return unavailable('Source archive exceeds the total byte limit.')
+        if (size > policy.maxSourceFileBytes)
+          skippedFiles.push({ path, bytes: size })
 
         entry = {
           kind: size > policy.maxSourceFileBytes ? 'skip' : 'file',
@@ -236,5 +244,6 @@ export async function extractArchive(
   if (files.length === 0)
     return unavailable('Source archive has no usable files.')
   files.sort((left, right) => left.path.localeCompare(right.path))
-  return ok(files)
+  skippedFiles.sort((left, right) => left.path.localeCompare(right.path))
+  return ok({ files, skippedFiles })
 }

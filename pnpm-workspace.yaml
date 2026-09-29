@@ -14,7 +14,7 @@ onlyBuiltDependencies:
   - esbuild
 
 catalog:
-  '@ai-sdk/harness': ^1.0.100
+  '@ai-sdk/harness': ^1.0.128
   '@ai-sdk/provider-utils': ^5.0.36
   '@arethetypeswrong/cli': ^0.18.5
   '@redocly/cli': ^2.51.0

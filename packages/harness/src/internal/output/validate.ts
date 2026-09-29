@@ -6,14 +6,22 @@ import { isSkillName, normalizeOutputPath } from '../paths.ts'
 import { checkProjectSkill } from './project.ts'
 import { err, ok } from '../result.ts'
 
-const allowedFrontmatter = new Set([
-  'name',
-  'description',
-  'license',
-  'compatibility',
-  'metadata',
-  'allowed-tools',
-])
+/** Both generation Skills say the frontmatter must contain only these fields. */
+const allowedFrontmatter = new Set(['name', 'description'])
+
+/** `generate-package-skill`: "Keep `SKILL.md` under 500 lines." */
+const packageSkillLineLimit = 500
+
+/** `generate-package-skill`: "Write at most eight reference files." */
+const packageSkillReferenceLimit = 8
+
+/**
+ * The Skill that produced the output decides which of its written rules apply.
+ * A project Skill also carries the project paths its pointers must resolve to.
+ */
+export type GenerationContract
+  = | { readonly _tag: 'PackageSkill' }
+    | { readonly _tag: 'ProjectSkill', readonly projectPaths: ReadonlyArray<string> }
 
 const invalid = (issues: ReadonlyArray<string>): Result<never, SkillRunError> =>
   err({ _tag: 'InvalidSkill', message: 'Skill output failed deterministic checks.', issues })
@@ -27,16 +35,51 @@ function decodeText(content: Uint8Array): string | null {
   }
 }
 
-const isStringMap = (value: unknown): boolean =>
-  value !== null
-  && typeof value === 'object'
-  && !Array.isArray(value)
-  && Object.values(value).every(item => typeof item === 'string')
+/** Markdown link targets, inline or reference style, without anchors or titles. */
+function linkTargets(markdown: string): ReadonlySet<string> {
+  const targets = new Set<string>()
+  const add = (raw: string): void => {
+    const target = raw.trim().replace(/^<|>$/g, '').split(/\s/)[0]!.replace(/[#?].*$/, '').replace(/^\.\//, '')
+    if (target.length > 0)
+      targets.add(target)
+  }
+  for (const match of markdown.matchAll(/\]\(([^)\n]+)\)/g))
+    add(match[1]!)
+  for (const match of markdown.matchAll(/^\s*\[[^\]\n]+\]:\s*(\S+)/gm))
+    add(match[1]!)
+  for (const match of markdown.matchAll(/`([^`\n]+)`/g))
+    add(match[1]!)
+  return targets
+}
+
+function lineCount(text: string): number {
+  const lines = text.split('\n')
+  return lines.at(-1) === '' ? lines.length - 1 : lines.length
+}
+
+/** The written structure rules of the generation Skills, checked on the output. */
+function structureIssues(markdown: string, files: ReadonlyArray<CollectedFile>, contract: GenerationContract): ReadonlyArray<string> {
+  const issues: string[] = []
+  const referencePaths = files.map(file => file.path).filter(path => path.startsWith('references/')).sort()
+  if (contract._tag === 'PackageSkill') {
+    const lines = lineCount(markdown)
+    if (lines >= packageSkillLineLimit)
+      issues.push(`SKILL.md must stay under ${packageSkillLineLimit} lines; it has ${lines}.`)
+    if (referencePaths.length > packageSkillReferenceLimit)
+      issues.push(`A package Skill may write at most ${packageSkillReferenceLimit} reference files; it wrote ${referencePaths.length}.`)
+  }
+  const linked = linkTargets(markdown)
+  for (const path of referencePaths) {
+    if (!linked.has(path))
+      issues.push(`SKILL.md must link ${path}.`)
+  }
+  return issues
+}
 
 export const validateGeneratedSkill = (
   name: string,
   files: ReadonlyArray<CollectedFile>,
-  project?: ReadonlyArray<string>,
+  contract: GenerationContract,
 ): Result<void, SkillRunError> => {
   const issues: string[] = []
   const skillFiles = files.filter(file => file.path === 'SKILL.md')
@@ -46,10 +89,10 @@ export const validateGeneratedSkill = (
   const source = decodeText(skillFiles[0]!.content)
   if (source === null)
     return invalid(['SKILL.md must contain valid UTF-8 text.'])
-  if (project !== undefined) {
+  if (contract._tag === 'ProjectSkill') {
     issues.push(...checkProjectSkill({
       markdown: source,
-      projectPaths: project,
+      projectPaths: contract.projectPaths,
       outputPaths: files.map(file => file.path),
     }))
   }
@@ -82,14 +125,7 @@ export const validateGeneratedSkill = (
     issues.push('Frontmatter name is invalid.')
   if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0 || frontmatter.description.length > 1024)
     issues.push('Frontmatter description must contain 1 to 1024 characters.')
-  if (frontmatter.license !== undefined && typeof frontmatter.license !== 'string')
-    issues.push('Frontmatter license must be a string.')
-  if (frontmatter.compatibility !== undefined && (typeof frontmatter.compatibility !== 'string' || frontmatter.compatibility.length > 500))
-    issues.push('Frontmatter compatibility must be a string of at most 500 characters.')
-  if (frontmatter.metadata !== undefined && !isStringMap(frontmatter.metadata))
-    issues.push('Frontmatter metadata must map strings to strings.')
-  if (frontmatter['allowed-tools'] !== undefined && typeof frontmatter['allowed-tools'] !== 'string')
-    issues.push('Frontmatter allowed-tools must be a string.')
+  issues.push(...structureIssues(source, files, contract))
 
   return issues.length === 0 ? ok(undefined) : invalid(issues)
 }
@@ -98,6 +134,7 @@ const findingLevels = new Set(['error', 'warning', 'note'])
 
 export const validateSkillReview = (
   files: ReadonlyArray<CollectedFile>,
+  warnings: ReadonlyArray<string>,
 ): Result<SkillReview, SkillRunError> => {
   if (files.length !== 1 || files[0]?.path !== 'review.json')
     return invalid(['Review output must contain only review.json.'])
@@ -139,5 +176,5 @@ export const validateSkillReview = (
     findings.push(finding as unknown as SkillReviewFinding)
   }
 
-  return ok({ _tag: 'SkillReview', summary: review.summary, findings })
+  return ok({ _tag: 'SkillReview', summary: review.summary, findings, warnings })
 }

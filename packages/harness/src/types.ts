@@ -63,7 +63,10 @@ export interface GeneratedSkill {
   readonly outputDir: string
   readonly files: ReadonlyArray<SkillFile>
   readonly sourceAttempts: ReadonlyArray<SourceAttempt>
-  /** Cleanup problems after the new Skill reached its destination. */
+  /**
+   * Source files the Harness left out for size, and cleanup problems after
+   * the new Skill reached its destination.
+   */
   readonly warnings: ReadonlyArray<string>
 }
 
@@ -78,6 +81,8 @@ export interface SkillReview {
   readonly _tag: 'SkillReview'
   readonly summary: string
   readonly findings: ReadonlyArray<SkillReviewFinding>
+  /** Files of the reviewed Skill that the Harness left out for size. */
+  readonly warnings: ReadonlyArray<string>
 }
 
 export type SkillRunError

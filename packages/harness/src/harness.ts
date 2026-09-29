@@ -1,4 +1,4 @@
-import type { HarnessV1Skill } from '@ai-sdk/harness'
+import type { HarnessV1NetworkSandboxSession, HarnessV1Skill } from '@ai-sdk/harness'
 import type { SandboxSession } from './internal/output/collect.ts'
 import type { Result } from './internal/result.ts'
 import type { PreparedSource } from './internal/source/host.ts'
@@ -21,7 +21,7 @@ import { promoteSkill } from './internal/output/promote.ts'
 import { validateGeneratedSkill, validateSkillReview } from './internal/output/validate.ts'
 import { resolveWithin } from './internal/paths.ts'
 import { err, ok } from './internal/result.ts'
-import { collectHostDirectory } from './internal/source/host.ts'
+import { collectHostDirectory, skippedFileWarnings } from './internal/source/host.ts'
 import { prepareNpmPackage } from './internal/source/npm.ts'
 import { DEFAULT_OUTPUT_POLICY, loadSkilldMaintainedSkill } from './skills.ts'
 
@@ -164,6 +164,7 @@ async function writePreparedSource(active: ActiveSandbox, prepared: PreparedRun,
     path: posix.join(active.workDir, 'input/source-manifest.json'),
     content: `${JSON.stringify({
       sourceAttempts: prepared.source.attempts,
+      skippedFiles: prepared.source.skippedFiles,
       npmResolution: prepared.source.npmResolution,
       hasCurrentSkill: prepared.current !== undefined,
     }, null, 2)}\n`,
@@ -195,69 +196,94 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
         return prepared
 
       const skill = await loadSkilldMaintainedSkill(prepared.value.skillName)
-      let active: ActiveSandbox | undefined
-      const userOnSession = sandboxConfig.onSession
-      const agent = new HarnessAgent({
-        harness,
-        sandbox,
-        skills: [skill],
-        permissionMode: 'allow-all',
-        sandboxConfig: {
-          ...sandboxConfig,
-          onSession: async (sessionOptions) => {
-            active = { sandbox: sessionOptions.session, workDir: sessionOptions.sessionWorkDir }
-            await writePreparedSource(active, prepared.value, runOptions.signal)
-            await userOnSession?.(sessionOptions)
-          },
-        },
-      })
-
-      const sessionResult = await agent.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
-      if (sessionResult._tag === 'Err')
-        return toAgentError(sessionResult.error, runOptions.signal)
-      const session = sessionResult.value
-
-      try {
-        if (!active)
-          return err({ _tag: 'AgentFailed', message: 'Harness did not provide its sandbox session.' })
-        const sourcePath = posix.join(active.workDir, 'input/source')
-        const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
-        const outputPath = posix.join(active.workDir, 'skilld-output', prepared.value.outputName)
-        const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.value.outputName)
-        const generated = await agent.generate({ session, prompt, abortSignal: runOptions.signal }).then(ok, cause => err(cause))
-        if (generated._tag === 'Err')
-          return toAgentError(generated.error, runOptions.signal)
-        if (runOptions.signal?.aborted)
-          return cancelled()
-
-        const collected = await collectSandboxOutput(active.sandbox, outputPath, policy, runOptions.signal)
-        if (collected._tag === 'Err')
-          return collected
-
-        if (prepared.value.skillName === 'review-skill')
-          return validateSkillReview(collected.value)
-
-        const validated = validateGeneratedSkill(
-          prepared.value.outputName,
-          collected.value,
-          prepared.value.skillName === 'generate-project-skill'
-            ? prepared.value.source.files.map(file => file.path)
-            : undefined,
-        )
-        if (validated._tag === 'Err')
-          return validated
-        if (!prepared.value.destination)
-          return err({ _tag: 'InvalidInput', message: 'Skill destination is required.' })
-        return promoteSkill(
-          prepared.value.destination.rootDir,
-          prepared.value.destination.name,
-          collected.value,
-          prepared.value.source.attempts,
-        )
-      }
-      finally {
-        await session.destroy()
-      }
+      // The Harness creates and owns the sandbox session, and hands it to the
+      // Agent. The Agent never sees the provider, so it never destroys the
+      // session itself, and the deprecated provider path stays unused.
+      const sandboxSession = await sandbox.createSession({ abortSignal: runOptions.signal }).then(ok, cause => err(cause))
+      if (sandboxSession._tag === 'Err')
+        return toAgentError(sandboxSession.error, runOptions.signal)
+      const result = await runAgent(prepared.value, skill, sandboxSession.value, runOptions.signal)
+      const destroyed = await Promise.resolve(sandboxSession.value.destroy()).then(() => undefined, cause => cause as unknown)
+      if (destroyed === undefined)
+        return result
+      const warning = `Sandbox session cleanup failed: ${destroyed instanceof Error ? destroyed.message : String(destroyed)}`
+      if (result._tag === 'Ok')
+        return ok({ ...result.value, warnings: [...result.value.warnings, warning] })
+      // An Err result has no warnings. The cleanup failure must still reach the caller.
+      console.warn(`skilld-harness: ${warning}`)
+      return result
     },
+  }
+
+  async function runAgent(
+    prepared: PreparedRun,
+    skill: HarnessV1Skill,
+    sandboxSession: HarnessV1NetworkSandboxSession,
+    signal?: AbortSignal,
+  ): Promise<SkillRunResult> {
+    let active: ActiveSandbox | undefined
+    const userOnSession = sandboxConfig.onSession
+    const agent = new HarnessAgent({
+      harness,
+      skills: [skill],
+      permissionMode: 'allow-all',
+      sandboxConfig: {
+        ...sandboxConfig,
+        onSession: async (sessionOptions) => {
+          active = { sandbox: sessionOptions.session, workDir: sessionOptions.sessionWorkDir }
+          await writePreparedSource(active, prepared, signal)
+          await userOnSession?.(sessionOptions)
+        },
+      },
+    })
+
+    const sessionResult = await agent.createSession({ sandboxSession, abortSignal: signal }).then(ok, cause => err(cause))
+    if (sessionResult._tag === 'Err')
+      return toAgentError(sessionResult.error, signal)
+    const session = sessionResult.value
+
+    try {
+      if (!active)
+        return err({ _tag: 'AgentFailed', message: 'Harness did not provide its sandbox session.' })
+      const sourcePath = posix.join(active.workDir, 'input/source')
+      const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
+      const outputPath = posix.join(active.workDir, 'skilld-output', prepared.outputName)
+      const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.outputName)
+      const generated = await agent.generate({ session, prompt, abortSignal: signal }).then(ok, cause => err(cause))
+      if (generated._tag === 'Err')
+        return toAgentError(generated.error, signal)
+      if (signal?.aborted)
+        return cancelled()
+
+      const collected = await collectSandboxOutput(active.sandbox, outputPath, policy, signal)
+      if (collected._tag === 'Err')
+        return collected
+
+      const sourceWarnings = skippedFileWarnings(prepared.source.skippedFiles, policy)
+      if (prepared.skillName === 'review-skill')
+        return validateSkillReview(collected.value, sourceWarnings)
+
+      const validated = validateGeneratedSkill(
+        prepared.outputName,
+        collected.value,
+        prepared.skillName === 'generate-project-skill'
+          ? { _tag: 'ProjectSkill', projectPaths: prepared.source.files.map(file => file.path) }
+          : { _tag: 'PackageSkill' },
+      )
+      if (validated._tag === 'Err')
+        return validated
+      if (!prepared.destination)
+        return err({ _tag: 'InvalidInput', message: 'Skill destination is required.' })
+      return promoteSkill(
+        prepared.destination.rootDir,
+        prepared.destination.name,
+        collected.value,
+        prepared.source.attempts,
+        sourceWarnings,
+      )
+    }
+    finally {
+      await session.destroy()
+    }
   }
 }

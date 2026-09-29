@@ -10,13 +10,27 @@ export interface PreparedFile {
   readonly content: Uint8Array
 }
 
+/** A source file the Harness left out because it exceeds the file byte limit. */
+export interface SkippedSourceFile {
+  readonly path: string
+  readonly bytes: number
+}
+
 export interface PreparedSource {
   readonly files: ReadonlyArray<PreparedFile>
+  /** Files left out for size. The Agent and the caller both see this list. */
+  readonly skippedFiles: ReadonlyArray<SkippedSourceFile>
   readonly attempts: ReadonlyArray<SourceAttempt>
   readonly npmResolution?: {
     readonly package: string
     readonly version: string
   }
+}
+
+/** One warning per skipped file, in the words the result reports. */
+export function skippedFileWarnings(skipped: ReadonlyArray<SkippedSourceFile>, policy: SkillOutputPolicy): ReadonlyArray<string> {
+  return skipped.map(file =>
+    `Source file ${file.path} was left out: ${file.bytes} bytes exceeds the ${policy.maxSourceFileBytes} byte file limit.`)
 }
 
 const ignoredNames = new Set([
@@ -56,7 +70,12 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
     return unavailable('Source path must not pass through a symbolic link.')
 
   const files: PreparedFile[] = []
+  const skippedFiles: SkippedSourceFile[] = []
   let totalBytes = 0
+  const relativePath = (absolute: string): string => relative(root, absolute).split(sep).join('/')
+  /** An entry-level failure names the entry, so the caller can find and fix it. */
+  const entryUnavailable = (absolute: string, message: string, cause?: unknown, fix?: string): Result<never, SkillRunError> =>
+    unavailable(`${message}: ${relativePath(absolute)}.${fix === undefined ? '' : ` ${fix}`}`, cause)
 
   const walk = async (current: string): Promise<Result<void, SkillRunError>> => {
     if (signal?.aborted)
@@ -76,9 +95,9 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
       const absolute = join(current, entry.name)
       const stat = await lstat(absolute).catch(error => error as NodeJS.ErrnoException)
       if (stat instanceof Error)
-        return unavailable('Source entry cannot be read.', stat)
+        return entryUnavailable(absolute, 'Source entry cannot be read', stat)
       if (stat.isSymbolicLink())
-        return unavailable('Source contains a symbolic link.')
+        return entryUnavailable(absolute, 'Source contains a symbolic link', undefined, 'Remove the link, or pass a clean export such as a `git archive` of the directory.')
       if (stat.isDirectory()) {
         const nested = await walk(absolute)
         if (nested._tag === 'Err')
@@ -86,23 +105,24 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
         continue
       }
       if (!stat.isFile())
-        return unavailable('Source contains a special file.')
+        return entryUnavailable(absolute, 'Source contains a special file')
 
-      const path = relative(root, absolute).split(sep).join('/')
+      const path = relativePath(absolute)
       const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW).catch(error => error as NodeJS.ErrnoException)
       if (handle instanceof Error)
-        return unavailable('Source file cannot be opened without following links.', handle)
+        return entryUnavailable(absolute, 'Source file cannot be opened without following links', handle)
       const openedStat = await handle.stat().catch(error => error as NodeJS.ErrnoException)
       if (openedStat instanceof Error) {
         await handle.close()
-        return unavailable('Source file cannot be inspected.', openedStat)
+        return entryUnavailable(absolute, 'Source file cannot be inspected', openedStat)
       }
       if (!openedStat.isFile() || openedStat.dev !== stat.dev || openedStat.ino !== stat.ino) {
         await handle.close()
-        return unavailable('Source file changed during collection.')
+        return entryUnavailable(absolute, 'Source file changed during collection')
       }
       if (openedStat.size > policy.maxSourceFileBytes) {
         await handle.close()
+        skippedFiles.push({ path, bytes: openedStat.size })
         continue
       }
       if (files.length >= policy.maxSourceFiles) {
@@ -117,9 +137,9 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
       const content = await handle.readFile().catch(error => error as NodeJS.ErrnoException)
       await handle.close()
       if (content instanceof Error)
-        return unavailable('Source file cannot be read.', content)
+        return entryUnavailable(absolute, 'Source file cannot be read', content)
       if (content.byteLength !== openedStat.size)
-        return unavailable('Source file changed during collection.')
+        return entryUnavailable(absolute, 'Source file changed during collection')
       if (signal?.aborted)
         return cancelled()
       files.push({ path, content })
@@ -135,5 +155,6 @@ export async function collectHostDirectory(directory: string, policy: SkillOutpu
     return unavailable('Source directory has no usable files.')
 
   files.sort((left, right) => left.path.localeCompare(right.path))
-  return ok({ files, attempts: [{ source: sourceLabel, status: 'used' }] })
+  skippedFiles.sort((left, right) => left.path.localeCompare(right.path))
+  return ok({ files, skippedFiles, attempts: [{ source: sourceLabel, status: 'used' }] })
 }

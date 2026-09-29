@@ -146,6 +146,7 @@ describe('createSkillHarness', () => {
         _tag: 'SkillReview',
         summary: 'One warning.',
         findings: [{ level: 'warning', path: 'SKILL.md', message: 'Trigger is broad.', fix: 'Name one trigger.' }],
+        warnings: [],
       },
     })
   })

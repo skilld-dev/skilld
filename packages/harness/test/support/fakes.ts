@@ -111,7 +111,7 @@ export function createFakeHarness(settings: FakeHarnessOptions): {
   return { harness, capture }
 }
 
-async function createSandboxSession(): Promise<HarnessV1NetworkSandboxSession> {
+async function createSandboxSession(onDestroy: () => void): Promise<HarnessV1NetworkSandboxSession> {
   const root = await mkdtemp(join(tmpdir(), 'skilld-harness-sandbox-'))
 
   const readBinaryFile = async ({ path }: { path: string }) =>
@@ -188,31 +188,40 @@ async function createSandboxSession(): Promise<HarnessV1NetworkSandboxSession> {
       throw new Error('Fake sandbox does not expose ports.')
     },
     async stop() {},
-    async destroy() {},
+    async destroy() {
+      onDestroy()
+    },
     restricted: () => restricted,
   }
 }
 
 export function createFakeSandboxProvider() {
+  let destroyed = 0
   return {
     specificationVersion: 'harness-sandbox-v1' as const,
     providerId: 'fake',
-    createSession: createSandboxSession,
+    createSession: () => createSandboxSession(() => {
+      destroyed += 1
+    }),
+    /** How many sessions from this provider were destroyed. */
+    destroyed: () => destroyed,
   }
 }
 
 /** A body that satisfies the project Skill navigation checks. */
-export const projectSkillBody = (heading = '# Instructions'): string => [
-  heading,
-  '',
-  'Read `package.json` for the name and the entry point.',
-  '',
-  'Search the source:',
-  '',
-  '```sh',
-  'rg -n "export " .',
-  '```',
-  '',
-].join('\n')
+export function projectSkillBody(heading = '# Instructions'): string {
+  return [
+    heading,
+    '',
+    'Read `package.json` for the name and the entry point.',
+    '',
+    'Search the source:',
+    '',
+    '```sh',
+    'rg -n "export " .',
+    '```',
+    '',
+  ].join('\n')
+}
 
 export const skillSource = (name: string, body = projectSkillBody()): string => `---\nname: ${name}\ndescription: Use ${name} when working with its public API.\n---\n\n${body}`
