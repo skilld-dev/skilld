@@ -41,6 +41,9 @@ Recorded on 2026-09-22, 2 runs per arm, Claude Code 2.1.278:
   Skill reads the project's own manifest and finds its declared binary.
 - `package-not-project`: a published package. Checks that a request for consumer
   instructions routes to `generate-package-skill`.
+- `package-skill-docs-mismatch`: a package whose README documents dollars while
+  the code takes cents. Checks that the Skill runs its examples, writes the
+  observed behaviour, and reports the mismatch to the maintainer.
 
 ## Write a case
 

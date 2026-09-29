@@ -1,0 +1,17 @@
+schema_version: '1.0'
+name: package-skill-docs-mismatch
+description: A package Skill runs its examples, writes the observed behaviour, and reports where the README is wrong.
+tags: [package-skill, verification]
+runs: 2
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 30
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+  prompt: |
+    I maintain the `pricetag` package in this directory. Draft an Agent Skill
+    that teaches an Agent to use `pricetag` in someone else's codebase. Write it
+    to `skills/pricetag/SKILL.md`.
+
+    End with a short summary for me. Quote the example call the Skill gives for
+    formatting 12.34 US dollars, and list anything I should fix in the package.
