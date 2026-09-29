@@ -33,6 +33,10 @@ Recorded on 2026-09-22, 2 runs per arm, Claude Code 2.1.278:
 | `project-skill-real-paths` | 1.00 | 0.75 | +0.25 |
 | `project-skill-rust` | 1.00 | 0.75 | +0.25 |
 
+`package-skill-docs-mismatch` was recorded on 2026-09-29 with 1 run per arm: with 1.00,
+without 0.40, Δ +0.60. In two earlier baseline runs the model also ran the code and
+reported the mismatch, so treat this delta as noisy until more runs exist.
+
 ## What each case holds
 
 - `project-skill-real-paths`: a TypeScript project with a `dist/` decoy. Checks

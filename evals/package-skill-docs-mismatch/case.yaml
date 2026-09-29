@@ -13,5 +13,5 @@ execution:
     that teaches an Agent to use `pricetag` in someone else's codebase. Write it
     to `skills/pricetag/SKILL.md`.
 
-    End with a short summary for me. Quote the example call the Skill gives for
-    formatting 12.34 US dollars, and list anything I should fix in the package.
+    End with a short summary. Quote the example call the Skill gives for
+    formatting 12.34 US dollars.
