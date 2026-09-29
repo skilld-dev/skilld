@@ -140,7 +140,7 @@ async function waitUntilReady(path) {
   while (Date.now() < deadline) {
     if (exited)
       return { _tag: 'Exited' }
-    const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' } })
+    const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' }, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) })
       .catch(() => undefined) // Connection refused while the server starts. Retry until the deadline.
     if (response && ![502, 503, 504].includes(response.status)) {
       await response.body?.cancel()
@@ -153,7 +153,7 @@ async function waitUntilReady(path) {
 }
 
 async function fetchPath(path) {
-  const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' } })
+  const response = await fetch(`${origin}${path}`, { headers: { accept: 'text/html' }, signal: AbortSignal.timeout(options.timeout * 1000) })
   const body = await response.text()
   process.stderr.write(`GET ${path} ${response.status} ${response.headers.get('content-type') ?? '-'} ${Buffer.byteLength(body)}\n`)
   if (options.out) {
@@ -165,24 +165,35 @@ async function fetchPath(path) {
   }
 }
 
-let status = 0
-const ready = await waitUntilReady(options.fetch[0] ?? '/')
-if (ready._tag === 'Exited') {
-  const { code, signal } = await exit
-  process.stderr.write(`The server exited before it answered: code ${code}, signal ${signal}.\n`)
-  status = 1
-}
-else if (ready._tag === 'TimedOut') {
-  process.stderr.write(`The server did not answer within ${options.timeout} seconds.\n`)
-  status = 1
-}
-else {
+async function run() {
+  const ready = await waitUntilReady(options.fetch[0] ?? '/')
+  if (ready._tag === 'Exited') {
+    const { code, signal } = await exit
+    process.stderr.write(`The server exited before it answered: code ${code}, signal ${signal}.\n`)
+    return 1
+  }
+  if (ready._tag === 'TimedOut') {
+    process.stderr.write(`The server did not answer within ${options.timeout} seconds.\n`)
+    return 1
+  }
   process.stderr.write(`ready ${origin}\n`)
-  for (const path of options.fetch)
-    await fetchPath(path)
+  let status = 0
+  for (const path of options.fetch) {
+    // A crashed route or an unwritable DIR fails one path. Report it and keep going.
+    await fetchPath(path).catch((error) => {
+      process.stderr.write(`GET ${path} failed: ${error.cause?.message ?? error.message}\n`)
+      status = 1
+    })
+  }
   if (options.fetch.length === 0 || options.hold !== undefined)
     await Promise.race([exit, options.hold === undefined ? new Promise(() => {}) : delay(options.hold * 1000)])
+  return status
 }
 
+// Stop the group on any failure, so an error never orphans the server.
+const status = await run().catch((error) => {
+  process.stderr.write(`${error.stack ?? error}\n`)
+  return 1
+})
 await stop()
 process.exit(status)

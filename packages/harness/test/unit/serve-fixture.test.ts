@@ -12,6 +12,8 @@ import { writeFileSync } from 'node:fs'
 writeFileSync(process.argv[3], String(process.pid))
 process.on('SIGTERM', () => {})
 createServer((request, response) => {
+  if (request.url === '/crash')
+    return request.socket.destroy()
   response.setHeader('content-type', 'text/html')
   response.end('<p>' + request.url + ' ' + request.headers.accept + '</p>')
 }).listen(Number(process.argv[2]), '127.0.0.1')
@@ -77,6 +79,16 @@ describe('serve-fixture script', () => {
     await expect(readFile(join(out, 'index.html'), 'utf8')).resolves.toBe('<p>/ text/html</p>')
     await expect(readFile(join(out, 'a_b.html'), 'utf8')).resolves.toBe('<p>/a/b text/html</p>')
   })
+
+  it('reports a failed fetch and still stops the server', async () => {
+    const run = await collect(spawn(process.execPath, [script, '--fetch', '/', '--fetch', '/crash', '--fetch', '/after', '--', 'sh', wrapper, '{port}']))
+
+    expect(run.code).toBe(1)
+    expect(run.stderr).toMatch(/GET \/crash failed: /)
+    expect(run.stdout).toContain('<p>/after text/html</p>')
+    const pid = Number(await readFile(pidFile, 'utf8'))
+    expect(isAlive(pid)).toBe(false)
+  }, 15_000)
 
   it('reports a server that exits before it answers', async () => {
     const run = await collect(spawn(process.execPath, [script, '--fetch', '/', '--', 'node', '-e', 'process.exit(3)']))

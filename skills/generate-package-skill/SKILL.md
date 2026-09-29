@@ -41,9 +41,9 @@ Documentation can be wrong. Observed behaviour wins.
 3. Run each example you plan to include. Compare the output with the claim: rendered HTML, return values, type errors, build logs, exit codes, or report files.
    For a framework module, test each mode it supports. Read dev warnings in the dev server log, prerender results in the build output, and runtime results from the built production server.
    If a trap says nothing happens, run it and confirm the silence.
-   To fetch pages from a server, run [scripts/serve-fixture.mjs](scripts/serve-fixture.mjs), for example `node scripts/serve-fixture.mjs --fetch / -- node .output/server/index.mjs`.
+   To fetch pages from a server, run this Skill's [scripts/serve-fixture.mjs](scripts/serve-fixture.mjs), for example `node SKILL_DIR/scripts/serve-fixture.mjs --fetch / -- node .output/server/index.mjs` from the fixture directory.
    It uses a free port, fetches with `Accept: text/html`, and stops only its own process group.
-   Run it with your tool's background option, because `&` and `nohup` die when the shell call ends.
+   Without `--fetch`, it holds the server until SIGTERM. Run that with your tool's background option, because `&` and `nohup` die when the shell call ends.
    Never kill by port or with `pkill -f`. Another Agent can own that process, and the pattern can match your own shell.
    In a browser test, set a desktop browser user agent. A package can treat `HeadlessChrome` as a bot.
 4. If the documentation and the behaviour disagree, write the behaviour and add the mismatch to the report.
