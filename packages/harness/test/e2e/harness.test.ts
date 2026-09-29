@@ -151,6 +151,29 @@ describe('createSkillHarness', () => {
     })
   })
 
+  it('keeps the reviewed Skill directory name so it can match the Skill name', async () => {
+    const skillDir = join(await mkdtemp(join(tmpdir(), 'skilld-review-')), 'review-me')
+    await mkdir(skillDir)
+    await writeFile(join(skillDir, 'SKILL.md'), skillSource('review-me'))
+    const { harness, capture } = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        await expect(sandbox.readTextFile({ path: join(workDir, 'input/source/review-me/SKILL.md') })).resolves.toContain('name: review-me')
+        await sandbox.writeTextFile({
+          path: join(workDir, 'skilld-output/review/review.json'),
+          content: JSON.stringify({ summary: 'No findings.', findings: [] }),
+        })
+      },
+    })
+
+    const result = await createSkillHarness({ harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'ReviewSkill',
+      skillDir,
+    })
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'SkillReview', findings: [] } })
+    expect(promptText(capture.prompts[0]?.prompt)).toMatch(/Review the prepared Skill at \S*\/input\/source\/review-me`/)
+  })
+
   it('keeps the current Skill when generated output fails checks', async () => {
     const projectDir = await makePackage()
     const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
