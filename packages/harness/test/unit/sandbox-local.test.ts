@@ -247,3 +247,67 @@ describe('local sandbox ports and lifecycle', () => {
     await expect(child.wait()).resolves.toEqual({ exitCode: 143 })
   })
 })
+
+describe('local sandbox isolation', () => {
+  it('points home, XDG, and temporary directories inside the session root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skilld-sandbox-test-'))
+    const session = await createLocalSandbox({ root }).createSession()
+    try {
+      const result = await session.run({
+        command: 'printf "%s\\n" "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$TMPDIR"',
+      })
+      const paths = result.stdout.trim().split('\n')
+      expect(paths).toHaveLength(6)
+      for (const path of paths)
+        expect(path.startsWith(`${root}/`)).toBe(true)
+    }
+    finally {
+      await session.destroy()
+    }
+  })
+
+  it('removes files a process writes under its home on destroy', async () => {
+    const session = await createLocalSandbox().createSession()
+    const result = await session.run({
+      command: 'mkdir -p "$HOME/.agents/skills/example" && echo x > "$HOME/.agents/skills/example/SKILL.md" && printf "%s" "$HOME"',
+    })
+    await session.destroy()
+    await expect(lstat(join(result.stdout, '.agents/skills/example/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps agent configuration and unrelated secrets in the caller environment out of the session', async () => {
+    const names = ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'SKILLD_TEST_SECRET'] as const
+    const previous = names.map(name => process.env[name])
+    process.env.OPENCODE_CONFIG = '/caller/opencode.json'
+    process.env.OPENCODE_CONFIG_DIR = '/caller/opencode'
+    process.env.SKILLD_TEST_SECRET = 'caller-secret'
+    const session = await createLocalSandbox().createSession()
+    try {
+      const result = await session.run({ command: 'env' })
+      expect(result.stdout).not.toContain('/caller/opencode')
+      expect(result.stdout).not.toContain('caller-secret')
+    }
+    finally {
+      await session.destroy()
+      names.forEach((name, index) => {
+        if (previous[index] === undefined)
+          delete process.env[name]
+        else
+          process.env[name] = previous[index]
+      })
+    }
+  })
+
+  it('passes the environment the caller names, and lets a command override it', async () => {
+    const session = await createLocalSandbox({ env: { SKILLD_TEST_REGISTRY: 'https://registry.example' } }).createSession()
+    try {
+      const inherited = await session.run({ command: 'printf "%s" "$SKILLD_TEST_REGISTRY"' })
+      const overridden = await session.run({ command: 'printf "%s" "$SKILLD_TEST_REGISTRY"', env: { SKILLD_TEST_REGISTRY: 'https://other.example' } })
+      expect(inherited.stdout).toBe('https://registry.example')
+      expect(overridden.stdout).toBe('https://other.example')
+    }
+    finally {
+      await session.destroy()
+    }
+  })
+})

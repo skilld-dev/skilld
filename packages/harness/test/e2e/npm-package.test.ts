@@ -89,6 +89,57 @@ describe('npm package preparation', () => {
     })
   })
 
+  it('reports an npm archive file it leaves out for size', async () => {
+    const tarball = gzipSync(Buffer.concat([
+      tarEntry('package/package.json', '{"name":"remote-package","version":"1.2.3"}\n'),
+      tarEntry('package/dist/bundle.js', 'x'.repeat(2048)),
+      Buffer.alloc(1024),
+    ]))
+    const integrity = `sha512-${createHash('sha512').update(tarball).digest('base64')}`
+    const fetch = registryFetch(tarball, integrity)
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
+    const fake = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        await sandbox.writeTextFile({
+          path: join(workDir, 'skilld-output/remote-package/SKILL.md'),
+          content: skillSource('remote-package'),
+        })
+      },
+    })
+
+    const result = await createSkillHarness({
+      harness: fake.harness,
+      sandbox: createFakeSandboxProvider(),
+      fetch,
+      outputPolicy: { maxSourceFileBytes: 1024 },
+    }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'NpmPackage', spec: 'remote-package@1.2.3' },
+      destination: { rootDir: destinationRoot, name: 'remote-package' },
+    })
+
+    expect(result).toMatchObject({
+      _tag: 'Ok',
+      value: { warnings: ['Source file dist/bundle.js was left out: 2048 bytes exceeds the 1024 byte file limit.'] },
+    })
+  })
+
+  it('names the linked npm archive entry it rejects', async () => {
+    const tarball = archive('2')
+    const integrity = `sha512-${createHash('sha512').update(tarball).digest('base64')}`
+    const fetch = registryFetch(tarball, integrity)
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
+    const fake = createFakeHarness({ onPrompt: async () => {} })
+
+    const result = await createSkillHarness({ harness: fake.harness, sandbox: createFakeSandboxProvider(), fetch }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'NpmPackage', spec: 'remote-package' },
+      destination: { rootDir: destinationRoot, name: 'remote-package' },
+    })
+
+    expect(result).toMatchObject({ _tag: 'Err', error: { _tag: 'SourceUnavailable', message: expect.stringContaining('package/package.json') } })
+  })
+
   it('rejects an archive with the wrong integrity before starting an Agent', async () => {
     const tarball = archive()
     const fetch = registryFetch(tarball, 'sha512-AAAAAAAA')

@@ -9,7 +9,8 @@ import { Readable } from 'node:stream'
 
 /**
  * The local sandbox runs real processes on this computer.
- * It is a working directory and a port, not a security boundary.
+ * It gives each session its own home directory and a minimal environment.
+ * It is not a security boundary: every process can still read the whole computer.
  * Use a hosted sandbox provider when the Harness must contain what it runs.
  */
 export interface CreateLocalSandboxOptions {
@@ -19,6 +20,75 @@ export interface CreateLocalSandboxOptions {
   readonly port?: number
   /** Keep the session root after `destroy`. The default removes it. */
   readonly keepRoot?: boolean
+  /**
+   * More environment variables for every process in the session, such as a
+   * registry URL or proxy settings. Harness adapters pass their own credentials,
+   * so the session does not need the caller's API keys.
+   */
+  readonly env?: Readonly<Record<string, string>>
+}
+
+/**
+ * Variables the session copies from the caller. Everything else stays out, so
+ * that a process cannot read the caller's secrets or agent configuration.
+ */
+const inheritedVariables = [
+  'PATH',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'TERM',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+] as const
+
+interface SessionDirectories {
+  /** HOME for every process. Harness state and installed Skills land here. */
+  readonly home: string
+  /** TMPDIR for every process. */
+  readonly tmp: string
+}
+
+function sessionDirectories(root: string): SessionDirectories {
+  return { home: join(root, '.home'), tmp: join(root, '.tmp') }
+}
+
+/**
+ * The environment every process in a session starts from.
+ * Home, XDG, and temporary directories point inside the session root, so that
+ * Harness state, installed Skills, and agent configuration never reach the
+ * caller's home directory, and `destroy` removes all of them.
+ */
+function sessionEnvironment(
+  directories: SessionDirectories,
+  caller: NodeJS.ProcessEnv,
+  extra: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const { home, tmp } = directories
+  const inherited = Object.fromEntries(
+    inheritedVariables.flatMap(name => caller[name] === undefined ? [] : [[name, caller[name]]]),
+  )
+  return {
+    ...inherited,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_DATA_HOME: join(home, '.local/share'),
+    XDG_CACHE_HOME: join(home, '.cache'),
+    XDG_STATE_HOME: join(home, '.local/state'),
+    TMPDIR: tmp,
+    ...extra,
+  }
 }
 
 /** The file and process surface the Harness hands to Skill code. */
@@ -129,13 +199,14 @@ function watchAbort(child: ChildProcessWithoutNullStreams, abortSignal: AbortSig
 function startProcess(
   options: SandboxProcessOptions,
   root: string,
+  environment: Readonly<Record<string, string>>,
   processes: SessionProcesses,
 ): StartedProcess {
   // The process leads its own group so that killing it also kills what it
   // started. The OpenCode bridge starts OpenCode, which starts more processes.
   const child = spawnChildProcess('/bin/sh', ['-c', options.command], {
     cwd: options.workingDirectory ?? root,
-    env: { ...process.env, ...options.env },
+    env: { ...environment, ...options.env },
     detached: true,
   })
   processes.live.add(child)
@@ -172,7 +243,7 @@ function startProcess(
   }
 }
 
-function createSandboxSession(root: string, processes: SessionProcesses): SandboxSession {
+function createSandboxSession(root: string, environment: Readonly<Record<string, string>>, processes: SessionProcesses): SandboxSession {
   const readBinaryFile = async ({ path }: { path: string }): Promise<Uint8Array | null> =>
     readFile(path).then(
       value => Uint8Array.from(value),
@@ -180,7 +251,7 @@ function createSandboxSession(root: string, processes: SessionProcesses): Sandbo
     )
 
   return {
-    description: `Local sandbox rooted at ${root}. POSIX sh, real processes, no isolation.`,
+    description: `Local sandbox rooted at ${root}. POSIX sh, real processes, a session home directory, no process isolation.`,
     readBinaryFile,
 
     async readFile({ path }) {
@@ -220,13 +291,13 @@ function createSandboxSession(root: string, processes: SessionProcesses): Sandbo
     },
 
     async spawn(options) {
-      return startProcess(options, root, processes).handle
+      return startProcess(options, root, environment, processes).handle
     },
 
     async run(options) {
       // An aborted `run` reports the exit code of the killed process.
       // Only `spawn` rejects its wait, because its caller holds the handle.
-      const { handle, exited } = startProcess(options, root, processes)
+      const { handle, exited } = startProcess(options, root, environment, processes)
       const [stdout, stderr, exit] = await Promise.all([
         readStream(handle.stdout),
         readStream(handle.stderr),
@@ -243,8 +314,9 @@ function createSandboxSession(root: string, processes: SessionProcesses): Sandbo
  * The session needs POSIX `sh` at `/bin/sh` and GNU `find`, because the Harness
  * inventories output with `find -printf`. It runs on Linux, and not on macOS or
  * Windows. It exposes one port on `127.0.0.1` for bridge-backed Harness
- * adapters. It applies no isolation:
- * every process reaches the whole computer and the caller's environment.
+ * adapters. Each session gets its own home directory under the session root and
+ * a minimal environment, and `destroy` removes both. It applies no process
+ * isolation: every process can still read and write the whole computer.
  */
 export function createLocalSandbox(options: CreateLocalSandboxOptions = {}): HarnessV1SandboxProvider {
   return {
@@ -254,8 +326,12 @@ export function createLocalSandbox(options: CreateLocalSandboxOptions = {}): Har
     async createSession(): Promise<HarnessV1NetworkSandboxSession> {
       const root = options.root ?? await mkdtemp(join(tmpdir(), 'skilld-local-sandbox-'))
       await mkdir(root, { recursive: true })
+      const directories = sessionDirectories(root)
+      await mkdir(directories.home, { recursive: true })
+      await mkdir(directories.tmp, { recursive: true })
+      const environment = sessionEnvironment(directories, process.env, options.env ?? {})
       const processes: SessionProcesses = { live: new Set(), groups: new Set() }
-      const session = createSandboxSession(root, processes)
+      const session = createSandboxSession(root, environment, processes)
       let ports: ReadonlyArray<number> = [options.port ?? await freePort()]
 
       const stop = async (): Promise<void> => {

@@ -21,6 +21,7 @@ export const promoteSkill = async (
   name: string,
   files: ReadonlyArray<CollectedFile>,
   attempts: ReadonlyArray<SourceAttempt>,
+  sourceWarnings: ReadonlyArray<string>,
 ): Promise<Result<GeneratedSkill, SkillRunError>> => {
   const root = resolve(rootDir)
   let rootStat = await statOrMissing(root).catch(error => error as Error)
@@ -110,7 +111,7 @@ export const promoteSkill = async (
   await unlink(lockPath).catch(error => lockCleanupErrors.push(error))
 
   if (promoted) {
-    const warnings: string[] = []
+    const warnings: string[] = [...sourceWarnings]
     if (lockCleanupErrors.length > 0) {
       const detail = lockCleanupErrors.map(error => error instanceof Error ? error.message : String(error)).join('; ')
       warnings.push(`Output lock cleanup failed at ${lockPath}: ${detail}`)

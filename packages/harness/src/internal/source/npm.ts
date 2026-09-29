@@ -1,6 +1,7 @@
 import type { Hash } from 'node:crypto'
 import type { SkillOutputPolicy, SkillRunError, SourceAttempt } from '../../types.ts'
 import type { Result } from '../result.ts'
+import type { ExtractedArchive } from './archive.ts'
 import type { PreparedFile, PreparedSource } from './host.ts'
 import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
@@ -268,7 +269,7 @@ async function extractResponse(
   policy: SkillOutputPolicy,
   layout: 'github' | 'npm',
   verifier?: IntegrityVerifier,
-): Promise<Result<ReadonlyArray<PreparedFile>, SkillRunError>> {
+): Promise<Result<ExtractedArchive, SkillRunError>> {
   return extractArchive(
     responseChunks(
       response,
@@ -349,7 +350,8 @@ export async function prepareNpmPackage(spec: string, policy: SkillOutputPolicy,
     return unavailable(message, [...attempts, skipped(version.dist.tarball, message)])
   }
   attempts.push(used(version.dist.tarball))
-  let files = [...extracted.value]
+  let files = [...extracted.value.files]
+  let skippedFiles = [...extracted.value.skippedFiles]
 
   const repositoryArchive = githubArchiveUrl(version.repository ?? repository, version.gitHead)
   const available = remainingPolicy(policy, files)
@@ -374,7 +376,11 @@ export async function prepareNpmPackage(spec: string, policy: SkillOutputPolicy,
       else {
         files = [
           ...files,
-          ...repositoryFiles.value.map(file => ({ ...file, path: posix.join('repository', file.path) })),
+          ...repositoryFiles.value.files.map(file => ({ ...file, path: posix.join('repository', file.path) })),
+        ]
+        skippedFiles = [
+          ...skippedFiles,
+          ...repositoryFiles.value.skippedFiles.map(file => ({ ...file, path: posix.join('repository', file.path) })),
         ]
         attempts.push(used(repositoryArchive))
       }
@@ -382,8 +388,10 @@ export async function prepareNpmPackage(spec: string, policy: SkillOutputPolicy,
   }
 
   files.sort((left, right) => left.path.localeCompare(right.path))
+  skippedFiles.sort((left, right) => left.path.localeCompare(right.path))
   return ok({
     files,
+    skippedFiles,
     attempts,
     npmResolution: { package: parsed.name, version: resolvedVersion },
   })
