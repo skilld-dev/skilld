@@ -73,6 +73,9 @@ paths:
       responses:
         '200':
           description: The Artifact is ready.
+          headers:
+            Skilld-Page-Url:
+              $ref: '#/components/headers/SkillPageUrl'
           content:
             application/json:
               schema:
@@ -111,6 +114,9 @@ paths:
       responses:
         '200':
           description: Current Resolution state.
+          headers:
+            Skilld-Page-Url:
+              $ref: '#/components/headers/SkillPageUrl'
           content:
             application/json:
               schema:
@@ -233,6 +239,17 @@ components:
         type: integer
         minimum: 1
         maximum: 60
+    SkillPageUrl:
+      description: >-
+        The absolute URL of the Skill page on the service origin. The service
+        sends it on a ready public Resolution only when the registry holds the
+        delivered Skill. The path is `/gh/<owner>/<repository>` for a
+        repository with one Skill, else `/gh/<owner>/<repository>/<skill>`.
+        The value travels in a header because released CLIs reject unknown
+        fields in a Resolution body.
+      schema:
+        type: string
+        format: uri
   responses:
     Problem:
       description: Request failed.
