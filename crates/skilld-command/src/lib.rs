@@ -24,8 +24,8 @@ pub use local_store::{
     TargetInstall, TransactionGate,
 };
 pub use output::{CommandPlatform, OutputContext};
-pub use provenance::RemoteProvenance;
-use provenance::source_status_caution;
+pub use provenance::{RemoteProvenance, skill_page_url};
+use provenance::{delivered_skill_page_url, source_status_caution};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
@@ -1166,6 +1166,11 @@ fn dispatch<H: Host>(
                 .map(|result| {
                     let selector = result.selector().map_err(CommandError::remote)?;
                     Ok(SearchItem {
+                        page_url: skill_page_url(
+                            &result.source.owner,
+                            &result.source.repository,
+                            &result.name,
+                        ),
                         name: result.name,
                         selector: selector.to_string(),
                         description: result.description,
@@ -1386,6 +1391,9 @@ fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
             provenance.source_url.clone(),
             provenance.source_url.clone(),
         ));
+        if let Some(page) = delivered_skill_page_url(provenance, &skill.name, skill.source_status) {
+            lines.push(Line::linked_field("Skill page", page.clone(), page));
+        }
     }
     Ok(lines)
 }
@@ -3796,6 +3804,7 @@ mod tests {
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
                 "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
+                "Skill page: https://skilld.dev/gh/skilld-dev/skills/vue\n",
                 "Installed Skill nuxt.\n",
                 "nuxt · skilld-dev/skills @ aaaaaaa\n",
                 "Source: skilld-dev/skills/nuxt\n",
@@ -3803,6 +3812,7 @@ mod tests {
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
                 "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",
+                "Skill page: https://skilld.dev/gh/skilld-dev/skills/nuxt\n",
             )
         );
         let requests = host.requests();
@@ -4405,6 +4415,7 @@ mod tests {
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
                 "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
+                "Skill page: https://skilld.dev/gh/skilld-dev/skills/vue\n",
             )
         );
         assert_eq!(

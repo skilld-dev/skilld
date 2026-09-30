@@ -4,7 +4,7 @@ use skilld_core::{ListedSkill, SkillListing, UpdatePlanV1};
 use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
-use crate::provenance::{RemoteProvenance, source_status_caution};
+use crate::provenance::{RemoteProvenance, delivered_skill_page_url, source_status_caution};
 use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
 use crate::{CommandError, CommandErrorKind};
 
@@ -119,6 +119,8 @@ pub(crate) struct SearchItem {
     pub owner: String,
     pub repository: String,
     pub stargazer_count: u64,
+    /// The skilld.dev page of this Skill, when the parts name a valid one.
+    pub page_url: Option<String>,
 }
 
 impl SearchItem {
@@ -264,6 +266,8 @@ fn render_plain(outcome: &SearchOutcome) -> String {
         output.push_str(&escape_plain(
             item.description.as_deref().unwrap_or_default(),
         ));
+        output.push('\t');
+        output.push_str(&escape_plain(item.page_url.as_deref().unwrap_or_default()));
         output.push('\n');
     }
     output
@@ -308,6 +312,11 @@ fn render_human(
     for item in &outcome.items {
         output.push('\n');
         let name = sanitize(&item.name);
+        // Wide enough names wrap, so only the one line layout carries the link.
+        let linked = |text: &str| match (&item.page_url, color) {
+            (Some(url), true) => skilld_ui::hyperlink(text, url),
+            _ => text.to_owned(),
+        };
         let slug = sanitize(&item.slug());
         let stars = format!("{} stars", grouped_number(item.stargazer_count));
         let meta = format!(
@@ -319,14 +328,14 @@ fn render_human(
         if 2 + width(&name) + 2 + meta_width <= columns {
             let gap = columns - 2 - width(&name) - meta_width;
             output.push_str("  ");
-            output.push_str(&paint(&name, Role::Emphasis, color));
+            output.push_str(&linked(&paint(&name, Role::Emphasis, color)));
             output.push_str(&" ".repeat(gap));
             output.push_str(&meta);
             output.push('\n');
         } else {
             for line in wrap(&name, columns.saturating_sub(2)) {
                 output.push_str("  ");
-                output.push_str(&paint(&line, Role::Emphasis, color));
+                output.push_str(&linked(&paint(&line, Role::Emphasis, color)));
                 output.push('\n');
             }
             for line in wrap(&format!("{slug} · {stars}"), columns.saturating_sub(2)) {
@@ -646,6 +655,12 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     out.push_str(&field("Source status", skill.source_status, color));
     out.push_str(source_status_caution(skill.source_status));
     out.push_str(&read_it_first(&skill.origin, color));
+    out.push_str(&skill_page_field(
+        &skill.origin,
+        &skill.name,
+        skill.source_status,
+        color,
+    ));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
@@ -743,6 +758,7 @@ fn render_files(
     out.push_str(&field("Source status", source_status, color));
     out.push_str(source_status_caution(source_status));
     out.push_str(&read_it_first(origin, color));
+    out.push_str(&skill_page_field(origin, skill, source_status, color));
     out.push('\n');
     for file in files {
         let path = sanitize(&file.path);
@@ -904,6 +920,27 @@ fn read_it_first(origin: &SkillOrigin, color: bool) -> String {
     }
 }
 
+/// The skilld.dev page of a Skill that skilld.dev delivered. Human and plain
+/// output print one field; JSON output carries `pageUrl` instead.
+fn skill_page_field(origin: &SkillOrigin, skill: &str, source_status: &str, color: bool) -> String {
+    skill_page_url_of(origin, skill, source_status)
+        .map(|url| field("Skill page", &url, color))
+        .unwrap_or_default()
+}
+
+fn skill_page_url_of(origin: &SkillOrigin, skill: &str, source_status: &str) -> Option<String> {
+    match origin {
+        SkillOrigin::Remote {
+            provenance,
+            direct: false,
+            ..
+        } => delivered_skill_page_url(provenance, skill, source_status),
+        SkillOrigin::Remote { direct: true, .. }
+        | SkillOrigin::Bundled
+        | SkillOrigin::Local { .. } => None,
+    }
+}
+
 fn field(label: &str, value: &str, color: bool) -> String {
     format!("{}: {}\n", paint(label, Role::Dim, color), sanitize(value))
 }
@@ -1007,6 +1044,7 @@ enum JsonRunData {
         source_status: &'static str,
         source_caution: &'static str,
         revision: Option<String>,
+        page_url: Option<String>,
         wrote_skill_files: bool,
         instructions: String,
         files: Vec<JsonSupportingFile>,
@@ -1018,6 +1056,7 @@ enum JsonRunData {
         source_status: &'static str,
         source_caution: &'static str,
         revision: Option<String>,
+        page_url: Option<String>,
         wrote_skill_files: bool,
         files: Vec<JsonPulledFile>,
     },
@@ -1054,6 +1093,7 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
         source_status: skill.source_status,
         source_caution: source_status_caution(skill.source_status).trim_end(),
         revision: skill.revision.clone(),
+        page_url: skill_page_url_of(&skill.origin, &skill.name, skill.source_status),
         wrote_skill_files: false,
         instructions: skill.instructions.clone(),
         files: skill
@@ -1091,6 +1131,7 @@ fn files_json(
         source_status,
         source_caution: source_status_caution(source_status).trim_end(),
         revision: revision.map(str::to_owned),
+        page_url: skill_page_url_of(origin, skill, source_status),
         wrote_skill_files: false,
         files: files
             .iter()
