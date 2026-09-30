@@ -11,7 +11,7 @@ pub mod text;
 pub mod theme;
 pub mod time;
 
-pub use screen::{Detail, DetailKind, Line, LineKind, Marker, Screen, plain_lines};
+pub use screen::{Detail, DetailKind, Line, LineKind, Marker, Screen, hyperlink, plain_lines};
 pub use spans::{Span, command_spans, paint_command, paint_spans};
 pub use theme::{RESET, Role, paint};
 pub use time::relative_time;

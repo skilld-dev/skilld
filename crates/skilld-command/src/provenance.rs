@@ -113,3 +113,51 @@ fn source_url(
     }
     Ok(url.into())
 }
+
+const SITE_ORIGIN: &str = "https://skilld.dev/";
+
+/// The skilld.dev page of one Skill, or `None` when the parts cannot name one.
+///
+/// The page lives at `/gh/OWNER/REPOSITORY/SKILL`. skilld returns a URL only
+/// when every part is a valid GitHub owner, GitHub repository, and Skill name,
+/// so a printed URL never points at a route that cannot exist.
+pub fn skill_page_url(owner: &str, repository: &str, skill: &str) -> Option<String> {
+    let github_part = |part: &str, allow_dot: bool| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || byte == b'-'
+                    || (allow_dot && matches!(byte, b'.' | b'_'))
+            })
+    };
+    if !github_part(owner, false)
+        || !github_part(repository, true)
+        || skilld_core::SkillName::parse(skill).is_err()
+    {
+        return None;
+    }
+    let mut url = url::Url::parse(SITE_ORIGIN).ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .push("gh")
+        .push(owner)
+        .push(repository)
+        .push(skill);
+    Some(url.into())
+}
+
+/// The page of a Skill that skilld.dev delivered.
+///
+/// A direct read comes from GitHub and records the `unverified` source status.
+/// skilld.dev may not know that Skill, so it gets no page.
+pub fn delivered_skill_page_url(
+    provenance: &RemoteProvenance,
+    skill: &str,
+    source_status: &str,
+) -> Option<String> {
+    (source_status == "verified")
+        .then(|| skill_page_url(&provenance.owner, &provenance.repository, skill))
+        .flatten()
+}

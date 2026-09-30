@@ -122,7 +122,8 @@ fn json_search_returns_one_versioned_document() {
                     "description": "A focused Skill description that wraps cleanly on a narrow terminal.",
                     "owner": "mattpocock",
                     "repository": "skills",
-                    "stargazerCount": 227068
+                    "stargazerCount": 227068,
+                    "pageUrl": "https://skilld.dev/gh/mattpocock/skills/grill-me"
                 }],
                 "total": 14
             },
@@ -194,7 +195,8 @@ fn help_explains_primary_flow_remote_file_revisions_and_direct_delivery() {
 fn non_terminal_and_ci_output_are_stable_plain_records() {
     let expected = concat!(
         "grill-me\tmattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
-        "A focused Skill description that wraps cleanly on a narrow terminal.\n"
+        "A focused Skill description that wraps cleanly on a narrow terminal.\t",
+        "https://skilld.dev/gh/mattpocock/skills/grill-me\n"
     );
 
     let non_terminal = run(
@@ -236,7 +238,8 @@ fn active_agent_terminal_is_plain_without_an_explicit_machine_flag() {
             0,
             concat!(
                 "grill-me\tmattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
-                "A focused Skill description that wraps cleanly on a narrow terminal.\n"
+                "A focused Skill description that wraps cleanly on a narrow terminal.\t",
+                "https://skilld.dev/gh/mattpocock/skills/grill-me\n"
             )
             .to_owned(),
             String::new()
@@ -256,7 +259,8 @@ fn explicit_plain_overrides_a_human_terminal() {
         stdout,
         concat!(
             "grill-me\tmattpocock/skills/grill-me\tmattpocock/skills\t227068\t",
-            "A focused Skill description that wraps cleanly on a narrow terminal.\n"
+            "A focused Skill description that wraps cleanly on a narrow terminal.\t",
+            "https://skilld.dev/gh/mattpocock/skills/grill-me\n"
         )
     );
 }
@@ -282,7 +286,7 @@ fn plain_search_escapes_record_delimiters() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).unwrap(),
-        "grill-me\tmattpocock/skills/grill-me\tmattpocock/skills\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\n"
+        "grill-me\tmattpocock/skills/grill-me\tmattpocock/skills\t227068\tfirst\\nsecond\\tvalue\\u{001B}\\u{202E}\thttps://skilld.dev/gh/mattpocock/skills/grill-me\n"
     );
 }
 
@@ -660,6 +664,10 @@ fn strip_ansi(value: &str) -> String {
         "\u{1b}[0m",
     ]
     .into_iter()
+    .chain([
+        "\u{1b}]8;;https://skilld.dev/gh/mattpocock/skills/grill-me\u{1b}\\",
+        "\u{1b}]8;;\u{1b}\\",
+    ])
     .fold(value.to_owned(), |value, code| value.replace(code, ""))
 }
 
@@ -685,4 +693,20 @@ impl Write for WriteErrorWriter {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
+}
+
+#[test]
+fn human_search_links_the_name_only_when_color_is_on() {
+    let (_, colored, _) = run(
+        &["skilld", "search", "grill"],
+        auto(true, false, false, false, false, 120),
+    );
+    let (_, mono, _) = run(
+        &["skilld", "search", "grill"],
+        auto(true, false, false, true, false, 120),
+    );
+
+    assert!(colored.contains("\u{1b}]8;;https://skilld.dev/gh/mattpocock/skills/grill-me\u{1b}\\"));
+    assert!(!mono.contains("\u{1b}]8;;"));
+    assert!(!mono.contains("skilld.dev"));
 }

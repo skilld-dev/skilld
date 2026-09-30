@@ -438,7 +438,7 @@ fn glyphed(glyph: &str, role: Role, text: &str, color: bool) -> String {
 }
 
 /// Wrap `value` in an OSC 8 terminal hyperlink.
-fn hyperlink(value: &str, url: &str) -> String {
+pub fn hyperlink(value: &str, url: &str) -> String {
     format!("\u{1b}]8;;{url}\u{1b}\\{value}\u{1b}]8;;\u{1b}\\")
 }
 

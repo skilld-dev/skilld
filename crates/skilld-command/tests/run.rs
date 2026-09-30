@@ -23,6 +23,7 @@ struct StubRemote {
     exact_calls: AtomicUsize,
     files: Vec<PreparedFile>,
     skill_path: String,
+    verified: bool,
 }
 
 impl StubRemote {
@@ -32,7 +33,13 @@ impl StubRemote {
             exact_calls: AtomicUsize::new(0),
             files,
             skill_path: "skills/vue".to_owned(),
+            verified: false,
         }
+    }
+
+    fn verified(mut self) -> Self {
+        self.verified = true;
+        self
     }
 
     fn with_skill_path(mut self, skill_path: &str) -> Self {
@@ -48,9 +55,18 @@ impl StubRemote {
                 commit_sha,
                 skill_path: self.skill_path.clone(),
             },
-            source_status: SourceStatus::Unverified {
-                content_sha256: "b".repeat(64),
-                installed_sha256: "c".repeat(64),
+            source_status: if self.verified {
+                SourceStatus::Verified {
+                    artifact_id: "artifact".to_owned(),
+                    content_sha256: "b".repeat(64),
+                    installed_sha256: "c".repeat(64),
+                    attestation_key_id: "key".to_owned(),
+                }
+            } else {
+                SourceStatus::Unverified {
+                    content_sha256: "b".repeat(64),
+                    installed_sha256: "c".repeat(64),
+                }
             },
         }
     }
@@ -1468,4 +1484,147 @@ fn a_remote_file_read_links_the_exact_skill_file() {
         )),
         "{plain}"
     );
+}
+
+fn delivered_host(direct_status: bool) -> (tempfile::TempDir, LocalHost) {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let remote = StubRemote::new(skill_files());
+    let remote = if direct_status {
+        remote
+    } else {
+        remote.verified()
+    };
+    let host = LocalHost::new(project, temporary.path().join("global"))
+        .with_remote_provider(Arc::new(remote));
+    (temporary, host)
+}
+
+fn run_args(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_owned()).collect()
+}
+
+const REVISION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PAGE: &str = "https://skilld.dev/gh/vuejs/core/vue";
+
+#[test]
+fn a_delivered_run_prints_one_page_line() {
+    let (_temporary, host) = delivered_host(false);
+
+    let (exit, stdout, _) = run_cli(&host, run_args(&["skilld", "run", "vuejs/core/vue"]));
+
+    assert_eq!(exit, 0);
+    let lines = stdout
+        .lines()
+        .filter(|line| line.contains("skilld.dev"))
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [format!("Skill page: {PAGE}")]);
+}
+
+#[test]
+fn a_delivered_run_carries_the_page_in_json_and_no_extra_text() {
+    let (_temporary, host) = delivered_host(false);
+
+    let (exit, stdout, _) = run_cli(
+        &host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+
+    assert_eq!(exit, 0);
+    assert_eq!(stdout.lines().count(), 1);
+    let output: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(output["data"]["pageUrl"], PAGE);
+}
+
+#[test]
+fn a_delivered_file_read_names_the_page() {
+    let (_temporary, host) = delivered_host(false);
+
+    let (_, plain, _) = run_cli(
+        &host,
+        run_args(&[
+            "skilld",
+            "run",
+            "vuejs/core/vue",
+            "--revision",
+            REVISION,
+            "--file=references/api.md",
+        ]),
+    );
+    let (_, json, _) = run_cli(
+        &host,
+        run_args(&[
+            "skilld",
+            "run",
+            "vuejs/core/vue",
+            "--revision",
+            REVISION,
+            "--file=references/api.md",
+            "--json",
+        ]),
+    );
+
+    assert!(plain.contains(&format!("Skill page: {PAGE}\n")));
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["data"]["pageUrl"], PAGE);
+}
+
+#[test]
+fn a_direct_run_has_no_page() {
+    let (_temporary, host) = delivered_host(true);
+
+    let (_, plain, _) = run_cli(
+        &host,
+        run_args(&["skilld", "run", "--direct", "vuejs/core/vue"]),
+    );
+    let (_, json, _) = run_cli(
+        &host,
+        run_args(&["skilld", "run", "--direct", "vuejs/core/vue", "--json"]),
+    );
+
+    assert!(!plain.contains("skilld.dev/gh"));
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["data"]["pageUrl"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_local_run_has_no_page() {
+    let (_directory, root) = local_skill_with_instructions(b"---\nname: vue\n---\n# Vue\n");
+    let (_temporary, host) = delivered_host(false);
+
+    let (_, stdout, _) = run_cli(
+        &host,
+        run_args(&["skilld", "run", &root.display().to_string()]),
+    );
+
+    assert!(!stdout.contains("skilld.dev/gh"));
+}
+
+#[test]
+fn skill_page_urls_name_only_routes_that_can_exist() {
+    use skilld_command::skill_page_url;
+
+    assert_eq!(
+        skill_page_url("vuejs", "core", "vue").as_deref(),
+        Some("https://skilld.dev/gh/vuejs/core/vue")
+    );
+    assert_eq!(
+        skill_page_url("unjs", "h3.js", "nuxt-ui").as_deref(),
+        Some("https://skilld.dev/gh/unjs/h3.js/nuxt-ui")
+    );
+    for (owner, repository, skill) in [
+        ("", "core", "vue"),
+        ("vuejs", "", "vue"),
+        ("vuejs", "core", ""),
+        ("vue/js", "core", "vue"),
+        ("vuejs", "..", "vue"),
+        ("vuejs", "core", "Vue"),
+        ("vuejs", "core", "vue/../x"),
+        ("vue.js", "core", "vue"),
+        ("vuejs", "co re", "vue"),
+        ("vuejs", "core", "vue?x=1"),
+    ] {
+        assert_eq!(skill_page_url(owner, repository, skill), None);
+    }
 }

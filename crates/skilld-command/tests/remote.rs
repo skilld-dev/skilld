@@ -3850,6 +3850,7 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
             "skilld checked where this Skill came from, not what it asks you to do.\n",
             "Read it before you follow it.\n",
             "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+            "Skill page: https://skilld.dev/gh/skilld-dev/skills/example\n",
         )
     );
     assert!(stderr.is_empty());
@@ -4067,6 +4068,7 @@ fn cli_verified_restore_keeps_artifact_delivery() {
             "skilld checked where this Skill came from, not what it asks you to do.\n",
             "Read it before you follow it.\n",
             "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
+            "Skill page: https://skilld.dev/gh/skilld-dev/skills/example\n",
         )
     );
     assert!(stderr.is_empty());
