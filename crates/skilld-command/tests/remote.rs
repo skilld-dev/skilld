@@ -2588,6 +2588,50 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     assert!(requests[3].url.ends_with("/content"));
 }
 
+fn prepared_with_page_header(header: Option<&str>) -> Option<String> {
+    let (pin, mut responses) = verified_remote_responses();
+    if let Some(value) = header {
+        responses[0]
+            .headers
+            .insert("skilld-page-url".to_owned(), value.to_owned());
+    }
+    let remote = SkilldRemote::new(
+        Arc::new(FakeHttp::with(responses)),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    let selector = RemoteSelector::parse("skilld-dev/skills/example").unwrap();
+    remote.prepare(&selector, false).unwrap().page_url
+}
+
+#[test]
+fn a_delivery_carries_the_page_url_the_server_names() {
+    assert_eq!(
+        prepared_with_page_header(Some("http://127.0.0.1:8787/gh/skilld-dev/skills")).as_deref(),
+        Some("http://127.0.0.1:8787/gh/skilld-dev/skills")
+    );
+}
+
+#[test]
+fn a_delivery_from_an_older_server_carries_no_page_url() {
+    assert_eq!(prepared_with_page_header(None), None);
+}
+
+#[test]
+fn a_page_url_for_another_host_or_route_is_dropped() {
+    for header in [
+        "https://evil.example/gh/skilld-dev/skills",
+        "http://127.0.0.1:8787/people/someone",
+        "http://127.0.0.1:8787/gh/skilld-dev/skills?next=x",
+        "not a url",
+    ] {
+        assert_eq!(prepared_with_page_header(Some(header)), None, "{header}");
+    }
+}
+
 #[test]
 fn a_public_grant_may_serve_content_from_a_service_subdomain() {
     let (pin, mut responses) = verified_remote_responses();
@@ -3053,6 +3097,13 @@ impl FakeProvider {
                     attestation_key_id: "test-key".to_owned(),
                 }
             },
+            // The server names a page only for a delivered Skill in its registry.
+            page_url: (!direct
+                && matches!(
+                    &selector.source().selector,
+                    skilld_core::SourceSelector::NamedSkill { name } if name == "example"
+                ))
+            .then(|| "https://skilld.dev/gh/skilld-dev/skills/example".to_owned()),
         }
     }
 }
@@ -3242,6 +3293,7 @@ impl BatchProvider {
                 installed_sha256: digest,
                 attestation_key_id: "test-key".to_owned(),
             },
+            page_url: None,
         }
     }
 }
@@ -3854,6 +3906,36 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
         )
     );
     assert!(stderr.is_empty());
+}
+
+#[test]
+fn cli_install_prints_no_page_when_the_server_names_none() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider("---\nname: unlisted\n---\n"));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run(
+        [
+            "skilld",
+            "install",
+            "skilld-dev/skills/unlisted",
+            "--agent",
+            "codex",
+        ],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    let stdout = String::from_utf8(stdout).unwrap();
+    assert!(stdout.contains("Source status: verified"), "{stdout}");
+    assert!(!stdout.contains("Skill page"), "{stdout}");
+    assert!(!stdout.contains("skilld.dev/gh"), "{stdout}");
 }
 
 #[test]

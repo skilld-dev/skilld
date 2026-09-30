@@ -72,6 +72,7 @@ impl RemoteProvider for ListingRemote {
                 content_sha256: digest.clone(),
                 installed_sha256: digest,
             },
+            page_url: None,
         })
     }
 

@@ -297,6 +297,10 @@ pub struct PreparedRemoteSkill {
     pub files: Vec<PreparedFile>,
     pub locked_source: LockedSource,
     pub source_status: SourceStatus,
+    /// The canonical skilld.dev page skilld.dev named for this Skill. `None`
+    /// when the server named none: the registry does not hold the Skill, the
+    /// server is older, or the read was direct.
+    pub page_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -970,7 +974,7 @@ impl SkilldRemote {
         verify_trusted_root(root, pin)
     }
 
-    fn resolve(&self, source: &SourceRequest) -> Result<ArtifactDescriptor, RemoteError> {
+    fn resolve(&self, source: &SourceRequest) -> Result<ResolvedArtifact, RemoteError> {
         let mut deadline = ResolutionDeadline::new();
         self.progress
             .stage(RemoteProgressStage::RequestingResolution);
@@ -992,6 +996,7 @@ impl SkilldRemote {
             AllowedOrigin::Service(self.endpoint.clone()),
             Some(&mut deadline),
         )?;
+        let mut page_url = self.page_url_header(&response);
         let mut resolution: Resolution = parse_json(&response.body)?;
         let resolution_id = resolution.resolution_id().to_owned();
         if !valid_resolution_id(&resolution_id) {
@@ -1018,7 +1023,10 @@ impl SkilldRemote {
                         ));
                     }
                     validate_resolved_source(source, &artifact.attestation)?;
-                    return Ok(*artifact);
+                    return Ok(ResolvedArtifact {
+                        descriptor: *artifact,
+                        page_url,
+                    });
                 }
                 Resolution::Pending {
                     resolution_id,
@@ -1052,6 +1060,7 @@ impl SkilldRemote {
                         AllowedOrigin::Service(self.endpoint.clone()),
                         Some(&mut deadline),
                     )?;
+                    page_url = self.page_url_header(&response);
                     resolution = parse_json(&response.body)?;
                 }
                 Resolution::Blocked { check_results, .. } => {
@@ -1080,6 +1089,21 @@ impl SkilldRemote {
             }
         }
         Err(resolution_timeout())
+    }
+
+    /// The Skill page URL the server named in a response header, when it is
+    /// one this client may print.
+    ///
+    /// An older server sends no header. A header that is not a `/gh/` page on
+    /// the configured service origin is dropped, so the output never prints a
+    /// URL for a host the user did not choose.
+    fn page_url_header(&self, response: &HttpResponse) -> Option<String> {
+        let url = Url::parse(response.header(PAGE_URL_HEADER)?).ok()?;
+        (url.origin() == self.endpoint.origin()
+            && url.path().starts_with("/gh/")
+            && url.query().is_none()
+            && url.fragment().is_none())
+        .then(|| url.into())
     }
 
     fn grant(&self, artifact_id: &str) -> Result<ArtifactGrant, RemoteError> {
@@ -1602,6 +1626,7 @@ impl SkilldRemote {
                 installed_sha256,
             },
             files,
+            page_url: None,
         })
     }
 
@@ -2595,7 +2620,10 @@ impl RemoteProvider for SkilldRemote {
         if direct {
             return self.direct(selector);
         }
-        let descriptor = self.resolve(selector.source())?;
+        let ResolvedArtifact {
+            descriptor,
+            page_url,
+        } = self.resolve(selector.source())?;
         self.progress
             .stage(RemoteProgressStage::VerifyingAttestation);
         let root = self.verified_root()?;
@@ -2629,6 +2657,7 @@ impl RemoteProvider for SkilldRemote {
                 attestation_key_id: verified.attestation.signature.key_id.clone(),
             },
             files: verified.files,
+            page_url,
         })
     }
 
@@ -2680,7 +2709,7 @@ impl RemoteProvider for SkilldRemote {
         artifact_id: &str,
         commit_sha: &str,
     ) -> Result<RemoteSourceState, RemoteError> {
-        let descriptor = self.resolve(selector.source())?;
+        let descriptor = self.resolve(selector.source())?.descriptor;
         let root = self.verified_root()?;
         verify_attestation(&descriptor.attestation, &root)?;
         if descriptor.artifact_id == artifact_id
@@ -2710,7 +2739,7 @@ impl RemoteProvider for SkilldRemote {
                 access: RemoteComparisonAccess::PublicGithub,
             });
         }
-        let descriptor = self.resolve(selector.source())?;
+        let descriptor = self.resolve(selector.source())?.descriptor;
         let root = self.verified_root()?;
         verify_attestation(&descriptor.attestation, &root)?;
         let access = match descriptor.visibility {
@@ -3545,6 +3574,15 @@ impl Resolution {
             | Self::Revoked { resolution_id, .. } => resolution_id,
         }
     }
+}
+
+/// The response header that names the canonical Skill page. Absent when the
+/// registry does not hold the Skill, and on an older server.
+const PAGE_URL_HEADER: &str = "skilld-page-url";
+
+struct ResolvedArtifact {
+    descriptor: ArtifactDescriptor,
+    page_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

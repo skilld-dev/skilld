@@ -348,6 +348,9 @@ pub struct SearchResult {
     pub description: Option<String>,
     pub source: SourceRequest,
     pub stargazer_count: u64,
+    /// The canonical skilld.dev page, when the server sends one.
+    #[serde(default)]
+    pub page_url: Option<String>,
 }
 
 impl SearchResult {

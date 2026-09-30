@@ -4,7 +4,7 @@ use skilld_core::{ListedSkill, SkillListing, UpdatePlanV1};
 use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap};
 use skilld_ui::{Role, paint};
 
-use crate::provenance::{RemoteProvenance, delivered_skill_page_url, source_status_caution};
+use crate::provenance::{RemoteProvenance, source_status_caution};
 use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
 use crate::{CommandError, CommandErrorKind};
 
@@ -655,12 +655,7 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     out.push_str(&field("Source status", skill.source_status, color));
     out.push_str(source_status_caution(skill.source_status));
     out.push_str(&read_it_first(&skill.origin, color));
-    out.push_str(&skill_page_field(
-        &skill.origin,
-        &skill.name,
-        skill.source_status,
-        color,
-    ));
+    out.push_str(&skill_page_field(&skill.origin, color));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
@@ -758,7 +753,7 @@ fn render_files(
     out.push_str(&field("Source status", source_status, color));
     out.push_str(source_status_caution(source_status));
     out.push_str(&read_it_first(origin, color));
-    out.push_str(&skill_page_field(origin, skill, source_status, color));
+    out.push_str(&skill_page_field(origin, color));
     out.push('\n');
     for file in files {
         let path = sanitize(&file.path);
@@ -922,22 +917,16 @@ fn read_it_first(origin: &SkillOrigin, color: bool) -> String {
 
 /// The skilld.dev page of a Skill that skilld.dev delivered. Human and plain
 /// output print one field; JSON output carries `pageUrl` instead.
-fn skill_page_field(origin: &SkillOrigin, skill: &str, source_status: &str, color: bool) -> String {
-    skill_page_url_of(origin, skill, source_status)
+fn skill_page_field(origin: &SkillOrigin, color: bool) -> String {
+    skill_page_url_of(origin)
         .map(|url| field("Skill page", &url, color))
         .unwrap_or_default()
 }
 
-fn skill_page_url_of(origin: &SkillOrigin, skill: &str, source_status: &str) -> Option<String> {
+fn skill_page_url_of(origin: &SkillOrigin) -> Option<String> {
     match origin {
-        SkillOrigin::Remote {
-            provenance,
-            direct: false,
-            ..
-        } => delivered_skill_page_url(provenance, skill, source_status),
-        SkillOrigin::Remote { direct: true, .. }
-        | SkillOrigin::Bundled
-        | SkillOrigin::Local { .. } => None,
+        SkillOrigin::Remote { provenance, .. } => provenance.page_url.clone(),
+        SkillOrigin::Bundled | SkillOrigin::Local { .. } => None,
     }
 }
 
@@ -996,6 +985,7 @@ fn origin_json(origin: &SkillOrigin) -> JsonOrigin {
                 skill_path,
                 commit_sha,
                 source_url,
+                page_url: _,
             } = provenance.as_ref();
             JsonOrigin::Remote {
                 source: source.clone(),
@@ -1093,7 +1083,7 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
         source_status: skill.source_status,
         source_caution: source_status_caution(skill.source_status).trim_end(),
         revision: skill.revision.clone(),
-        page_url: skill_page_url_of(&skill.origin, &skill.name, skill.source_status),
+        page_url: skill_page_url_of(&skill.origin),
         wrote_skill_files: false,
         instructions: skill.instructions.clone(),
         files: skill
@@ -1131,7 +1121,7 @@ fn files_json(
         source_status,
         source_caution: source_status_caution(source_status).trim_end(),
         revision: revision.map(str::to_owned),
-        page_url: skill_page_url_of(origin, skill, source_status),
+        page_url: skill_page_url_of(origin),
         wrote_skill_files: false,
         files: files
             .iter()

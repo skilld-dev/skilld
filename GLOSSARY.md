@@ -21,6 +21,7 @@ Every public export, command, error, route, and document uses these terms.
 | Artifact attestation | `skilld.dev/api/v1` | published protocol | skilld CLI | attestation |
 | Check result | `skilld.dev/api/v1` | published protocol | skilld CLI, developer | check result |
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
+| Skill page | `skilld.dev` and skilld CLI output | published value | Agent, developer | Skill page |
 | Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
 | Agent target | skilld CLI | published configuration | Agent | Agent target |
 | registry | skilld.dev | published surface | developer, Agent | registry |
@@ -215,6 +216,16 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 **Never:** safety state, trust score, verification tier.
 
 **Casing:** `Source status` in headings, `sourceStatus` in identifiers.
+
+### Skill page
+
+**Is:** the canonical skilld.dev page of a Skill that the registry holds.
+
+**Use for:** the `Skill page:` line and the `pageUrl` JSON field. skilld prints the URL exactly as skilld.dev names it and never builds it for `run`, `add`, or `install`. Without a URL from skilld.dev, the line is absent and `pageUrl` is `null`.
+
+**Never:** Skill URL, registry link, listing page, profile page.
+
+**Casing:** `Skill page` in prose and labels, `pageUrl` in JSON.
 
 ### Update relation
 
