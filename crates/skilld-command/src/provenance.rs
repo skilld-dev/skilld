@@ -17,6 +17,9 @@ pub struct RemoteProvenance {
     pub commit_sha: String,
     /// The SKILL.md file at the exact commit, on github.com.
     pub source_url: String,
+    /// The skilld.dev page of the Skill, exactly as skilld.dev named it.
+    /// `None` unless the server named one. skilld never builds this URL.
+    pub page_url: Option<String>,
 }
 
 impl RemoteProvenance {
@@ -37,7 +40,15 @@ impl RemoteProvenance {
             skill_path,
             commit_sha,
             source_url,
+            page_url: None,
         })
+    }
+
+    /// Attach the Skill page URL that skilld.dev named for this delivery.
+    #[must_use]
+    pub fn with_page_url(mut self, page_url: Option<String>) -> Self {
+        self.page_url = page_url;
+        self
     }
 
     /// Read the provenance a lockfile entry recorded. Local and bundled
@@ -116,12 +127,20 @@ fn source_url(
 
 const SITE_ORIGIN: &str = "https://skilld.dev/";
 
-/// The skilld.dev page of one Skill, or `None` when the parts cannot name one.
+/// The skilld.dev page of one Search result, or `None` when the parts cannot
+/// name one.
 ///
-/// The page lives at `/gh/OWNER/REPOSITORY/SKILL`. skilld returns a URL only
+/// Only `search` builds a URL locally, because search results come from the
+/// registry, so the page exists. A search result does not say how many Skills
+/// its repository holds, so a single-Skill repository gets the exact Skill
+/// route, which skilld.dev redirects once to the canonical hub. A search
+/// response that carries `pageUrl` overrides this. `run`, `add`, and `install`
+/// never call it: they print only the URL skilld.dev names.
+///
+/// The exact route is `/gh/OWNER/REPOSITORY/SKILL`. skilld returns a URL only
 /// when every part is a valid GitHub owner, GitHub repository, and Skill name,
 /// so a printed URL never points at a route that cannot exist.
-pub fn skill_page_url(owner: &str, repository: &str, skill: &str) -> Option<String> {
+pub fn search_result_page_url(owner: &str, repository: &str, skill: &str) -> Option<String> {
     let github_part = |part: &str, allow_dot: bool| {
         !part.is_empty()
             && part != "."
@@ -146,18 +165,4 @@ pub fn skill_page_url(owner: &str, repository: &str, skill: &str) -> Option<Stri
         .push(repository)
         .push(skill);
     Some(url.into())
-}
-
-/// The page of a Skill that skilld.dev delivered.
-///
-/// A direct read comes from GitHub and records the `unverified` source status.
-/// skilld.dev may not know that Skill, so it gets no page.
-pub fn delivered_skill_page_url(
-    provenance: &RemoteProvenance,
-    skill: &str,
-    source_status: &str,
-) -> Option<String> {
-    (source_status == "verified")
-        .then(|| skill_page_url(&provenance.owner, &provenance.repository, skill))
-        .flatten()
 }

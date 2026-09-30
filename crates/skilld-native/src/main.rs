@@ -379,6 +379,7 @@ impl Host for SearchOutputProbe {
                     r#ref: None,
                 },
                 stargazer_count: 1,
+                page_url: None,
             }],
             total: 1,
         })

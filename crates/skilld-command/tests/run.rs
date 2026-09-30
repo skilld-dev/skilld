@@ -24,6 +24,7 @@ struct StubRemote {
     files: Vec<PreparedFile>,
     skill_path: String,
     verified: bool,
+    page_url: Option<String>,
 }
 
 impl StubRemote {
@@ -34,11 +35,17 @@ impl StubRemote {
             files,
             skill_path: "skills/vue".to_owned(),
             verified: false,
+            page_url: None,
         }
     }
 
     fn verified(mut self) -> Self {
         self.verified = true;
+        self
+    }
+
+    fn with_page_url(mut self, page_url: &str) -> Self {
+        self.page_url = Some(page_url.to_owned());
         self
     }
 
@@ -68,6 +75,8 @@ impl StubRemote {
                     installed_sha256: "c".repeat(64),
                 }
             },
+            // Only a delivery names a page. A direct read never does.
+            page_url: self.verified.then(|| self.page_url.clone()).flatten(),
         }
     }
 }
@@ -1494,7 +1503,7 @@ fn delivered_host(direct_status: bool) -> (tempfile::TempDir, LocalHost) {
     let remote = if direct_status {
         remote
     } else {
-        remote.verified()
+        remote.verified().with_page_url(PAGE)
     };
     let host = LocalHost::new(project, temporary.path().join("global"))
         .with_remote_provider(Arc::new(remote));
@@ -1535,6 +1544,35 @@ fn a_delivered_run_carries_the_page_in_json_and_no_extra_text() {
     assert_eq!(stdout.lines().count(), 1);
     let output: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(output["data"]["pageUrl"], PAGE);
+}
+
+/// A verified delivery whose server named no page: the registry does not hold
+/// the Skill, or the server is older. skilld prints nothing and never guesses.
+fn unregistered_host() -> (tempfile::TempDir, LocalHost) {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let remote = StubRemote::new(skill_files()).verified();
+    let host = LocalHost::new(project, temporary.path().join("global"))
+        .with_remote_provider(Arc::new(remote));
+    (temporary, host)
+}
+
+#[test]
+fn a_verified_run_without_a_server_page_prints_no_page_and_null_json() {
+    let (_temporary, host) = unregistered_host();
+
+    let (_, plain, _) = run_cli(&host, run_args(&["skilld", "run", "vuejs/core/vue"]));
+    let (_, json, _) = run_cli(
+        &host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+
+    assert!(plain.contains("Source status: verified"));
+    assert!(!plain.contains("Skill page"));
+    assert!(!plain.contains("skilld.dev/gh"));
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["data"]["pageUrl"], serde_json::Value::Null);
 }
 
 #[test]
@@ -1602,8 +1640,8 @@ fn a_local_run_has_no_page() {
 }
 
 #[test]
-fn skill_page_urls_name_only_routes_that_can_exist() {
-    use skilld_command::skill_page_url;
+fn search_result_page_urls_name_only_routes_that_can_exist() {
+    use skilld_command::search_result_page_url as skill_page_url;
 
     assert_eq!(
         skill_page_url("vuejs", "core", "vue").as_deref(),

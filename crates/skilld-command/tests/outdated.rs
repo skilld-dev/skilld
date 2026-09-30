@@ -68,6 +68,7 @@ impl Provider {
                 r#ref: None,
             },
             stargazer_count: 0,
+            page_url: None,
         }
     }
 }
@@ -151,6 +152,7 @@ impl RemoteProvider for Provider {
                     attestation_key_id: "test-key".to_owned(),
                 }
             },
+            page_url: None,
         })
     }
 

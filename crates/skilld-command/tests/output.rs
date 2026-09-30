@@ -48,6 +48,7 @@ fn response() -> SearchResponse {
                 r#ref: None,
             },
             stargazer_count: 227_068,
+            page_url: None,
         }],
         total: 14,
     }
@@ -262,6 +263,31 @@ fn explicit_plain_overrides_a_human_terminal() {
             "A focused Skill description that wraps cleanly on a narrow terminal.\t",
             "https://skilld.dev/gh/mattpocock/skills/grill-me\n"
         )
+    );
+}
+
+#[test]
+fn search_prefers_the_page_url_the_server_names() {
+    let mut response = response();
+    response.items[0].page_url = Some("https://skilld.dev/gh/mattpocock/skills".to_owned());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = run_with_output(
+        ["skilld", "search", "grill", "--plain"],
+        &SearchHost {
+            response: Ok(response),
+        },
+        auto(true, false, false, false, false, 80),
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        String::from_utf8(stdout)
+            .unwrap()
+            .ends_with("\thttps://skilld.dev/gh/mattpocock/skills\n")
     );
 }
 

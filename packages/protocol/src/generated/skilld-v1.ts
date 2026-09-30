@@ -397,6 +397,8 @@ export interface components {
     requestBodies: never;
     headers: {
         RetryAfter: number;
+        /** @description The absolute URL of the Skill page on the service origin. The service sends it on a ready public Resolution only when the registry holds the delivered Skill. The path is `/gh/<owner>/<repository>` for a repository with one Skill, else `/gh/<owner>/<repository>/<skill>`. The value travels in a header because released CLIs reject unknown fields in a Resolution body. */
+        SkillPageUrl: string;
     };
     pathItems: never;
 }
@@ -475,6 +477,7 @@ export interface operations {
             /** @description The Artifact is ready. */
             200: {
                 headers: {
+                    "Skilld-Page-Url": components["headers"]["SkillPageUrl"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -513,6 +516,7 @@ export interface operations {
             /** @description Current Resolution state. */
             200: {
                 headers: {
+                    "Skilld-Page-Url": components["headers"]["SkillPageUrl"];
                     [name: string]: unknown;
                 };
                 content: {

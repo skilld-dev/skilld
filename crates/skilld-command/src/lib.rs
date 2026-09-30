@@ -24,8 +24,8 @@ pub use local_store::{
     TargetInstall, TransactionGate,
 };
 pub use output::{CommandPlatform, OutputContext};
-pub use provenance::{RemoteProvenance, skill_page_url};
-use provenance::{delivered_skill_page_url, source_status_caution};
+use provenance::source_status_caution;
+pub use provenance::{RemoteProvenance, search_result_page_url};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
@@ -252,6 +252,9 @@ pub struct InstalledSkill {
     pub source: LockedSource,
     /// `verified`, `local`, or `unverified`.
     pub source_status: &'static str,
+    /// The Skill page skilld.dev named for this delivery. `None` when it named
+    /// none. The lockfile never records it.
+    pub page_url: Option<String>,
 }
 
 pub trait Host {
@@ -1166,11 +1169,13 @@ fn dispatch<H: Host>(
                 .map(|result| {
                     let selector = result.selector().map_err(CommandError::remote)?;
                     Ok(SearchItem {
-                        page_url: skill_page_url(
-                            &result.source.owner,
-                            &result.source.repository,
-                            &result.name,
-                        ),
+                        page_url: result.page_url.clone().or_else(|| {
+                            search_result_page_url(
+                                &result.source.owner,
+                                &result.source.repository,
+                                &result.name,
+                            )
+                        }),
                         name: result.name,
                         selector: selector.to_string(),
                         description: result.description,
@@ -1391,9 +1396,9 @@ fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
             provenance.source_url.clone(),
             provenance.source_url.clone(),
         ));
-        if let Some(page) = delivered_skill_page_url(provenance, &skill.name, skill.source_status) {
-            lines.push(Line::linked_field("Skill page", page.clone(), page));
-        }
+    }
+    if let Some(page) = &skill.page_url {
+        lines.push(Line::linked_field("Skill page", page.clone(), page.clone()));
     }
     Ok(lines)
 }
@@ -1772,7 +1777,7 @@ impl LocalHost {
                 known,
             )
             .map_err(CommandError::store)?;
-        self.installed(scope, &name, known)
+        self.installed(scope, &name, known, prepared.page_url)
     }
 
     /// Read back what the lockfile recorded for one installed Skill.
@@ -1781,6 +1786,7 @@ impl LocalHost {
         scope: InstallScope,
         name: &skilld_core::SkillName,
         known: &[ResolvedTarget],
+        page_url: Option<String>,
     ) -> Result<InstalledSkill, CommandError> {
         let view = self
             .store(scope)
@@ -1790,6 +1796,7 @@ impl LocalHost {
             name: view.name,
             source: view.skill.source,
             source_status: view.skill.source_status.as_str(),
+            page_url,
         })
     }
 
@@ -1860,7 +1867,8 @@ impl LocalHost {
             locked_selector.source().repository.as_str(),
             skill_path.as_str(),
             revision.as_str(),
-        )?;
+        )?
+        .with_page_url(prepared.page_url.clone());
         let source_status = prepared.source_status.as_str();
         let (name, _, files) =
             skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
@@ -2024,6 +2032,7 @@ impl LocalHost {
                     })
                     .collect::<Result<Vec<_>, _>>()?
             };
+            let mut page_url = None;
             match view.skill.source {
                 LockedSource::Local { path } => {
                     let (source, locked_source) =
@@ -2070,6 +2079,7 @@ impl LocalHost {
                         .prepare(&exact, direct)
                         .map_err(CommandError::remote)?;
                     let staged = materialize_remote(&prepared.files)?;
+                    page_url = prepared.page_url;
                     store
                         .install_from_with_status(
                             staged.path(),
@@ -2081,7 +2091,7 @@ impl LocalHost {
                         .map_err(CommandError::store)?;
                 }
             }
-            restored.push(self.installed(request.scope, &skill_name, &known)?);
+            restored.push(self.installed(request.scope, &skill_name, &known, page_url)?);
         }
         Ok(restored)
     }
@@ -2132,7 +2142,7 @@ impl Host for LocalHost {
                     .store(request.scope)
                     .install_from(&source, locked_source, &targets, &known)
                     .map_err(CommandError::store)?;
-                Ok(vec![self.installed(request.scope, &name, &known)?])
+                Ok(vec![self.installed(request.scope, &name, &known, None)?])
             }
         }
     }
@@ -3606,6 +3616,7 @@ mod tests {
             name: "skilld".to_owned(),
             source: LockedSource::BundledSkilld,
             source_status: "local",
+            page_url: None,
         }
     }
 
@@ -3658,6 +3669,9 @@ mod tests {
                     skill_path: format!("skills/{name}"),
                 },
                 source_status: "verified",
+                // skilld.dev names a page only for a Skill its registry holds.
+                page_url: (name == "vue")
+                    .then(|| "https://skilld.dev/gh/skilld-dev/skills/vue".to_owned()),
             };
             self.installs.lock().unwrap().push(request);
             Ok(vec![installed])
@@ -3812,7 +3826,6 @@ mod tests {
                 "skilld checked where this Skill came from, not what it asks you to do.\n",
                 "Read it before you follow it.\n",
                 "Read it first: https://github.com/skilld-dev/skills/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",
-                "Skill page: https://skilld.dev/gh/skilld-dev/skills/nuxt\n",
             )
         );
         let requests = host.requests();
@@ -3945,6 +3958,7 @@ mod tests {
                         skill_path: "skills/vue".to_owned(),
                     },
                     source_status: "unverified",
+                    page_url: None,
                 }]),
                 other => panic!("unexpected source: {other:?}"),
             }
@@ -4010,6 +4024,7 @@ mod tests {
                     skill_path: format!("skills/{name}"),
                 },
                 source_status: "verified",
+                page_url: None,
             }])
         }
 
@@ -4073,6 +4088,7 @@ mod tests {
                     skill_path: format!("skills/{name}"),
                 },
                 source_status: "verified",
+                page_url: None,
             }])
         }
 
@@ -4206,6 +4222,7 @@ mod tests {
                             skill_path: "skills/vue".to_owned(),
                         },
                         source_status: "unverified",
+                        page_url: None,
                     }])
                 }
                 InstallSource::DirectRemote(_) => Err(CommandError::operation(
@@ -4332,6 +4349,7 @@ mod tests {
                             skill_path: "skills/vue".to_owned(),
                         },
                         source_status: "unverified",
+                        page_url: None,
                     }])
                 }
                 other => panic!("unexpected source: {other:?}"),
