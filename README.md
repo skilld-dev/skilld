@@ -98,6 +98,19 @@ skilld install antfu/skills/vue
 
 An install writes files. If an Agent runs the install, it asks you first.
 
+### Claude Code plugin
+
+The plugin installs the skilld-maintained Skills and adds the skilld.dev MCP server.
+Run these in Claude Code:
+
+```sh
+/plugin marketplace add skilld-dev/skilld
+/plugin install skilld@skilld
+```
+
+The MCP server searches the registry and returns run and install commands. It never runs a Skill.
+For ChatGPT, Claude, Codex, Cursor, and VS Code, see [skilld.dev/developers](https://skilld.dev/developers).
+
 ### Run or install?
 
 | | `skilld run` | `skilld install` |
