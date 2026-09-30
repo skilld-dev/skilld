@@ -1092,13 +1092,22 @@ impl SkilldRemote {
     }
 
     /// The Skill page URL the server named in a response header, when it is
-    /// one this client may print.
-    ///
-    /// An older server sends no header. A header that is not a `/gh/` page on
-    /// the configured service origin is dropped, so the output never prints a
-    /// URL for a host the user did not choose.
+    /// one this client may print. An older server sends no header.
     fn page_url_header(&self, response: &HttpResponse) -> Option<String> {
-        let url = Url::parse(response.header(PAGE_URL_HEADER)?).ok()?;
+        self.page_url(response.header(PAGE_URL_HEADER)?)
+    }
+
+    /// A Skill page URL from the server, when it is one this client may print.
+    ///
+    /// Search results and the Resolution header share this rule. A value that
+    /// is not a `/gh/` page on the configured service origin is dropped, so the
+    /// output never prints a URL for a host the user did not choose. A value
+    /// with a terminal control character is dropped too.
+    fn page_url(&self, value: &str) -> Option<String> {
+        if value.chars().any(is_unsafe_terminal) {
+            return None;
+        }
+        let url = Url::parse(value).ok()?;
         (url.origin() == self.endpoint.origin()
             && url.path().starts_with("/gh/")
             && url.query().is_none()
@@ -2609,7 +2618,11 @@ impl RemoteProvider for SkilldRemote {
             response_limit: SEARCH_LIMIT,
         };
         let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
-        parse_search_response(&response.body)
+        let mut search = parse_search_response(&response.body)?;
+        for item in &mut search.items {
+            item.page_url = item.page_url.take().and_then(|value| self.page_url(&value));
+        }
+        Ok(search)
     }
 
     fn prepare(

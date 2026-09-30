@@ -2626,9 +2626,57 @@ fn a_page_url_for_another_host_or_route_is_dropped() {
         "https://evil.example/gh/skilld-dev/skills",
         "http://127.0.0.1:8787/people/someone",
         "http://127.0.0.1:8787/gh/skilld-dev/skills?next=x",
+        "http://127.0.0.1:8787/gh/skilld-dev/skills#top",
         "not a url",
     ] {
         assert_eq!(prepared_with_page_header(Some(header)), None, "{header}");
+    }
+}
+
+fn searched_page_url(page_url: &str) -> Option<String> {
+    let body = json!({
+        "items": [{
+            "name": "vue-testing",
+            "description": null,
+            "source": {
+                "provider": "github",
+                "owner": "skilld-dev",
+                "repository": "skills",
+                "selector": { "type": "named-skill", "name": "vue-testing" }
+            },
+            "stargazerCount": 120,
+            "pageUrl": page_url,
+        }],
+        "total": 1,
+    });
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&body).unwrap(),
+    )]));
+    search_remote(http)
+        .search("vue testing", 20)
+        .unwrap()
+        .items
+        .remove(0)
+        .page_url
+}
+
+#[test]
+fn a_search_result_carries_the_page_url_the_server_names() {
+    assert_eq!(
+        searched_page_url("http://127.0.0.1:8787/gh/skilld-dev/skills/vue-testing").as_deref(),
+        Some("http://127.0.0.1:8787/gh/skilld-dev/skills/vue-testing")
+    );
+}
+
+#[test]
+fn a_search_page_url_for_another_host_or_with_terminal_controls_is_dropped() {
+    for page_url in [
+        "https://evil.example/gh/skilld-dev/skills/vue-testing",
+        "http://127.0.0.1:8787/gh/skilld-dev/skills/vue-testing?next=x",
+        "http://127.0.0.1:8787/gh/skilld-dev/skills/vue-testing\u{1b}]8;;https://evil.example\u{1b}\\",
+    ] {
+        assert_eq!(searched_page_url(page_url), None, "{page_url:?}");
     }
 }
 
