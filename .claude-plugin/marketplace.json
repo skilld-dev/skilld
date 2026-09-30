@@ -1,0 +1,22 @@
+{
+  "name": "skilld",
+  "description": "Curated Agent Skills from skilld.dev, with the skilld CLI Skill and the registry MCP server.",
+  "owner": {
+    "name": "skilld",
+    "url": "https://skilld.dev"
+  },
+  "plugins": [
+    {
+      "name": "skilld",
+      "source": "./",
+      "description": "The skilld-maintained Skills and the skilld.dev discovery MCP server. Search curated Skills, then run or install them with the skilld CLI.",
+      "homepage": "https://skilld.dev/developers",
+      "mcpServers": {
+        "skilld": {
+          "type": "http",
+          "url": "https://skilld.dev/api/mcp"
+        }
+      }
+    }
+  ]
+}

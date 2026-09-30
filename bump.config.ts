@@ -6,6 +6,7 @@ export default defineConfig({
   commit: 'chore(release): prepare {tag}',
   files: [
     'package.json',
+    '.claude-plugin/plugin.json',
     'packages/harness/package.json',
     'packages/cli-darwin-arm64/package.json',
     'packages/cli-darwin-x64/package.json',
