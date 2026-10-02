@@ -69,6 +69,18 @@ impl TokenProvider for Tokens {
     }
 }
 
+/// A stored sign-in whose refresh skilld.dev rejected.
+struct RejectedRefresh;
+
+impl TokenProvider for RejectedRefresh {
+    fn access_token(&self) -> Result<Option<SecretValue>, RemoteError> {
+        Err(RemoteError::new(
+            "AUTH_REQUIRED",
+            "The account refresh token was rejected.",
+        ))
+    }
+}
+
 struct NoSleep;
 
 impl Sleeper for NoSleep {
@@ -1997,4 +2009,32 @@ fn auth_status_keeps_the_local_answer_when_skilld_dev_is_down() {
 
 fn host_from(http: Arc<FakeHttp>) -> LocalHost {
     host(http, None)
+}
+
+#[test]
+fn a_sign_in_that_cannot_refresh_names_the_login_step_before_any_request() {
+    let http = FakeHttp::with([]);
+    let remote = Arc::new(
+        SkilldRemote::new(
+            http.clone(),
+            Arc::new(RejectedRefresh),
+            NativeRemoteConfig::Unconfigured,
+        )
+        .with_endpoint(ORIGIN)
+        .unwrap(),
+    );
+    let host = LocalHost::new(
+        std::env::temp_dir().join("skilld-api-project"),
+        std::env::temp_dir().join("skilld-api-data"),
+    )
+    .with_api(remote);
+
+    let (exit, _, stderr) = run(&host, &["skilld", "watches"]);
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "AUTH_REQUIRED: The account refresh token was rejected. Run skilld auth login, then run the same command again.\n"
+    );
+    assert!(http.requests().is_empty());
 }

@@ -308,9 +308,21 @@ impl SkilldRemote {
             });
         }
         if operation.access == ApiAccess::Account {
+            // A stored sign-in that cannot refresh fails here, before any
+            // request. It needs the same next step as no sign-in at all.
             let token = self
                 .tokens
-                .access_token()?
+                .access_token()
+                .map_err(|error| match error.code {
+                    "AUTH_REQUIRED" => RemoteError::new(
+                        "AUTH_REQUIRED",
+                        format!(
+                            "{} Run skilld auth login, then run the same command again.",
+                            error.message.trim_end()
+                        ),
+                    ),
+                    _ => error,
+                })?
                 .ok_or_else(|| RemoteError::new("AUTH_REQUIRED", SIGN_IN_FIRST))?;
             headers.push(HttpHeader {
                 name: "authorization".to_owned(),
