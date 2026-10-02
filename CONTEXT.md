@@ -43,7 +43,9 @@ The skilld CLI never falls back to direct remote access automatically.
 - Native and WASIp2 adapters call one Rust command module.
 - JavaScript selects a native package or hosts WASIp2 interfaces.
 - Harness remains JavaScript and composes the AI SDK Harness.
-- OpenAPI 3.1 is the cross-language protocol source.
+- `packages/sdk` owns the public API contract and generated OpenAPI 3.1 document.
+- Rust contract tests read that document directly.
+- `packages/protocol` owns the Artifact delivery wire contract.
 
 ## Filesystem state
 

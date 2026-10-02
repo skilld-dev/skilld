@@ -16,7 +16,7 @@ use skilld_command::{
 };
 use skilld_core::RemoteError;
 
-const SPEC: &str = include_str!("../../../packages/protocol/openapi/skilld-api-v1.json");
+const SPEC: &str = include_str!("../../../packages/sdk/generated/openapi.v1.json");
 const ORIGIN: &str = "http://127.0.0.1:8787";
 const TOKEN: &str = "skilld-test-token-1234567890";
 

@@ -30,6 +30,8 @@ catalogs:
   dev-build:
     '@types/node': ^26.4.1
     obuild: ^0.4.39
+    tsdown: ^0.22.14
+    tsx: ^4.23.13
   dev-lint:
     '@antfu/eslint-config': ^9.5.1
     eslint: ^10.9.1
