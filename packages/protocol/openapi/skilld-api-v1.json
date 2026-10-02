@@ -1,0 +1,3571 @@
+{
+  "components": {
+    "schemas": {
+      "Problem": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "INVALID_REQUEST",
+              "AUTH_REQUIRED",
+              "FORBIDDEN",
+              "NOT_FOUND",
+              "CONFLICT",
+              "RATE_LIMITED",
+              "INTERNAL_ERROR",
+              "SERVICE_UNAVAILABLE"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "type": "object"
+      },
+      "index_requests.create.request": {
+        "additionalProperties": false,
+        "properties": {
+          "repository": {
+            "maxLength": 2048,
+            "minLength": 3,
+            "pattern": "^(?:[\\w.-]+\\/[\\w.-]+|https?:\\/\\/(?:www\\.)?github\\.com\\/\\S+)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository"
+        ],
+        "type": "object"
+      },
+      "index_requests.create.response": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "maxLength": 39,
+                "minLength": 1,
+                "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                "type": "string"
+              },
+              "repository": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[\\w.-]+$",
+                "type": "string"
+              },
+              "skills": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "installCommand": {
+                      "type": "string"
+                    },
+                    "likes": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "pattern": "^[\\w.-]+$",
+                      "type": "string"
+                    },
+                    "owner": {
+                      "maxLength": 39,
+                      "minLength": 1,
+                      "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                      "type": "string"
+                    },
+                    "pageUrl": {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    "repository": {
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "pattern": "^[\\w.-]+$",
+                      "type": "string"
+                    },
+                    "runCommand": {
+                      "type": "string"
+                    },
+                    "sourceUrl": {
+                      "anyOf": [
+                        {
+                          "format": "uri",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "stars": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "repository",
+                    "name",
+                    "displayName",
+                    "description",
+                    "stars",
+                    "likes",
+                    "updatedAt",
+                    "pageUrl",
+                    "sourceUrl",
+                    "runCommand",
+                    "installCommand"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "status": {
+                "const": "indexed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "owner",
+              "repository",
+              "skills"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "owner": {
+                "maxLength": 39,
+                "minLength": 1,
+                "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                "type": "string"
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "stage": {
+                        "const": "queued",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "stage": {
+                        "const": "checking",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "indexed": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "stage": {
+                        "const": "indexing",
+                        "type": "string"
+                      },
+                      "total": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "stage",
+                      "indexed",
+                      "total"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "repository": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[\\w.-]+$",
+                "type": "string"
+              },
+              "status": {
+                "const": "queued",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "id",
+              "owner",
+              "repository",
+              "progress"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "index_requests.get.response": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "owner": {
+                "maxLength": 39,
+                "minLength": 1,
+                "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                "type": "string"
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "stage": {
+                        "const": "queued",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "stage": {
+                        "const": "checking",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "stage"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "indexed": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "stage": {
+                        "const": "indexing",
+                        "type": "string"
+                      },
+                      "total": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "stage",
+                      "indexed",
+                      "total"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "repository": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[\\w.-]+$",
+                "type": "string"
+              },
+              "status": {
+                "const": "queued",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "id",
+              "owner",
+              "repository",
+              "progress"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "maxLength": 39,
+                "minLength": 1,
+                "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                "type": "string"
+              },
+              "repository": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[\\w.-]+$",
+                "type": "string"
+              },
+              "skills": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "description": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "installCommand": {
+                      "type": "string"
+                    },
+                    "likes": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "pattern": "^[\\w.-]+$",
+                      "type": "string"
+                    },
+                    "owner": {
+                      "maxLength": 39,
+                      "minLength": 1,
+                      "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                      "type": "string"
+                    },
+                    "pageUrl": {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    "repository": {
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "pattern": "^[\\w.-]+$",
+                      "type": "string"
+                    },
+                    "runCommand": {
+                      "type": "string"
+                    },
+                    "sourceUrl": {
+                      "anyOf": [
+                        {
+                          "format": "uri",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "stars": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "repository",
+                    "name",
+                    "displayName",
+                    "description",
+                    "stars",
+                    "likes",
+                    "updatedAt",
+                    "pageUrl",
+                    "sourceUrl",
+                    "runCommand",
+                    "installCommand"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "status": {
+                "const": "indexed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "owner",
+              "repository",
+              "skills"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "maxLength": 39,
+                "minLength": 1,
+                "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "repository": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[\\w.-]+$",
+                "type": "string"
+              },
+              "status": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "owner",
+              "repository",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "owners.get.response": {
+        "additionalProperties": false,
+        "properties": {
+          "avatarUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user",
+              "organization"
+            ],
+            "type": "string"
+          },
+          "login": {
+            "maxLength": 39,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pageUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "repositories": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "repository": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "skillCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "stars": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "repository",
+                "description",
+                "stars",
+                "skillCount",
+                "pageUrl"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "login",
+          "name",
+          "avatarUrl",
+          "kind",
+          "pageUrl",
+          "repositories"
+        ],
+        "type": "object"
+      },
+      "repositories.get.response": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "installCommand": {
+            "type": "string"
+          },
+          "owner": {
+            "maxLength": 39,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+            "type": "string"
+          },
+          "pageUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "pushedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repository": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "type": "string"
+          },
+          "repositoryUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "skills": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "installCommand": {
+                  "type": "string"
+                },
+                "likes": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "owner": {
+                  "maxLength": 39,
+                  "minLength": 1,
+                  "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                  "type": "string"
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "repository": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "runCommand": {
+                  "type": "string"
+                },
+                "sourceUrl": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "stars": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "owner",
+                "repository",
+                "name",
+                "displayName",
+                "description",
+                "stars",
+                "likes",
+                "updatedAt",
+                "pageUrl",
+                "sourceUrl",
+                "runCommand",
+                "installCommand"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "stars": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "owner",
+          "repository",
+          "description",
+          "stars",
+          "pushedAt",
+          "repositoryUrl",
+          "pageUrl",
+          "installCommand",
+          "skills"
+        ],
+        "type": "object"
+      },
+      "skills.browse.response": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "installCommand": {
+                  "type": "string"
+                },
+                "likes": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "owner": {
+                  "maxLength": 39,
+                  "minLength": 1,
+                  "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                  "type": "string"
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "repository": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "runCommand": {
+                  "type": "string"
+                },
+                "sourceUrl": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "stars": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "owner",
+                "repository",
+                "name",
+                "displayName",
+                "description",
+                "stars",
+                "likes",
+                "updatedAt",
+                "pageUrl",
+                "sourceUrl",
+                "runCommand",
+                "installCommand"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
+      "skills.get.response": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedTools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "authorName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "size": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "generatedSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "installCommand": {
+            "type": "string"
+          },
+          "license": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "likes": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "markdown": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "type": "string"
+          },
+          "owner": {
+            "maxLength": 39,
+            "minLength": 1,
+            "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+            "type": "string"
+          },
+          "pageUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "pushedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repository": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "type": "string"
+          },
+          "repositoryUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "runCommand": {
+            "type": "string"
+          },
+          "skillPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceCommit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceGone": {
+            "type": "boolean"
+          },
+          "sourceUrl": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stars": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "owner",
+          "repository",
+          "name",
+          "displayName",
+          "description",
+          "stars",
+          "likes",
+          "updatedAt",
+          "pageUrl",
+          "sourceUrl",
+          "runCommand",
+          "installCommand",
+          "authorName",
+          "license",
+          "repositoryUrl",
+          "skillPath",
+          "sourceCommit",
+          "sourceGone",
+          "pushedAt",
+          "tags",
+          "allowedTools",
+          "files",
+          "generatedSummary",
+          "markdown"
+        ],
+        "type": "object"
+      },
+      "skills.search.response": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "anyOf": [
+                    {
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9](?:[a-z0-9]|-(?!-)){0,62}[a-z0-9]$|^[a-z0-9]$",
+                  "type": "string"
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "owner": {
+                      "maxLength": 39,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "provider": {
+                      "const": "github",
+                      "type": "string"
+                    },
+                    "repository": {
+                      "maxLength": 100,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "selector": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9](?:[a-z0-9]|-(?!-)){0,62}[a-z0-9]$|^[a-z0-9]$",
+                          "type": "string"
+                        },
+                        "type": {
+                          "const": "named-skill",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "owner",
+                    "repository",
+                    "selector"
+                  ],
+                  "type": "object"
+                },
+                "stargazerCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "source",
+                "stargazerCount"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
+      "tracks.get.response": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "installCommand": {
+                  "type": "string"
+                },
+                "likes": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "owner": {
+                  "maxLength": 39,
+                  "minLength": 1,
+                  "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                  "type": "string"
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "repository": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "runCommand": {
+                  "type": "string"
+                },
+                "sourceUrl": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "stars": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "owner",
+                "repository",
+                "name",
+                "displayName",
+                "description",
+                "stars",
+                "likes",
+                "updatedAt",
+                "pageUrl",
+                "sourceUrl",
+                "runCommand",
+                "installCommand"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "line": {
+            "type": "string"
+          },
+          "pageUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "type": "string"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "label",
+          "line",
+          "pageUrl",
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
+      "tracks.list.response": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "string"
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "skillCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "slug": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "slug",
+                "label",
+                "line",
+                "pageUrl",
+                "skillCount"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
+      "trending.list.response": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "installCommand": {
+                  "type": "string"
+                },
+                "likes": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "owner": {
+                  "maxLength": 39,
+                  "minLength": 1,
+                  "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+                  "type": "string"
+                },
+                "pageUrl": {
+                  "format": "uri",
+                  "type": "string"
+                },
+                "repository": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[\\w.-]+$",
+                  "type": "string"
+                },
+                "runCommand": {
+                  "type": "string"
+                },
+                "signal": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "authorCount": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "social",
+                          "type": "string"
+                        },
+                        "mentionCount": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "post": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "authorHandle": {
+                              "type": "string"
+                            },
+                            "authorName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "platform": {
+                              "enum": [
+                                "x",
+                                "bsky"
+                              ],
+                              "type": "string"
+                            },
+                            "postedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "format": "uri",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url",
+                            "platform",
+                            "authorHandle",
+                            "authorName",
+                            "text",
+                            "postedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "authorCount",
+                        "mentionCount",
+                        "post"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "star-surge",
+                          "type": "string"
+                        },
+                        "starGain": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "surgedOn": {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "starGain",
+                        "surgedOn"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "authorCount": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "social-and-star-surge",
+                          "type": "string"
+                        },
+                        "mentionCount": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "post": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "authorHandle": {
+                              "type": "string"
+                            },
+                            "authorName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "platform": {
+                              "enum": [
+                                "x",
+                                "bsky"
+                              ],
+                              "type": "string"
+                            },
+                            "postedAt": {
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "format": "uri",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url",
+                            "platform",
+                            "authorHandle",
+                            "authorName",
+                            "text",
+                            "postedAt"
+                          ],
+                          "type": "object"
+                        },
+                        "starGain": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "surgedOn": {
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "authorCount",
+                        "mentionCount",
+                        "post",
+                        "starGain",
+                        "surgedOn"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "star-count",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "sourceUrl": {
+                  "anyOf": [
+                    {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "stars": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "updatedAt": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "owner",
+                "repository",
+                "name",
+                "displayName",
+                "description",
+                "stars",
+                "likes",
+                "updatedAt",
+                "pageUrl",
+                "sourceUrl",
+                "runCommand",
+                "installCommand",
+                "signal"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "A skilld token. `skilld auth login` stores one, and skilld.dev/me/cli-tokens/new creates one.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "sessionAuth": {
+        "in": "cookie",
+        "name": "nuxt-session",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "Read the skilld registry, and manage your account: likes, watches, collections, and the digest. Every answer is plain JSON. Every failure is application/problem+json.",
+    "license": {
+      "identifier": "MIT",
+      "name": "MIT"
+    },
+    "title": "skilld API",
+    "version": "1"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/browse": {
+      "get": {
+        "description": "The listing behind skilld.dev/skills, filtered by `owner` and `tag`. `sort` orders it by stars, likes, or the last SKILL.md change. With `q`, Skills rank by relevance to the query and `sort` does not apply. Use `tracks.get` for the Skills of one track.",
+        "operationId": "skills.browse",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "example": "vercel-labs",
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "maxLength": 39,
+              "minLength": 1,
+              "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            }
+          },
+          {
+            "example": "stars",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "stars",
+              "enum": [
+                "stars",
+                "likes",
+                "updated"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "example": 1,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "description": "Review UI code for compliance with web interface guidelines.",
+                      "displayName": "Web Design Guidelines",
+                      "installCommand": "npx skilld install vercel-labs/agent-skills/web-design-guidelines",
+                      "likes": 41,
+                      "name": "web-design-guidelines",
+                      "owner": "vercel-labs",
+                      "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills/web-design-guidelines",
+                      "repository": "agent-skills",
+                      "runCommand": "npx skilld run vercel-labs/agent-skills/web-design-guidelines",
+                      "sourceUrl": "https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md",
+                      "stars": 18204,
+                      "updatedAt": "2026-09-28T14:02:11.000Z"
+                    }
+                  ],
+                  "total": 6
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/skills.browse.response"
+                }
+              }
+            },
+            "description": "Browse Skills",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=60, stale-while-revalidate=300",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.browse",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.browse",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.browse",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.browse",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Browse Skills",
+        "tags": [
+          "Skills"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/index-requests": {
+      "post": {
+        "description": "If the registry already holds Skills from the Repository, the status is `indexed` and the answer lists them. If not, the status is `queued`: poll `indexRequests.get` with the `id`. A second request for a Repository that is already queued answers the same `id`.",
+        "operationId": "index_requests.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "repository": "https://github.com/vercel-labs/agent-skills"
+              },
+              "schema": {
+                "$ref": "#/components/schemas/index_requests.create.request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "id": "0f8b5c1e-3d4a-4f6b-9a2c-7e1d5b8c9a04",
+                  "owner": "vercel-labs",
+                  "progress": {
+                    "stage": "queued"
+                  },
+                  "repository": "agent-skills",
+                  "status": "queued"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/index_requests.create.response"
+                }
+              }
+            },
+            "description": "Index a Repository",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "private, no-store",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Index a Repository",
+        "tags": [
+          "Index requests"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "mutation",
+          "retry": "never"
+        }
+      }
+    },
+    "/api/v1/index-requests/{id}": {
+      "get": {
+        "description": "The state of one index request. Poll while the status is `queued`. `indexed` lists the Skills the registry found. `failed` gives the reason.",
+        "operationId": "index_requests.get",
+        "parameters": [
+          {
+            "example": "0f8b5c1e-3d4a-4f6b-9a2c-7e1d5b8c9a04",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "id": "0f8b5c1e-3d4a-4f6b-9a2c-7e1d5b8c9a04",
+                  "owner": "vercel-labs",
+                  "progress": {
+                    "indexed": 3,
+                    "stage": "indexing",
+                    "total": 6
+                  },
+                  "repository": "agent-skills",
+                  "status": "queued"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/index_requests.get.response"
+                }
+              }
+            },
+            "description": "Get an index request",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "private, no-store",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: NOT_FOUND.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "NOT_FOUND"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Get an index request",
+        "tags": [
+          "Index requests"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/owners/{owner}": {
+      "get": {
+        "description": "One GitHub organization or user, and each Repository it publishes Skills from, the Repository with the most Skills first. If the registry holds no Skill from the Owner, the answer is NOT_FOUND.",
+        "operationId": "owners.get",
+        "parameters": [
+          {
+            "example": "vercel-labs",
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 39,
+              "minLength": 1,
+              "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "avatarUrl": "https://github.com/vercel-labs.png",
+                  "kind": "organization",
+                  "login": "vercel-labs",
+                  "name": "Vercel Labs",
+                  "pageUrl": "https://skilld.dev/gh/vercel-labs",
+                  "repositories": [
+                    {
+                      "description": "Skills for AI coding agents.",
+                      "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills",
+                      "repository": "agent-skills",
+                      "skillCount": 6,
+                      "stars": 18204
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/owners.get.response"
+                }
+              }
+            },
+            "description": "Get an Owner",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=60, stale-while-revalidate=300",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: NOT_FOUND.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "NOT_FOUND"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Get an Owner",
+        "tags": [
+          "Owners"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/repositories/{owner}/{repository}": {
+      "get": {
+        "description": "One Repository and every Skill the registry holds from it, most recently changed first. `installCommand` installs all of them. If the registry holds no Skill from the Repository, the answer is NOT_FOUND: send an index request to add it.",
+        "operationId": "repositories.get",
+        "parameters": [
+          {
+            "example": "vercel-labs",
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 39,
+              "minLength": 1,
+              "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+              "type": "string"
+            }
+          },
+          {
+            "example": "agent-skills",
+            "in": "path",
+            "name": "repository",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[\\w.-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "description": "Skills for AI coding agents.",
+                  "installCommand": "npx skilld add vercel-labs/agent-skills",
+                  "owner": "vercel-labs",
+                  "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills",
+                  "pushedAt": "2026-09-30T09:12:44.000Z",
+                  "repository": "agent-skills",
+                  "repositoryUrl": "https://github.com/vercel-labs/agent-skills",
+                  "skills": [
+                    {
+                      "description": "Review UI code for compliance with web interface guidelines.",
+                      "displayName": "Web Design Guidelines",
+                      "installCommand": "npx skilld install vercel-labs/agent-skills/web-design-guidelines",
+                      "likes": 41,
+                      "name": "web-design-guidelines",
+                      "owner": "vercel-labs",
+                      "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills/web-design-guidelines",
+                      "repository": "agent-skills",
+                      "runCommand": "npx skilld run vercel-labs/agent-skills/web-design-guidelines",
+                      "sourceUrl": "https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md",
+                      "stars": 18204,
+                      "updatedAt": "2026-09-28T14:02:11.000Z"
+                    }
+                  ],
+                  "stars": 18204
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/repositories.get.response"
+                }
+              }
+            },
+            "description": "Get a Repository",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=60, stale-while-revalidate=300",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: NOT_FOUND.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "NOT_FOUND"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Get a Repository",
+        "tags": [
+          "Repositories"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "description": "Semantic search over admitted Skills. The answer shape is frozen for skilld 3.2.0, so use `skills.get` for anything beyond the source and the star count.",
+        "operationId": "skills.search",
+        "parameters": [
+          {
+            "example": "tailwind",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "example": 1,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "description": "Tailwind CSS v4 patterns and migration notes.",
+                      "name": "tailwind-v4",
+                      "source": {
+                        "owner": "nuxt",
+                        "provider": "github",
+                        "repository": "ui",
+                        "selector": {
+                          "name": "tailwind-v4",
+                          "type": "named-skill"
+                        }
+                      },
+                      "stargazerCount": 5421
+                    }
+                  ],
+                  "total": 12
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/skills.search.response"
+                }
+              }
+            },
+            "description": "Search Skills",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=60, stale-while-revalidate=300",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.search",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.search",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.search",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.search",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Search Skills",
+        "tags": [
+          "Skills"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/skills/{owner}/{repository}/{name}": {
+      "get": {
+        "description": "One Skill with its provenance: the Owner, the exact SKILL.md, the commit the registry read, and the run and install commands.",
+        "operationId": "skills.get",
+        "parameters": [
+          {
+            "example": "vercel-labs",
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 39,
+              "minLength": 1,
+              "pattern": "^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$",
+              "type": "string"
+            }
+          },
+          {
+            "example": "agent-skills",
+            "in": "path",
+            "name": "repository",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[\\w.-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "example": "web-design-guidelines",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[\\w.-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "allowedTools": [],
+                  "authorName": "Vercel Labs",
+                  "description": "Review UI code for compliance with web interface guidelines.",
+                  "displayName": "Web Design Guidelines",
+                  "files": [
+                    {
+                      "path": "references/checklist.md",
+                      "size": 4210
+                    }
+                  ],
+                  "generatedSummary": "Checks interface code against a published list of web design rules.",
+                  "installCommand": "npx skilld install vercel-labs/agent-skills/web-design-guidelines",
+                  "license": "MIT",
+                  "likes": 41,
+                  "markdown": "---\nname: web-design-guidelines\ndescription: Review UI code for compliance with web interface guidelines.\n---\n\n# Web Design Guidelines\n",
+                  "name": "web-design-guidelines",
+                  "owner": "vercel-labs",
+                  "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills/web-design-guidelines",
+                  "pushedAt": "2026-09-30T09:12:44.000Z",
+                  "repository": "agent-skills",
+                  "repositoryUrl": "https://github.com/vercel-labs/agent-skills",
+                  "runCommand": "npx skilld run vercel-labs/agent-skills/web-design-guidelines",
+                  "skillPath": "skills/web-design-guidelines/SKILL.md",
+                  "sourceCommit": "4f1c2a9e0b7d3c5a8e6f1b2d4c7a9e0f3b5d8c1a",
+                  "sourceGone": false,
+                  "sourceUrl": "https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md",
+                  "stars": 18204,
+                  "tags": [
+                    "design",
+                    "accessibility"
+                  ],
+                  "updatedAt": "2026-09-28T14:02:11.000Z"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/skills.get.response"
+                }
+              }
+            },
+            "description": "Get a Skill",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=60, stale-while-revalidate=300",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: NOT_FOUND.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "NOT_FOUND"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Get a Skill",
+        "tags": [
+          "Skills"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/tracks": {
+      "get": {
+        "description": "Every track that holds at least one Skill, the track with the most Skills first. The list is short, so it has no pages.",
+        "operationId": "tracks.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "label": "Design and interface work",
+                      "line": "You care how the interface looks, moves, and reads.",
+                      "pageUrl": "https://skilld.dev/skills/design",
+                      "skillCount": 41,
+                      "slug": "design"
+                    }
+                  ],
+                  "total": 14
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/tracks.list.response"
+                }
+              }
+            },
+            "description": "List tracks",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=300, stale-while-revalidate=3600",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "List tracks",
+        "tags": [
+          "Tracks"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/tracks/{slug}": {
+      "get": {
+        "description": "One track and its Skills, in the order its page shows them: the pinned Skills first, then the rest by stars. `total` counts every Skill in the track.",
+        "operationId": "tracks.get",
+        "parameters": [
+          {
+            "example": "design",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            }
+          },
+          {
+            "example": 1,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "description": "Review UI code for compliance with web interface guidelines.",
+                      "displayName": "Web Design Guidelines",
+                      "installCommand": "npx skilld install vercel-labs/agent-skills/web-design-guidelines",
+                      "likes": 41,
+                      "name": "web-design-guidelines",
+                      "owner": "vercel-labs",
+                      "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills/web-design-guidelines",
+                      "repository": "agent-skills",
+                      "runCommand": "npx skilld run vercel-labs/agent-skills/web-design-guidelines",
+                      "sourceUrl": "https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md",
+                      "stars": 18204,
+                      "updatedAt": "2026-09-28T14:02:11.000Z"
+                    }
+                  ],
+                  "label": "Design and interface work",
+                  "line": "You care how the interface looks, moves, and reads.",
+                  "pageUrl": "https://skilld.dev/skills/design",
+                  "slug": "design",
+                  "total": 41
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/tracks.get.response"
+                }
+              }
+            },
+            "description": "Get a track",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=300, stale-while-revalidate=3600",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: NOT_FOUND.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "NOT_FOUND"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "Get a track",
+        "tags": [
+          "Tracks"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    },
+    "/api/v1/trending": {
+      "get": {
+        "description": "The trending board at skilld.dev/skills/trending, in rank order. Rows with a `social` or `star-surge` reason always rank above `star-count` rows. `total` counts the whole board, at most 30 rows.",
+        "operationId": "trending.list",
+        "parameters": [
+          {
+            "example": "week",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "week",
+              "enum": [
+                "week",
+                "month"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "example": 1,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 30,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "description": "Review UI code for compliance with web interface guidelines.",
+                      "displayName": "Web Design Guidelines",
+                      "installCommand": "npx skilld install vercel-labs/agent-skills/web-design-guidelines",
+                      "likes": 41,
+                      "name": "web-design-guidelines",
+                      "owner": "vercel-labs",
+                      "pageUrl": "https://skilld.dev/gh/vercel-labs/agent-skills/web-design-guidelines",
+                      "repository": "agent-skills",
+                      "runCommand": "npx skilld run vercel-labs/agent-skills/web-design-guidelines",
+                      "signal": {
+                        "authorCount": 3,
+                        "kind": "social",
+                        "mentionCount": 4,
+                        "post": {
+                          "authorHandle": "ada_ships",
+                          "authorName": "Ada",
+                          "platform": "x",
+                          "postedAt": "2026-09-29T16:40:00.000Z",
+                          "text": "web-design-guidelines catches the UI mistakes I used to catch in review.",
+                          "url": "https://x.com/ada_ships/status/1972000000000000000"
+                        }
+                      },
+                      "sourceUrl": "https://github.com/vercel-labs/agent-skills/blob/main/skills/web-design-guidelines/SKILL.md",
+                      "stars": 18204,
+                      "updatedAt": "2026-09-28T14:02:11.000Z"
+                    }
+                  ],
+                  "total": 30
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/trending.list.response"
+                }
+              }
+            },
+            "description": "List trending Skills",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "public, max-age=300, stale-while-revalidate=600",
+                  "type": "string"
+                }
+              },
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "trending.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INVALID_REQUEST.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "trending.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INVALID_REQUEST"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: INTERNAL_ERROR.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "trending.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "INTERNAL_ERROR"
+            ]
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: SERVICE_UNAVAILABLE.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "trending.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "SERVICE_UNAVAILABLE"
+            ]
+          }
+        },
+        "security": [],
+        "summary": "List trending Skills",
+        "tags": [
+          "Trending"
+        ],
+        "x-skilld-lifecycle": {
+          "introduced": "1.0.0"
+        },
+        "x-skilld-semantics": {
+          "kind": "query"
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://skilld.dev"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Search the registry and read one Skill with its provenance.",
+      "name": "Skills"
+    },
+    {
+      "description": "Read one Repository and every Skill the registry holds from it.",
+      "name": "Repositories"
+    },
+    {
+      "description": "Ask the registry to index a GitHub Repository, then poll until its Skills are in.",
+      "name": "Index requests"
+    },
+    {
+      "description": "Read one GitHub Owner and the Repositories it publishes Skills from.",
+      "name": "Owners"
+    },
+    {
+      "description": "Tracks: Skills for one kind of work. A person writes each label and line and pins the Skills that lead it.",
+      "name": "Tracks"
+    },
+    {
+      "description": "Skills devs talk about on X and Bluesky, each with the reason it is on the board (ADR-0004). Never ranked by installs or likes.",
+      "name": "Trending"
+    }
+  ]
+}
