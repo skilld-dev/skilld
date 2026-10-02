@@ -5444,7 +5444,7 @@
         }
       },
       "post": {
-        "description": "Creates a skilld token that acts for your account. Send it as a Bearer credential. Store `token` now: no later answer shows it.",
+        "description": "Creates a skilld token that acts for your account. Send it as a Bearer credential. Store `token` now: no later answer shows it. A one-hour GitHub Actions token cannot create a token, so that request is FORBIDDEN.",
         "operationId": "tokens.create",
         "requestBody": {
           "content": {
@@ -5549,6 +5549,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: FORBIDDEN.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tokens.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "FORBIDDEN"
             ]
           },
           "500": {
