@@ -9,6 +9,7 @@ Use the terms in `GLOSSARY.md` exactly.
 - `skilld install skilld --global` installs search, run, and install guidance for Agents.
 - Harness is the JavaScript `skilld-harness` package.
 - `skilld.dev` resolves Repositories into Artifacts with attestations.
+- The skilld CLI reads the registry and acts for an account through the skilld.dev public API.
 
 The skilld CLI and Harness do not import or execute each other.
 

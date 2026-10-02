@@ -221,7 +221,87 @@ Project installs update `.skills/skilld-lock.yaml` and the selected Agent target
 Use `--global` (or `-g`) for account level Agent targets.
 Use `--agent <agent>` to name a target; repeat it for several, or use `--agent all`.
 Use `--mode copy` or `--mode symlink` to control target writes.
-Use `--json` with `search`, `run`, and `update --check` for stable output.
+
+### Read the registry
+
+These commands read skilld.dev and need no account:
+
+```sh
+# One Skill, Repository, curator, or collection, with its provenance
+skilld view vercel-labs/agent-skills/web-design-guidelines
+skilld view vercel-labs/agent-skills
+skilld view @harlan-zw
+skilld view @harlan-zw/design-engineering-essentials
+
+# Browse by owner, tag, and order
+skilld browse --owner vercel-labs --sort likes
+
+# What devs talk about this week, and why each Skill trends
+skilld trending
+
+# Tracks, and the Skills of one track
+skilld tracks
+skilld tracks design
+
+# The curators who publish collections
+skilld curators
+
+# Ask skilld.dev to index a Repository, then wait for its Skills
+skilld index vercel-labs/agent-skills
+```
+
+`skilld view` with a bare name still shows an installed Skill.
+A name with `/` or `@` reads the registry instead.
+
+### Use your account
+
+These commands act for your skilld.dev account. Run `skilld auth login` first.
+
+```sh
+# Settings: email, digest, weekly, likes-public, repository-indexing
+skilld account
+skilld account set digest off
+
+# Like Skills. A like also watches the Repository for your digest.
+skilld like vercel-labs/agent-skills/web-design-guidelines
+skilld unlike vercel-labs/agent-skills/web-design-guidelines
+skilld likes
+skilld likes @harlan-zw
+
+# Watch Repositories and collections, then read what changed
+skilld watch vercel-labs/agent-skills
+skilld watch @harlan-zw/design-engineering-essentials
+skilld unwatch vercel-labs/agent-skills
+skilld watches
+skilld changes --since 2026-09-01
+
+# Your GitHub stars that hold Skills
+skilld stars import
+skilld stars
+
+# Build a collection
+skilld collection create picks --title "My picks"
+skilld collection add @you/picks vercel-labs/agent-skills/web-design-guidelines --reason "Catches UI mistakes"
+skilld collection remove @you/picks vercel-labs/agent-skills/web-design-guidelines
+
+# Index or unpublish your own Repositories
+skilld account scan
+skilld account unpublish you/skills
+
+# Tokens for CI
+skilld tokens
+skilld tokens create --label "CI deploy" --ttl-days 90
+skilld tokens revoke 412
+```
+
+`skilld tokens create` prints the token once. skilld.dev never shows it again.
+Account deletion needs skilld.dev in a browser.
+
+### JSON output
+
+Use `--json` for stable output with `search`, `run`, `update --check`, `view` of a registry ref, and every command in the two sections above.
+The `data` field of each answer is the skilld.dev API answer as skilld.dev sent it.
+A command whose API answer has no body returns `"data": null`.
 
 Run `skilld install --help` for every Agent target value.
 
@@ -342,6 +422,8 @@ It makes network requests only for these reasons:
 
 - `skilld search`, `skilld run`, and `skilld install` of a hosted Skill call the skilld.dev API.
 - If you signed in, those requests carry your account token.
+- The registry commands, such as `skilld browse` and `skilld trending`, call the skilld.dev API without your token.
+- The account commands, such as `skilld like` and `skilld watch`, call the skilld.dev API with your token.
 - `skilld auth login` sends your computer hostname to name the sign-in. Only you see it on skilld.dev.
 - `--direct` fetches public Skills from GitHub.
 - `skilld update` compares commits through skilld.dev or the GitHub API.

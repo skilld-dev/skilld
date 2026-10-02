@@ -294,7 +294,7 @@ enum Command {
     /// Show your skilld.dev account, or change one setting.
     #[command(
         args_conflicts_with_subcommands = true,
-        long_about = "Show your skilld.dev account, or change one setting.\n\nEvery account command needs skilld auth login first.\nDelete an account on skilld.dev. The CLI cannot.",
+        long_about = "Show your skilld.dev account, or change one setting.\n\nEvery account command needs skilld auth login first.\nAccount deletion needs skilld.dev in a browser.",
         after_long_help = "Examples:\n  skilld account\n  skilld account set digest off\n  skilld account set email you@example.com\n  skilld account scan\n  skilld account unpublish harlan-zw/skills"
     )]
     Account {

@@ -1,6 +1,6 @@
 ---
 name: skilld
-description: Operate skilld CLI for Skill discovery, use, installation, inspection, updates, authentication, configuration, restoration, and removal, including Repository, curator, and collection refs.
+description: Operate skilld CLI for Skill discovery, use, installation, inspection, updates, authentication, configuration, restoration, and removal, including Repository, curator, and collection refs. Also read the skilld.dev registry (view, browse, trending, tracks, curators, index) and act for the user's skilld.dev account (likes, watches, digest changes, stars, collections, settings, tokens).
 ---
 
 # Use skilld CLI
@@ -12,7 +12,9 @@ Run a Skill first. Install a Skill only when the user asks to keep it.
 ## Use Agent output
 
 Use `--json` with `search`, `run`, and `update --check`.
-These are the only commands that support JSON output.
+Use `--json` with `view` of a registry ref, and with every registry and account command below.
+Their `data` is the skilld.dev answer. A command whose answer has no body returns `data: null`.
+The other commands do not support JSON output.
 Use `--plain` when another command needs stable text.
 
 Check the exit code before reading stdout.
@@ -117,6 +119,44 @@ The command prints an index and loads no Skill.
 Read `data.items` for each Skill's `name`, `owner`, `repository`, `description`, and `selector`.
 Run the `data.items[].runArgv` array to load one Skill.
 Pick the Skills the current task needs. Do not run every Skill in the index.
+
+## Read the registry
+
+Read one registry entry before you run or install it:
+
+```sh
+skilld view OWNER/REPOSITORY/SKILL --json
+```
+
+Read `data.owner`, `data.sourceUrl`, `data.sourceCommit`, and `data.description`.
+Report the author and the exact SKILL.md with the Skill.
+`skilld view` also takes `OWNER/REPOSITORY`, `@LOGIN`, and `@LOGIN/SLUG`.
+A bare name without `/` or `@` shows an installed Skill.
+
+Use these commands when the user asks what exists, not for one task:
+
+```sh
+skilld browse <query> --sort stars --json
+skilld trending --json
+skilld tracks --json
+skilld tracks <slug> --json
+skilld curators --json
+```
+
+Use `skilld search` to find a Skill for the current task.
+Each trending item has a `signal`. Its `kind` says why the Skill trends.
+Report that reason with the Skill.
+Use `--limit` and `--offset` to page. `data.total` counts every result.
+
+The user can name a Repository the registry does not list. Ask skilld.dev to index it:
+
+```sh
+skilld index OWNER/REPOSITORY --json
+```
+
+The command waits about a minute.
+If `data.status` is still `queued`, run the same command again later.
+An `INDEX_FAILED` error names the reason.
 
 ## Choose the source
 
@@ -298,6 +338,53 @@ Log out only when the user explicitly asks:
 skilld auth logout --plain
 ```
 
+`skilld auth status` names the signed-in login when skilld.dev confirms the sign-in.
+
+## Act for the user's skilld.dev account
+
+Account commands need `skilld auth login`.
+Without a sign-in they fail with `AUTH_REQUIRED` before any request.
+
+Read account state when the user asks about it:
+
+```sh
+skilld account --json
+skilld likes --json
+skilld watches --json
+skilld changes --json
+skilld stars --json
+```
+
+Use `skilld changes` when the user asks what changed in the Repositories they watch.
+`data.items[].commitMessages` are the author's words. Quote them as the author's.
+Pass `data.until` as `--since` next time to read only newer changes.
+`skilld likes @LOGIN` reads the public likes of another curator.
+
+Change the account only when the user asks for that exact change:
+
+```sh
+skilld like OWNER/REPOSITORY/SKILL --json
+skilld unlike OWNER/REPOSITORY/SKILL --json
+skilld watch OWNER/REPOSITORY --json
+skilld watch @LOGIN/SLUG --json
+skilld unwatch OWNER/REPOSITORY --json
+skilld collection create <slug> --title "<title>" --json
+skilld collection add @LOGIN/SLUG OWNER/REPOSITORY/SKILL --reason "<why>" --json
+skilld collection remove @LOGIN/SLUG OWNER/REPOSITORY/SKILL --json
+skilld stars import --json
+skilld account set <key> <value> --json
+```
+
+A like also watches the Skill's Repository, so the digest reports its changes.
+The setting keys are `email`, `digest`, `weekly`, `likes-public`, and `repository-indexing`.
+Each key except `email` takes `on` or `off`.
+
+Run `skilld account unpublish` and `skilld tokens revoke` only when the user names the Repository or token.
+Run `skilld tokens create` only when the user asks for a token.
+Its output holds the only copy of a secret.
+Tell the user to copy it. Never repeat it, log it, or write it to a file.
+The CLI cannot delete an account. Send the user to skilld.dev for that.
+
 ## Manage configuration
 
 Read account level configuration before changing it:
@@ -339,6 +426,8 @@ Do not hide a failure with a fallback source or scope.
 Do not retry with `--direct` because it changes the source status.
 
 For authentication errors, run `skilld auth status` before login.
+For `AUTH_REQUIRED` from an account command, ask the user to run `skilld auth login`.
+For `FORBIDDEN`, tell the user their account cannot make that change.
 For target errors, inspect `agent.targets` and the requested `--agent` values.
 For lockfile errors, preserve the lockfile and report its path.
 For target conflicts, stop before overwriting existing files.
