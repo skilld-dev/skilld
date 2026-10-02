@@ -153,6 +153,14 @@ pub(crate) fn render_search(
     }
 }
 
+/// One public API answer in the JSON envelope.
+pub(crate) fn render_api(
+    command: &'static str,
+    data: &serde_json::Value,
+) -> Result<Vec<u8>, CommandError> {
+    render_json_success(command, data, "skilld.dev answer could not be encoded")
+}
+
 pub(crate) fn render_display(kind: ErrorKind, path: &str, text: &str) -> Vec<u8> {
     let (command, data) = if kind == ErrorKind::DisplayVersion {
         (
@@ -363,7 +371,7 @@ fn render_human(
     output
 }
 
-fn escape_plain(value: &str) -> String {
+pub(crate) fn escape_plain(value: &str) -> String {
     let mut output = String::new();
     for character in value.chars() {
         match character {

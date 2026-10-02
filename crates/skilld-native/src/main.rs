@@ -122,6 +122,7 @@ fn main() -> ExitCode {
         .with_detection_environment(detection.clone())
         .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
         .with_account_provider(account.clone())
+        .with_api(remote.clone())
         .with_remote_provider(remote);
     // Only a person at a terminal can answer the Skill picker. An Agent, a
     // pipe, or CI installs every Skill the ref names.

@@ -95,6 +95,27 @@ impl NativeHttpAdapter {
     }
 }
 
+impl NativeHttpAdapter {
+    /// Apply the request headers and the bounded timeout to one builder.
+    fn prepared<B>(
+        &self,
+        mut builder: ureq::RequestBuilder<B>,
+        request: &HttpRequest,
+        timeout: Option<Duration>,
+    ) -> ureq::RequestBuilder<B> {
+        for header in &request.headers {
+            builder = builder.header(&header.name, header.value.expose());
+        }
+        if let Some(timeout) = timeout {
+            builder = builder
+                .config()
+                .timeout_global(Some(timeout.min(Duration::from_secs(30))))
+                .build();
+        }
+        builder
+    }
+}
+
 impl Default for NativeHttpAdapter {
     fn default() -> Self {
         Self::new()
@@ -115,32 +136,25 @@ impl HttpAdapter for NativeHttpAdapter {
             ));
         }
         let response = match request.method {
-            HttpMethod::Get => {
-                let mut builder = self.agent.get(&request.url);
-                for header in &request.headers {
-                    builder = builder.header(&header.name, header.value.expose());
-                }
-                if let Some(timeout) = timeout {
-                    builder = builder
-                        .config()
-                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
-                        .build();
-                }
-                builder.call()
-            }
-            HttpMethod::Post => {
-                let mut builder = self.agent.post(&request.url);
-                for header in &request.headers {
-                    builder = builder.header(&header.name, header.value.expose());
-                }
-                if let Some(timeout) = timeout {
-                    builder = builder
-                        .config()
-                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
-                        .build();
-                }
-                builder.send(request.body.as_slice())
-            }
+            HttpMethod::Get => self
+                .prepared(self.agent.get(&request.url), request, timeout)
+                .call(),
+            HttpMethod::Delete if request.body.is_empty() => self
+                .prepared(self.agent.delete(&request.url), request, timeout)
+                .call(),
+            HttpMethod::Delete => self
+                .prepared(self.agent.delete(&request.url), request, timeout)
+                .force_send_body()
+                .send(request.body.as_slice()),
+            HttpMethod::Post => self
+                .prepared(self.agent.post(&request.url), request, timeout)
+                .send(request.body.as_slice()),
+            HttpMethod::Put => self
+                .prepared(self.agent.put(&request.url), request, timeout)
+                .send(request.body.as_slice()),
+            HttpMethod::Patch => self
+                .prepared(self.agent.patch(&request.url), request, timeout)
+                .send(request.body.as_slice()),
         }
         .map_err(|error| transport_error(&error, &request.url))?;
         let status = response.status().as_u16();

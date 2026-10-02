@@ -1,4 +1,5 @@
 mod config;
+mod discover;
 mod local_store;
 mod outdated;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
@@ -26,6 +27,7 @@ pub use local_store::{
 pub use output::{CommandPlatform, OutputContext};
 use provenance::source_status_caution;
 pub use provenance::{RemoteProvenance, search_result_page_url};
+pub use remote::{ApiAnswer, ApiPage, BrowseQuery, BrowseSort, SkilldApi, TrendingWindow};
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
@@ -181,12 +183,72 @@ enum Command {
         #[arg(short = 'g', long)]
         global: bool,
     },
-    /// View Skill details and source.
+    /// View an installed Skill, or a Skill, Repository, curator, or collection on skilld.dev.
+    #[command(
+        long_about = "View an installed Skill, or a Skill, Repository, curator, or collection on skilld.dev.\n\nGive REF as:\n  NAME\n      An installed Skill: its path, source, source status, and Agent targets.\n  OWNER/REPOSITORY/SKILL\n      One registry Skill: its author, the exact SKILL.md, and the run and install commands.\n  OWNER/REPOSITORY\n      One Repository and every Skill the registry holds from it.\n  @LOGIN\n      One curator and their collections.\n  @LOGIN/SLUG\n      One collection and the Skills it names.",
+        after_long_help = "Examples:\n  skilld view vue\n  skilld view vercel-labs/agent-skills/web-design-guidelines\n  skilld view vercel-labs/agent-skills\n  skilld view @harlan-zw/nuxt"
+    )]
     View {
+        /// An installed Skill name, or a registry ref.
+        #[arg(value_name = "REF")]
         skill: String,
-        /// View a Skill in the global scope.
+        /// View an installed Skill in the global scope.
         #[arg(short = 'g', long)]
         global: bool,
+    },
+    /// Browse the registry by owner, tag, and order.
+    #[command(
+        after_long_help = "Examples:\n  skilld browse\n  skilld browse testing --sort likes\n  skilld browse --owner vercel-labs --limit 50"
+    )]
+    Browse {
+        /// Rank Skills by relevance to this text. Without it, --sort orders them.
+        #[arg(value_name = "QUERY")]
+        query: Vec<String>,
+        /// Only Skills from Repositories this GitHub account owns.
+        #[arg(long, value_name = "OWNER")]
+        owner: Option<String>,
+        /// Only Skills with this tag.
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+        /// Order by stars, likes, or the last SKILL.md change. The default is stars.
+        #[arg(long, value_name = "ORDER", value_parser = ["stars", "likes", "updated"])]
+        sort: Option<String>,
+        /// Skills per page, from 1 to 100. The default is 20.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many Skills, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
+    },
+    /// List trending Skills and why each one trends.
+    Trending {
+        /// The board window: week or month. The default is week.
+        #[arg(long, value_name = "WINDOW", value_parser = ["week", "month"])]
+        window: Option<String>,
+        /// Rows to show, from 1 to 30. The default is 30.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+    },
+    /// List tracks, or the Skills of one track.
+    Tracks {
+        /// One track slug, such as design.
+        #[arg(value_name = "SLUG")]
+        slug: Option<String>,
+        /// Skills per page, from 1 to 100. The default is 20.
+        #[arg(long, value_name = "N", requires = "slug")]
+        limit: Option<u32>,
+        /// Skip this many Skills, for the next page.
+        #[arg(long, value_name = "N", requires = "slug")]
+        offset: Option<u32>,
+    },
+    /// Ask skilld.dev to index a GitHub Repository, then wait for its Skills.
+    #[command(
+        long_about = "Ask skilld.dev to index a GitHub Repository, then wait for its Skills.\n\nGive REPOSITORY as OWNER/REPOSITORY or a https://github.com URL.\nskilld waits about a minute. A Repository still indexing after that keeps indexing;\nrun the same command again to check.",
+        after_long_help = "Examples:\n  skilld index vercel-labs/agent-skills\n  skilld index https://github.com/vercel-labs/agent-skills"
+    )]
+    Index {
+        #[arg(value_name = "REPOSITORY")]
+        repository: String,
     },
     /// Remove an installed Skill.
     Remove {
@@ -380,6 +442,13 @@ pub trait Host {
         ))
     }
 
+    /// The skilld.dev public API, for discovery and account commands.
+    fn api(&self) -> Result<&dyn SkilldApi, CommandError> {
+        Err(CommandError::unsupported_host(
+            "the skilld.dev API is unavailable on this host",
+        ))
+    }
+
     fn auth_login(&self) -> Result<(), CommandError> {
         Err(CommandError::unsupported_host(
             "browser access is unavailable on this host",
@@ -501,7 +570,7 @@ impl CommandError {
     pub fn remote(error: skilld_core::RemoteError) -> Self {
         let kind = if matches!(
             error.code,
-            "INVALID_SEARCH" | "INVALID_SOURCE" | "DIRECT_SOURCE_REQUIRED"
+            "INVALID_SEARCH" | "INVALID_SOURCE" | "DIRECT_SOURCE_REQUIRED" | "INVALID_REQUEST"
         ) {
             CommandErrorKind::Usage
         } else {
@@ -553,6 +622,8 @@ where
 
 enum CommandOutput {
     Screen(Screen),
+    /// One public API answer: JSON carries the answer, text carries the screen.
+    Api(discover::ApiOutput),
     /// Work that finished with part of it failed. It prints, then exits 1.
     IncompleteScreen(Screen),
     Search(SearchOutcome),
@@ -671,13 +742,10 @@ where
         }
         return CommandResult { exit_code: 2 };
     }
-    let supports_json = matches!(&cli.command, Command::Search { .. })
-        || matches!(&cli.command, Command::Run { .. })
-        || matches!(&cli.command, Command::Update { check: true, .. });
-    if mode == OutputMode::JsonV1 && !supports_json {
+    if mode == OutputMode::JsonV1 && !supports_json(&cli.command) {
         let error = CommandError::usage(
             "UNSUPPORTED_OUTPUT",
-            "JSON output is available for Skill search, Skill runs and update checks",
+            "JSON output is available for search, run, update --check, view of a registry ref, and every skilld.dev account and discovery command",
         );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
@@ -692,6 +760,22 @@ where
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
+        }
+        Ok(CommandOutput::Api(output)) => {
+            let bytes = match mode {
+                OutputMode::Human { color, .. } => output.human.render_human(color).into_bytes(),
+                OutputMode::Plain { .. } => output.plain.into_bytes(),
+                OutputMode::JsonV1 => match output::render_api(output.command, &output.data) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        let _ = stderr.write_all(&render_error(&error, mode));
+                        return CommandResult {
+                            exit_code: error.exit_code(),
+                        };
+                    }
+                },
+            };
+            write_success_with_exit(&bytes, mode, stdout, stderr, output.exit_code)
         }
         Ok(CommandOutput::IncompleteScreen(screen)) => {
             let bytes = match mode {
@@ -859,10 +943,27 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
     (json, plain)
 }
 
+/// Whether one command can answer `--json`.
+fn supports_json(command: &Command) -> bool {
+    match command {
+        Command::Search { .. }
+        | Command::Run { .. }
+        | Command::Update { check: true, .. }
+        | Command::Browse { .. }
+        | Command::Trending { .. }
+        | Command::Tracks { .. }
+        | Command::Index { .. } => true,
+        // A registry ref answers from skilld.dev. An installed Skill name
+        // keeps its text-only view.
+        Command::View { skill, .. } => matches!(discover::registry_ref(skill), Ok(Some(_))),
+        _ => false,
+    }
+}
+
 fn display_path(args: &[OsString]) -> String {
     let commands = [
         "search", "install", "add", "run", "list", "view", "remove", "update", "verify", "auth",
-        "config",
+        "config", "browse", "trending", "tracks", "index",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -1103,8 +1204,63 @@ fn dispatch<H: Host>(
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
         }),
-        Command::View { skill, global } => render_view(host.view(&skill, scope(global))?)
-            .map(|lines| CommandOutput::Screen(Screen::new(lines))),
+        Command::View { skill, global } => match discover::registry_ref(&skill)? {
+            None => render_view(host.view(&skill, scope(global))?)
+                .map(|lines| CommandOutput::Screen(Screen::new(lines))),
+            Some(_) if global => Err(CommandError::input(
+                "--global applies to an installed Skill name. Remove --global to view a registry ref.",
+            )),
+            Some(reference) => view_registry(host.api()?, reference, platform),
+        },
+        Command::Browse {
+            query,
+            owner,
+            tag,
+            sort,
+            limit,
+            offset,
+        } => {
+            let text = query.join(" ").trim().to_owned();
+            if text.len() > 200 {
+                return Err(CommandError::usage(
+                    "INVALID_REQUEST",
+                    "skilld browse needs a query up to 200 bytes",
+                ));
+            }
+            let query = BrowseQuery {
+                text: (!text.is_empty()).then_some(text),
+                owner,
+                tag,
+                sort: sort.as_deref().map(|sort| match sort {
+                    "likes" => BrowseSort::Likes,
+                    "updated" => BrowseSort::Updated,
+                    _ => BrowseSort::Stars,
+                }),
+                page: ApiPage { limit, offset },
+            };
+            discover::browse(host.api()?, &query, platform).map(CommandOutput::Api)
+        }
+        Command::Trending { window, limit } => {
+            let window = window.as_deref().map(|window| match window {
+                "month" => TrendingWindow::Month,
+                _ => TrendingWindow::Week,
+            });
+            discover::trending(host.api()?, window, limit, platform).map(CommandOutput::Api)
+        }
+        Command::Tracks {
+            slug: None,
+            limit: _,
+            offset: _,
+        } => discover::tracks(host.api()?).map(CommandOutput::Api),
+        Command::Tracks {
+            slug: Some(slug),
+            limit,
+            offset,
+        } => discover::track(host.api()?, &slug, ApiPage { limit, offset }, platform)
+            .map(CommandOutput::Api),
+        Command::Index { repository } => {
+            discover::index(host.api()?, &repository, platform).map(CommandOutput::Api)
+        }
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
             Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
@@ -1416,6 +1572,30 @@ fn source_line(source: &LockedSource, provenance: Option<&RemoteProvenance>) -> 
     }
 }
 
+/// `skilld view` of a registry ref.
+fn view_registry(
+    api: &dyn SkilldApi,
+    reference: discover::RegistryRef,
+    platform: CommandPlatform,
+) -> Result<CommandOutput, CommandError> {
+    match reference {
+        discover::RegistryRef::Skill {
+            owner,
+            repository,
+            name,
+        } => discover::view_skill(api, &owner, &repository, &name, platform),
+        discover::RegistryRef::Repository { owner, repository } => {
+            discover::view_repository(api, &owner, &repository, platform)
+        }
+        discover::RegistryRef::Curator { .. } | discover::RegistryRef::Collection { .. } => {
+            Err(CommandError::not_implemented(
+                "curator and collection views need the skilld.dev collections API",
+            ))
+        }
+    }
+    .map(CommandOutput::Api)
+}
+
 fn render_view(view: SkillView) -> Result<Vec<Line>, CommandError> {
     let provenance = RemoteProvenance::from_locked(&view.skill.source)?;
     let source = source_line(&view.skill.source, provenance.as_ref());
@@ -1550,6 +1730,7 @@ pub struct LocalHost {
     detection: DetectionEnvironment,
     bundled_skill: Option<Arc<dyn BundledSkillProvider>>,
     remote: Option<Arc<dyn RemoteProvider>>,
+    api: Option<Arc<dyn SkilldApi>>,
     account: Option<Arc<dyn AccountProvider>>,
     outdated_progress: Arc<dyn outdated::OutdatedProgress>,
     skill_chooser: Arc<dyn SkillChooser>,
@@ -1575,6 +1756,7 @@ impl LocalHost {
             detection: DetectionEnvironment::default(),
             bundled_skill: None,
             remote: None,
+            api: None,
             account: None,
             outdated_progress: Arc::new(outdated::NoOutdatedProgress),
             skill_chooser: Arc::new(EveryListedSkill),
@@ -1609,6 +1791,12 @@ impl LocalHost {
 
     pub fn with_remote_provider(mut self, provider: Arc<dyn RemoteProvider>) -> Self {
         self.remote = Some(provider);
+        self
+    }
+
+    /// Answer discovery and account commands from this skilld.dev API client.
+    pub fn with_api(mut self, api: Arc<dyn SkilldApi>) -> Self {
+        self.api = Some(api);
         self
     }
 
@@ -2234,6 +2422,12 @@ impl Host for LocalHost {
             .as_deref()
             .ok_or_else(|| CommandError::unsupported_host("credential access is unavailable"))?
             .logout()
+    }
+
+    fn api(&self) -> Result<&dyn SkilldApi, CommandError> {
+        self.api
+            .as_deref()
+            .ok_or_else(|| CommandError::service("the skilld.dev API is unavailable in this build"))
     }
 
     fn search(&self, query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
@@ -4461,8 +4655,8 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "add", "run", "list", "view", "remove", "update", "verify",
-                "outdated", "auth", "config"
+                "search", "install", "add", "run", "list", "view", "browse", "trending", "tracks",
+                "index", "remove", "update", "verify", "outdated", "auth", "config"
             ]
         );
     }
