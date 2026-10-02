@@ -397,6 +397,19 @@ fn view_rejects_global_and_skill_paths_for_a_registry_ref() {
         stderr.contains("names a path inside the Repository"),
         "{stderr}"
     );
+
+    let (exit, _, stderr) = run(
+        &host,
+        &[
+            "skilld",
+            "view",
+            "vercel-labs/agent-skills/skills/vue",
+            "--json",
+        ],
+    );
+    assert_eq!(exit, 2);
+    let failure: Value = serde_json::from_str(&stderr).unwrap();
+    assert_eq!(failure["error"]["code"], "INVALID_SOURCE");
     assert!(http.requests().is_empty());
 }
 

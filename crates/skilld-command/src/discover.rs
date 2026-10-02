@@ -86,13 +86,19 @@ pub(crate) enum RegistryRef {
     },
 }
 
+/// Whether one `skilld view` argument reads the registry. An installed Skill
+/// name never contains `/` or `@`.
+pub(crate) fn is_registry_ref(value: &str) -> bool {
+    value.contains('/') || value.starts_with('@')
+}
+
 /// Sort one `skilld view` argument into an installed Skill name or a
 /// registry ref.
 ///
 /// An installed Skill name never contains `/` or `@`, so any value with
 /// either is a registry ref. `None` keeps the installed Skill path.
 pub(crate) fn registry_ref(value: &str) -> Result<Option<RegistryRef>, CommandError> {
-    if !value.contains('/') && !value.starts_with('@') {
+    if !is_registry_ref(value) {
         return Ok(None);
     }
     let guidance = "skilld view takes an installed Skill name, OWNER/REPOSITORY/SKILL, OWNER/REPOSITORY, @LOGIN, or @LOGIN/SLUG.";

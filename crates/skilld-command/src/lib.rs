@@ -1148,9 +1148,9 @@ fn supports_json(command: &Command) -> bool {
         | Command::Stars { .. }
         | Command::Collection { .. }
         | Command::Tokens { .. } => true,
-        // A registry ref answers from skilld.dev. An installed Skill name
-        // keeps its text-only view.
-        Command::View { skill, .. } => matches!(discover::registry_ref(skill), Ok(Some(_))),
+        // A registry ref answers from skilld.dev, and a malformed one fails
+        // in JSON too. An installed Skill name keeps its text-only view.
+        Command::View { skill, .. } => discover::is_registry_ref(skill),
         _ => false,
     }
 }
