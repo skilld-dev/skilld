@@ -1,3 +1,4 @@
+mod account;
 mod config;
 mod discover;
 mod local_store;
@@ -196,6 +197,37 @@ enum Command {
         #[arg(short = 'g', long)]
         global: bool,
     },
+    /// Remove an installed Skill.
+    Remove {
+        skill: String,
+        /// Remove a Skill from the global scope.
+        #[arg(short = 'g', long)]
+        global: bool,
+    },
+    /// Update installed Skills to their current source commit.
+    Update {
+        skill: Option<String>,
+        /// Check update relations without changing files.
+        #[arg(long)]
+        check: bool,
+        /// Select Skill updates in a terminal.
+        #[arg(
+            long,
+            conflicts_with_all = ["skill", "check", "json", "plain"]
+        )]
+        interactive: bool,
+        /// Update Skills in the global scope.
+        #[arg(short = 'g', long)]
+        global: bool,
+    },
+    /// Verify a Skill source and report its source status.
+    Verify { skill: Option<String> },
+    /// Report outdated and unmanaged Skills.
+    Outdated {
+        /// Check both scopes and every Agent target directory.
+        #[arg(long)]
+        all: bool,
+    },
     /// Browse the registry by owner, tag, and order.
     #[command(
         after_long_help = "Examples:\n  skilld browse\n  skilld browse testing --sort likes\n  skilld browse --owner vercel-labs --limit 50"
@@ -250,36 +282,104 @@ enum Command {
         #[arg(value_name = "REPOSITORY")]
         repository: String,
     },
-    /// Remove an installed Skill.
-    Remove {
+    /// List the curators who publish collections on skilld.dev.
+    Curators {
+        /// Curators per page, from 1 to 60. The default is 30.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many curators, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
+    },
+    /// Show your skilld.dev account, or change one setting.
+    #[command(
+        args_conflicts_with_subcommands = true,
+        long_about = "Show your skilld.dev account, or change one setting.\n\nEvery account command needs skilld auth login first.\nDelete an account on skilld.dev. The CLI cannot.",
+        after_long_help = "Examples:\n  skilld account\n  skilld account set digest off\n  skilld account set email you@example.com\n  skilld account scan\n  skilld account unpublish harlan-zw/skills"
+    )]
+    Account {
+        #[command(subcommand)]
+        command: Option<AccountCommand>,
+    },
+    /// Like a Skill. skilld.dev also watches its Repository for your digest.
+    Like {
+        /// The Skill as OWNER/REPOSITORY/SKILL.
+        #[arg(value_name = "SKILL")]
         skill: String,
-        /// Remove a Skill from the global scope.
-        #[arg(short = 'g', long)]
-        global: bool,
     },
-    /// Update installed Skills to their current source commit.
-    Update {
-        skill: Option<String>,
-        /// Check update relations without changing files.
-        #[arg(long)]
-        check: bool,
-        /// Select Skill updates in a terminal.
-        #[arg(
-            long,
-            conflicts_with_all = ["skill", "check", "json", "plain"]
-        )]
-        interactive: bool,
-        /// Update Skills in the global scope.
-        #[arg(short = 'g', long)]
-        global: bool,
+    /// Remove your like of a Skill.
+    Unlike {
+        /// The Skill as OWNER/REPOSITORY/SKILL.
+        #[arg(value_name = "SKILL")]
+        skill: String,
     },
-    /// Verify a Skill source and report its source status.
-    Verify { skill: Option<String> },
-    /// Report outdated and unmanaged Skills.
-    Outdated {
-        /// Check both scopes and every Agent target directory.
-        #[arg(long)]
-        all: bool,
+    /// List the Skills you like, or the public likes of one curator.
+    Likes {
+        /// A curator as @LOGIN. Without it, skilld lists your own likes.
+        #[arg(value_name = "@LOGIN")]
+        login: Option<String>,
+        /// Skills per page. The default is 20 for yours and 50 for a curator's.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many Skills, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
+    },
+    /// Watch a Repository or a collection, so your digest reports its changes.
+    Watch {
+        /// A Repository as OWNER/REPOSITORY, or a collection as @LOGIN/SLUG.
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
+    /// Stop watching a Repository.
+    Unwatch {
+        /// The Repository as OWNER/REPOSITORY.
+        #[arg(value_name = "REPOSITORY")]
+        reference: String,
+    },
+    /// List the Repositories you watch.
+    Watches {
+        /// Repositories per page, from 1 to 100. The default is 50.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many Repositories, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
+    },
+    /// List what changed in the Repositories you watch: your digest.
+    Changes {
+        /// Start at this date or timestamp. The default is 30 days ago.
+        #[arg(long, value_name = "DATE")]
+        since: Option<String>,
+    },
+    /// List your starred GitHub Repositories that hold Skills, or import them again.
+    #[command(args_conflicts_with_subcommands = true)]
+    Stars {
+        #[command(subcommand)]
+        command: Option<StarsCommand>,
+        /// Repositories per page, from 1 to 100. The default is 50.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many Repositories, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
+    },
+    /// Create a collection, or add and remove its Skills.
+    Collection {
+        #[command(subcommand)]
+        command: CollectionCommand,
+    },
+    /// List, create, or revoke the skilld tokens that act for your account.
+    #[command(args_conflicts_with_subcommands = true)]
+    Tokens {
+        #[command(subcommand)]
+        command: Option<TokensCommand>,
+        /// Tokens per page, from 1 to 100. The default is 50.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Skip this many tokens, for the next page.
+        #[arg(long, value_name = "N")]
+        offset: Option<u32>,
     },
     /// Log in, check, or log out of your account.
     Auth {
@@ -298,6 +398,90 @@ enum AuthCommand {
     Login,
     Status,
     Logout,
+}
+
+#[derive(Debug, Subcommand)]
+enum AccountCommand {
+    /// Change one account setting.
+    #[command(
+        long_about = "Change one account setting.\n\nKEY and VALUE:\n  email ADDRESS\n      The address skilld emails. It takes effect at once.\n  digest on|off\n      The email that reports changes to your watched Repositories.\n  weekly on|off\n      The weekly email: Skills you liked that changed, plus what trended.\n  likes-public on|off\n      Whether anyone can read your liked Skills at /@LOGIN/liked.\n  repository-indexing on|off\n      Whether skilld.dev may scan your public Repositories for Skills."
+    )]
+    Set {
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[arg(value_name = "VALUE")]
+        value: String,
+    },
+    /// Scan your public GitHub Repositories for Skills and index them.
+    Scan,
+    /// Remove every Skill of one of your Repositories from the registry.
+    Unpublish {
+        /// Your Repository as OWNER/REPOSITORY.
+        #[arg(value_name = "REPOSITORY")]
+        repository: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum StarsCommand {
+    /// Import your GitHub stars again, every page.
+    Import,
+}
+
+#[derive(Debug, Subcommand)]
+enum CollectionCommand {
+    /// Create a collection at skilld.dev/@LOGIN/SLUG.
+    Create {
+        /// Lowercase letters, digits, and hyphens.
+        #[arg(value_name = "SLUG")]
+        slug: String,
+        /// The collection title.
+        #[arg(long, value_name = "TITLE")]
+        title: String,
+        /// Your introduction to the collection.
+        #[arg(long, value_name = "TEXT")]
+        description: Option<String>,
+    },
+    /// Add a Skill to one of your collections.
+    Add {
+        /// The collection as @LOGIN/SLUG.
+        #[arg(value_name = "@LOGIN/SLUG")]
+        collection: String,
+        /// The Skill as OWNER/REPOSITORY/SKILL.
+        #[arg(value_name = "SKILL")]
+        skill: String,
+        /// Why you picked the Skill. Without it, a stored reason stays.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+    },
+    /// Remove a Skill from one of your collections.
+    Remove {
+        /// The collection as @LOGIN/SLUG.
+        #[arg(value_name = "@LOGIN/SLUG")]
+        collection: String,
+        /// The Skill as OWNER/REPOSITORY/SKILL.
+        #[arg(value_name = "SKILL")]
+        skill: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum TokensCommand {
+    /// Create a token. skilld prints its secret once.
+    Create {
+        /// A name that says where the token works, such as CI deploy.
+        #[arg(long, value_name = "LABEL")]
+        label: String,
+        /// Days until the token stops working. Without it, the token has no set end.
+        #[arg(long, value_name = "DAYS")]
+        ttl_days: Option<u32>,
+    },
+    /// Revoke one token. It stops working at once.
+    Revoke {
+        /// The token ID skilld tokens prints.
+        #[arg(value_name = "ID")]
+        id: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -775,7 +959,7 @@ where
                     }
                 },
             };
-            write_success_with_exit(&bytes, mode, stdout, stderr, output.exit_code)
+            write_success(&bytes, mode, stdout, stderr)
         }
         Ok(CommandOutput::IncompleteScreen(screen)) => {
             let bytes = match mode {
@@ -877,9 +1061,8 @@ fn v2_command(mut args: Vec<OsString>) -> V2Command {
                 ),
             ));
         }
-        Some(
-            command @ ("watch" | "unwatch" | "cache" | "changes" | "setup" | "uninstall" | "pull"),
-        ) => {
+        // v3 brings back watch, unwatch, and changes on the skilld.dev API.
+        Some(command @ ("cache" | "setup" | "uninstall" | "pull")) => {
             return V2Command::Removed(CommandError::usage(
                 "REMOVED_COMMAND",
                 format!("skilld v3 removed the {command} command. See {MIGRATION_GUIDE}"),
@@ -952,7 +1135,19 @@ fn supports_json(command: &Command) -> bool {
         | Command::Browse { .. }
         | Command::Trending { .. }
         | Command::Tracks { .. }
-        | Command::Index { .. } => true,
+        | Command::Index { .. }
+        | Command::Curators { .. }
+        | Command::Account { .. }
+        | Command::Like { .. }
+        | Command::Unlike { .. }
+        | Command::Likes { .. }
+        | Command::Watch { .. }
+        | Command::Unwatch { .. }
+        | Command::Watches { .. }
+        | Command::Changes { .. }
+        | Command::Stars { .. }
+        | Command::Collection { .. }
+        | Command::Tokens { .. } => true,
         // A registry ref answers from skilld.dev. An installed Skill name
         // keeps its text-only view.
         Command::View { skill, .. } => matches!(discover::registry_ref(skill), Ok(Some(_))),
@@ -962,8 +1157,33 @@ fn supports_json(command: &Command) -> bool {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
-        "search", "install", "add", "run", "list", "view", "remove", "update", "verify", "auth",
-        "config", "browse", "trending", "tracks", "index",
+        "search",
+        "install",
+        "add",
+        "run",
+        "list",
+        "view",
+        "remove",
+        "update",
+        "verify",
+        "auth",
+        "config",
+        "browse",
+        "trending",
+        "tracks",
+        "index",
+        "curators",
+        "account",
+        "like",
+        "unlike",
+        "likes",
+        "watch",
+        "unwatch",
+        "watches",
+        "changes",
+        "stars",
+        "collection",
+        "tokens",
     ];
     let mut path = vec!["skilld"];
     if let Some(command) = args
@@ -1261,6 +1481,99 @@ fn dispatch<H: Host>(
         Command::Index { repository } => {
             discover::index(host.api()?, &repository, platform).map(CommandOutput::Api)
         }
+        Command::Curators { limit, offset } => {
+            discover::curators(host.api()?, ApiPage { limit, offset }, platform)
+                .map(CommandOutput::Api)
+        }
+        Command::Account { command } => {
+            let api = host.api()?;
+            match command {
+                None => account::view(api),
+                Some(AccountCommand::Set { key, value }) => account::set(api, &key, &value),
+                Some(AccountCommand::Scan) => account::scan(api),
+                Some(AccountCommand::Unpublish { repository }) => {
+                    account::unpublish(api, &repository)
+                }
+            }
+            .map(CommandOutput::Api)
+        }
+        Command::Like { skill } => account::like(host.api()?, &skill).map(CommandOutput::Api),
+        Command::Unlike { skill } => account::unlike(host.api()?, &skill).map(CommandOutput::Api),
+        Command::Likes {
+            login,
+            limit,
+            offset,
+        } => account::likes(
+            host.api()?,
+            login.as_deref(),
+            ApiPage { limit, offset },
+            platform,
+        )
+        .map(CommandOutput::Api),
+        Command::Watch { reference } => {
+            account::watch(host.api()?, &reference).map(CommandOutput::Api)
+        }
+        Command::Unwatch { reference } => {
+            account::unwatch(host.api()?, &reference).map(CommandOutput::Api)
+        }
+        Command::Watches { limit, offset } => {
+            account::watches(host.api()?, ApiPage { limit, offset }, platform)
+                .map(CommandOutput::Api)
+        }
+        Command::Changes { since } => {
+            account::changes(host.api()?, since.as_deref(), platform).map(CommandOutput::Api)
+        }
+        Command::Stars {
+            command: Some(StarsCommand::Import),
+            ..
+        } => account::import_stars(host.api()?).map(CommandOutput::Api),
+        Command::Stars {
+            command: None,
+            limit,
+            offset,
+        } => {
+            account::stars(host.api()?, ApiPage { limit, offset }, platform).map(CommandOutput::Api)
+        }
+        Command::Collection { command } => {
+            let api = host.api()?;
+            match command {
+                CollectionCommand::Create {
+                    slug,
+                    title,
+                    description,
+                } => {
+                    account::create_collection(api, &slug, &title, description.as_deref(), platform)
+                }
+                CollectionCommand::Add {
+                    collection,
+                    skill,
+                    reason,
+                } => account::add_to_collection(
+                    api,
+                    &collection,
+                    &skill,
+                    reason.as_deref(),
+                    platform,
+                ),
+                CollectionCommand::Remove { collection, skill } => {
+                    account::remove_from_collection(api, &collection, &skill)
+                }
+            }
+            .map(CommandOutput::Api)
+        }
+        Command::Tokens {
+            command: None,
+            limit,
+            offset,
+        } => account::tokens(host.api()?, ApiPage { limit, offset }).map(CommandOutput::Api),
+        Command::Tokens {
+            command: Some(TokensCommand::Create { label, ttl_days }),
+            ..
+        } => account::create_token(host.api()?, &label, ttl_days).map(CommandOutput::Api),
+        Command::Tokens {
+            command: Some(TokensCommand::Revoke { id }),
+            ..
+        } => account::revoke_token(host.api()?, id).map(CommandOutput::Api),
         Command::Remove { skill, global } => {
             host.remove(&skill, scope(global))?;
             Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
@@ -1269,13 +1582,37 @@ fn dispatch<H: Host>(
         }
         Command::Auth {
             command: AuthCommand::Status,
-        } => Ok(CommandOutput::Screen(Screen::new(vec![
-            if host.auth_status()? {
-                Line::success("Authenticated.")
-            } else {
-                Line::plain("Not authenticated.")
-            },
-        ]))),
+        } => {
+            if !host.auth_status()? {
+                return Ok(CommandOutput::Screen(Screen::new(vec![Line::plain(
+                    "Not authenticated.",
+                )])));
+            }
+            // A host without the API keeps the local answer.
+            let Ok(api) = host.api() else {
+                return Ok(CommandOutput::Screen(Screen::new(vec![Line::success(
+                    "Authenticated.",
+                )])));
+            };
+            let lines = match account::signed_in_login(api) {
+                Ok(login) => vec![Line::success(format!(
+                    "Authenticated as @{}.",
+                    screen_message(&login)
+                ))],
+                Err(error) if error.code == "AUTH_REQUIRED" => vec![
+                    Line::warn("skilld.dev rejected the stored sign-in."),
+                    Line::hint("Run skilld auth login to sign in again."),
+                ],
+                Err(error) => vec![
+                    Line::success("Authenticated."),
+                    Line::hint(format!(
+                        "skilld.dev did not name the account: {}",
+                        screen_message(&error.message)
+                    )),
+                ],
+            };
+            Ok(CommandOutput::Screen(Screen::new(lines)))
+        }
         Command::Auth {
             command: AuthCommand::Login,
         } => {
@@ -1587,10 +1924,9 @@ fn view_registry(
         discover::RegistryRef::Repository { owner, repository } => {
             discover::view_repository(api, &owner, &repository, platform)
         }
-        discover::RegistryRef::Curator { .. } | discover::RegistryRef::Collection { .. } => {
-            Err(CommandError::not_implemented(
-                "curator and collection views need the skilld.dev collections API",
-            ))
+        discover::RegistryRef::Curator { login } => discover::view_curator(api, &login, platform),
+        discover::RegistryRef::Collection { login, slug } => {
+            discover::view_collection(api, &login, &slug, platform)
         }
     }
     .map(CommandOutput::Api)
@@ -4655,8 +4991,34 @@ mod tests {
         assert_eq!(
             command_names(),
             [
-                "search", "install", "add", "run", "list", "view", "browse", "trending", "tracks",
-                "index", "remove", "update", "verify", "outdated", "auth", "config"
+                "search",
+                "install",
+                "add",
+                "run",
+                "list",
+                "view",
+                "remove",
+                "update",
+                "verify",
+                "outdated",
+                "browse",
+                "trending",
+                "tracks",
+                "index",
+                "curators",
+                "account",
+                "like",
+                "unlike",
+                "likes",
+                "watch",
+                "unwatch",
+                "watches",
+                "changes",
+                "stars",
+                "collection",
+                "tokens",
+                "auth",
+                "config"
             ]
         );
     }

@@ -14,9 +14,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use skilld_core::RemoteError;
 use skilld_core::api::{
-    ApiAccess, ApiAnswerBody, ApiList, ApiMethod, ApiOperation, IndexRequest, IndexRequestBody,
-    RepositoryProfile, SkillDetail, SkillSummary, TrackDetail, TrackSummary, TrendingSkill,
-    operations,
+    Account, AccountChanges, AccountUpdateBody, AddCollectionSkillBody, ApiAccess, ApiAnswerBody,
+    ApiList, ApiMethod, ApiOperation, CollectionDetail, CollectionSkill, CollectionWatch,
+    CreateCollectionBody, CuratorDetail, CuratorSummary, IndexRequest, IndexRequestBody,
+    IssuedToken, LikedSkill, RepositoryProfile, RepositoryScan, SkillDetail, SkillSummary,
+    StarredRepository, StarsImport, StarsImportBody, Token, TokenCreateBody, TrackDetail,
+    TrackSummary, TrendingSkill, Watch, operations,
 };
 use url::Url;
 
@@ -135,6 +138,103 @@ pub trait SkilldApi: Send + Sync {
 
     /// Wait between two index request polls.
     fn wait_for_index(&self) -> Result<(), RemoteError>;
+
+    /// `curators.list`
+    fn curators(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<CuratorSummary>>, RemoteError>;
+
+    /// `curators.get`
+    fn curator(&self, login: &str) -> Result<ApiAnswer<CuratorDetail>, RemoteError>;
+
+    /// `curators.likes`
+    fn curator_likes(
+        &self,
+        login: &str,
+        page: ApiPage,
+    ) -> Result<ApiAnswer<ApiList<SkillSummary>>, RemoteError>;
+
+    /// `collections.get`
+    fn collection(
+        &self,
+        login: &str,
+        slug: &str,
+        page: ApiPage,
+    ) -> Result<ApiAnswer<CollectionDetail>, RemoteError>;
+
+    /// `collections.create`
+    fn create_collection(
+        &self,
+        body: &CreateCollectionBody,
+    ) -> Result<ApiAnswer<CollectionDetail>, RemoteError>;
+
+    /// `collections.skills.add`
+    fn add_collection_skill(
+        &self,
+        collection: (&str, &str),
+        skill: (&str, &str, &str),
+        body: &AddCollectionSkillBody,
+    ) -> Result<ApiAnswer<CollectionSkill>, RemoteError>;
+
+    /// `collections.skills.remove`
+    fn remove_collection_skill(
+        &self,
+        collection: (&str, &str),
+        skill: (&str, &str, &str),
+    ) -> Result<(), RemoteError>;
+
+    /// `collections.watch`
+    fn watch_collection(
+        &self,
+        login: &str,
+        slug: &str,
+    ) -> Result<ApiAnswer<CollectionWatch>, RemoteError>;
+
+    /// `account.get`
+    fn account(&self) -> Result<ApiAnswer<Account>, RemoteError>;
+
+    /// `account.update`
+    fn update_account(&self, body: &AccountUpdateBody) -> Result<ApiAnswer<Account>, RemoteError>;
+
+    /// `account.repositories.scan`
+    fn scan_repositories(&self) -> Result<ApiAnswer<RepositoryScan>, RemoteError>;
+
+    /// `account.repositories.unpublish`
+    fn unpublish_repository(&self, owner: &str, repository: &str) -> Result<(), RemoteError>;
+
+    /// `likes.list`
+    fn likes(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<LikedSkill>>, RemoteError>;
+
+    /// `likes.create`
+    fn like(&self, owner: &str, repository: &str, name: &str) -> Result<(), RemoteError>;
+
+    /// `likes.delete`
+    fn unlike(&self, owner: &str, repository: &str, name: &str) -> Result<(), RemoteError>;
+
+    /// `watches.list`
+    fn watches(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<Watch>>, RemoteError>;
+
+    /// `watches.create`
+    fn watch(&self, owner: &str, repository: &str) -> Result<(), RemoteError>;
+
+    /// `watches.delete`
+    fn unwatch(&self, owner: &str, repository: &str) -> Result<(), RemoteError>;
+
+    /// `stars.list`
+    fn stars(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<StarredRepository>>, RemoteError>;
+
+    /// `stars.import`
+    fn import_stars(&self, page: Option<u32>) -> Result<ApiAnswer<StarsImport>, RemoteError>;
+
+    /// `changes.list`
+    fn changes(&self, since: Option<&str>) -> Result<ApiAnswer<AccountChanges>, RemoteError>;
+
+    /// `tokens.list`
+    fn tokens(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<Token>>, RemoteError>;
+
+    /// `tokens.create`
+    fn create_token(&self, body: &TokenCreateBody) -> Result<ApiAnswer<IssuedToken>, RemoteError>;
+
+    /// `tokens.revoke`
+    fn revoke_token(&self, id: u64) -> Result<(), RemoteError>;
 }
 
 /// The wait between two `index_requests.get` polls.
@@ -263,6 +363,18 @@ impl SkilldRemote {
     }
 }
 
+impl SkilldRemote {
+    /// Send one operation that answers `204 No Content`.
+    fn api_empty(
+        &self,
+        operation: &ApiOperation,
+        params: &[&str],
+        body: Option<Vec<u8>>,
+    ) -> Result<(), RemoteError> {
+        self.api_send(operation, params, &[], body).map(|_| ())
+    }
+}
+
 /// An answer this CLI cannot read: skilld.dev changed a shape this release
 /// depends on.
 fn unreadable(operation: &ApiOperation) -> RemoteError {
@@ -374,6 +486,164 @@ impl SkilldApi for SkilldRemote {
     fn wait_for_index(&self) -> Result<(), RemoteError> {
         self.progress.stage(RemoteProgressStage::Indexing);
         self.sleep(INDEX_REQUEST_POLL, None)
+    }
+
+    fn curators(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<CuratorSummary>>, RemoteError> {
+        self.api_json(&operations::CURATORS_LIST, &[], &page_query(page), None)
+    }
+
+    fn curator(&self, login: &str) -> Result<ApiAnswer<CuratorDetail>, RemoteError> {
+        self.api_json(&operations::CURATORS_GET, &[login], &[], None)
+    }
+
+    fn curator_likes(
+        &self,
+        login: &str,
+        page: ApiPage,
+    ) -> Result<ApiAnswer<ApiList<SkillSummary>>, RemoteError> {
+        self.api_json(
+            &operations::CURATORS_LIKES,
+            &[login],
+            &page_query(page),
+            None,
+        )
+    }
+
+    fn collection(
+        &self,
+        login: &str,
+        slug: &str,
+        page: ApiPage,
+    ) -> Result<ApiAnswer<CollectionDetail>, RemoteError> {
+        self.api_json(
+            &operations::COLLECTIONS_GET,
+            &[login, slug],
+            &page_query(page),
+            None,
+        )
+    }
+
+    fn create_collection(
+        &self,
+        body: &CreateCollectionBody,
+    ) -> Result<ApiAnswer<CollectionDetail>, RemoteError> {
+        let operation = &operations::COLLECTIONS_CREATE;
+        self.api_json(operation, &[], &[], Some(encode(operation, body)?))
+    }
+
+    fn add_collection_skill(
+        &self,
+        (login, slug): (&str, &str),
+        (owner, repository, name): (&str, &str, &str),
+        body: &AddCollectionSkillBody,
+    ) -> Result<ApiAnswer<CollectionSkill>, RemoteError> {
+        let operation = &operations::COLLECTIONS_SKILLS_ADD;
+        self.api_json(
+            operation,
+            &[login, slug, owner, repository, name],
+            &[],
+            Some(encode(operation, body)?),
+        )
+    }
+
+    fn remove_collection_skill(
+        &self,
+        (login, slug): (&str, &str),
+        (owner, repository, name): (&str, &str, &str),
+    ) -> Result<(), RemoteError> {
+        self.api_empty(
+            &operations::COLLECTIONS_SKILLS_REMOVE,
+            &[login, slug, owner, repository, name],
+            None,
+        )
+    }
+
+    fn watch_collection(
+        &self,
+        login: &str,
+        slug: &str,
+    ) -> Result<ApiAnswer<CollectionWatch>, RemoteError> {
+        self.api_json(&operations::COLLECTIONS_WATCH, &[login, slug], &[], None)
+    }
+
+    fn account(&self) -> Result<ApiAnswer<Account>, RemoteError> {
+        self.api_json(&operations::ACCOUNT_GET, &[], &[], None)
+    }
+
+    fn update_account(&self, body: &AccountUpdateBody) -> Result<ApiAnswer<Account>, RemoteError> {
+        let operation = &operations::ACCOUNT_UPDATE;
+        self.api_json(operation, &[], &[], Some(encode(operation, body)?))
+    }
+
+    fn scan_repositories(&self) -> Result<ApiAnswer<RepositoryScan>, RemoteError> {
+        self.api_json(&operations::ACCOUNT_REPOSITORIES_SCAN, &[], &[], None)
+    }
+
+    fn unpublish_repository(&self, owner: &str, repository: &str) -> Result<(), RemoteError> {
+        self.api_empty(
+            &operations::ACCOUNT_REPOSITORIES_UNPUBLISH,
+            &[owner, repository],
+            None,
+        )
+    }
+
+    fn likes(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<LikedSkill>>, RemoteError> {
+        self.api_json(&operations::LIKES_LIST, &[], &page_query(page), None)
+    }
+
+    fn like(&self, owner: &str, repository: &str, name: &str) -> Result<(), RemoteError> {
+        self.api_empty(&operations::LIKES_CREATE, &[owner, repository, name], None)
+    }
+
+    fn unlike(&self, owner: &str, repository: &str, name: &str) -> Result<(), RemoteError> {
+        self.api_empty(&operations::LIKES_DELETE, &[owner, repository, name], None)
+    }
+
+    fn watches(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<Watch>>, RemoteError> {
+        self.api_json(&operations::WATCHES_LIST, &[], &page_query(page), None)
+    }
+
+    fn watch(&self, owner: &str, repository: &str) -> Result<(), RemoteError> {
+        self.api_empty(&operations::WATCHES_CREATE, &[owner, repository], None)
+    }
+
+    fn unwatch(&self, owner: &str, repository: &str) -> Result<(), RemoteError> {
+        self.api_empty(&operations::WATCHES_DELETE, &[owner, repository], None)
+    }
+
+    fn stars(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<StarredRepository>>, RemoteError> {
+        self.api_json(&operations::STARS_LIST, &[], &page_query(page), None)
+    }
+
+    fn import_stars(&self, page: Option<u32>) -> Result<ApiAnswer<StarsImport>, RemoteError> {
+        let operation = &operations::STARS_IMPORT;
+        self.api_json(
+            operation,
+            &[],
+            &[],
+            Some(encode(operation, &StarsImportBody { page })?),
+        )
+    }
+
+    fn changes(&self, since: Option<&str>) -> Result<ApiAnswer<AccountChanges>, RemoteError> {
+        let query = since
+            .map(|since| ("since", since.to_owned()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        self.api_json(&operations::CHANGES_LIST, &[], &query, None)
+    }
+
+    fn tokens(&self, page: ApiPage) -> Result<ApiAnswer<ApiList<Token>>, RemoteError> {
+        self.api_json(&operations::TOKENS_LIST, &[], &page_query(page), None)
+    }
+
+    fn create_token(&self, body: &TokenCreateBody) -> Result<ApiAnswer<IssuedToken>, RemoteError> {
+        let operation = &operations::TOKENS_CREATE;
+        self.api_json(operation, &[], &[], Some(encode(operation, body)?))
+    }
+
+    fn revoke_token(&self, id: u64) -> Result<(), RemoteError> {
+        self.api_empty(&operations::TOKENS_REVOKE, &[&id.to_string()], None)
     }
 }
 

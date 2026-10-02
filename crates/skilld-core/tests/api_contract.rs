@@ -12,9 +12,12 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use skilld_core::api::{
-    ApiAccess, ApiAnswerBody, ApiList, ApiOperation, IndexRequest, IndexRequestBody, OwnerProfile,
-    RepositoryProfile, SkillDetail, SkillSummary, TrackDetail, TrackSummary, TrendingSkill,
-    operations,
+    Account, AccountChanges, AccountUpdateBody, AddCollectionSkillBody, ApiAccess, ApiAnswerBody,
+    ApiList, ApiOperation, CollectionDetail, CollectionSkill, CollectionWatch,
+    CreateCollectionBody, CuratorDetail, CuratorSummary, IndexRequest, IndexRequestBody,
+    IssuedToken, LikedSkill, OwnerProfile, RepositoryProfile, RepositoryScan, SkillDetail,
+    SkillSummary, StarredRepository, StarsImport, StarsImportBody, Token, TokenCreateBody,
+    TrackDetail, TrackSummary, TrendingSkill, Watch, operations,
 };
 
 const SPEC: &str = include_str!("../../../packages/protocol/openapi/skilld-api-v1.json");
@@ -25,7 +28,6 @@ type Parser = fn(&Value) -> Result<(), String>;
 /// How one operation's 2xx answer parses.
 enum Answer {
     Json(Parser),
-    #[allow(dead_code)]
     Empty,
 }
 
@@ -55,6 +57,26 @@ fn answer(id: &str) -> Option<Answer> {
         "tracks.list" => Answer::Json(parses::<ApiList<TrackSummary>>),
         "tracks.get" => Answer::Json(parses::<TrackDetail>),
         "trending.list" => Answer::Json(parses::<ApiList<TrendingSkill>>),
+        "curators.list" => Answer::Json(parses::<ApiList<CuratorSummary>>),
+        "curators.get" => Answer::Json(parses::<CuratorDetail>),
+        "curators.likes" => Answer::Json(parses::<ApiList<SkillSummary>>),
+        "collections.get" | "collections.create" => Answer::Json(parses::<CollectionDetail>),
+        "collections.skills.add" => Answer::Json(parses::<CollectionSkill>),
+        "collections.skills.remove" => Answer::Empty,
+        "collections.watch" => Answer::Json(parses::<CollectionWatch>),
+        "account.get" | "account.update" => Answer::Json(parses::<Account>),
+        "account.repositories.scan" => Answer::Json(parses::<RepositoryScan>),
+        "account.repositories.unpublish" => Answer::Empty,
+        "likes.list" => Answer::Json(parses::<ApiList<LikedSkill>>),
+        "likes.create" | "likes.delete" => Answer::Empty,
+        "watches.list" => Answer::Json(parses::<ApiList<Watch>>),
+        "watches.create" | "watches.delete" => Answer::Empty,
+        "stars.list" => Answer::Json(parses::<ApiList<StarredRepository>>),
+        "stars.import" => Answer::Json(parses::<StarsImport>),
+        "changes.list" => Answer::Json(parses::<AccountChanges>),
+        "tokens.list" => Answer::Json(parses::<ApiList<Token>>),
+        "tokens.create" => Answer::Json(parses::<IssuedToken>),
+        "tokens.revoke" => Answer::Empty,
         _ => return None,
     })
 }
@@ -63,6 +85,11 @@ fn answer(id: &str) -> Option<Answer> {
 fn request(id: &str) -> Option<Parser> {
     Some(match id {
         "index_requests.create" => parses::<IndexRequestBody>,
+        "collections.create" => parses::<CreateCollectionBody>,
+        "collections.skills.add" => parses::<AddCollectionSkillBody>,
+        "account.update" => parses::<AccountUpdateBody>,
+        "stars.import" => parses::<StarsImportBody>,
+        "tokens.create" => parses::<TokenCreateBody>,
         _ => return None,
     })
 }

@@ -12,8 +12,9 @@
 
 use serde_json::Value;
 use skilld_core::api::{
-    ApiList, IndexProgress, IndexRequest, RepositoryProfile, SkillDetail, SkillSummary,
-    TrackDetail, TrackSummary, TrendingSignal, TrendingSkill,
+    ApiList, CollectionDetail, CuratorDetail, CuratorSummary, IndexProgress, IndexRequest,
+    RepositoryProfile, SkillDetail, SkillSummary, TrackDetail, TrackSummary, TrendingSignal,
+    TrendingSkill,
 };
 use skilld_core::{MultiSkillRef, RemoteSelector, SkillRef, SourceSelector};
 use skilld_ui::text::{grouped_number, is_unsafe_terminal};
@@ -34,8 +35,6 @@ pub(crate) struct ApiOutput {
     pub data: Value,
     pub human: Screen,
     pub plain: String,
-    /// The exit code. Work that stopped short exits 1 and still prints.
-    pub exit_code: u8,
 }
 
 impl ApiOutput {
@@ -47,7 +46,6 @@ impl ApiOutput {
             data,
             human,
             plain,
-            exit_code: 0,
         }
     }
 
@@ -63,7 +61,6 @@ impl ApiOutput {
             data,
             human,
             plain,
-            exit_code: 0,
         }
     }
 }
@@ -215,7 +212,7 @@ pub(crate) fn day(value: &str) -> String {
     }
 }
 
-fn count(value: u64, one: &str, many: &str) -> String {
+pub(crate) fn count(value: u64, one: &str, many: &str) -> String {
     format!(
         "{} {}",
         grouped_number(value),
@@ -268,7 +265,7 @@ pub(crate) fn skill_row(
 }
 
 /// A list of Skill cards with a paging hint.
-fn skill_list(
+pub(crate) fn skill_list(
     command: &'static str,
     raw: Value,
     header: String,
@@ -292,14 +289,14 @@ fn skill_list(
 
 /// Where one page sits in the whole result.
 #[derive(Clone, Copy, Debug)]
-struct Paging {
-    offset: u64,
-    shown: u64,
-    total: u64,
+pub(crate) struct Paging {
+    pub offset: u64,
+    pub shown: u64,
+    pub total: u64,
 }
 
 impl Paging {
-    fn hint(self) -> Option<String> {
+    pub(crate) fn hint(self) -> Option<String> {
         let end = self.offset + self.shown;
         (end < self.total && self.shown > 0).then(|| {
             format!(
@@ -856,4 +853,222 @@ fn repository_reference(value: &str) -> Result<String, CommandError> {
         }
         _ => Err(invalid()),
     }
+}
+
+/// The curator name a person reads: `@login (Name)`.
+pub(crate) fn curator_name(login: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) if !name.trim().is_empty() && name != login => {
+            format!("@{} ({})", screen_message(login), screen_message(name))
+        }
+        _ => format!("@{}", screen_message(login)),
+    }
+}
+
+/// `skilld view @LOGIN`: one curator and their collections.
+pub(crate) fn view_curator(
+    api: &dyn SkilldApi,
+    login: &str,
+    platform: CommandPlatform,
+) -> Result<ApiOutput, CommandError> {
+    let answer = api.curator(login).map_err(CommandError::remote)?;
+    let origin = api.site_origin();
+    let curator: &CuratorDetail = &answer.data;
+    let mut lines = vec![Line::field(
+        "Curator",
+        curator_name(&curator.login, curator.name.as_deref()),
+    )];
+    if let Some(page) = site_link(&origin, &curator.page_url) {
+        lines.push(Line::linked_field("Page", page.clone(), page));
+    }
+    let handle = format!("@{}", curator.login);
+    lines.push(Line::field(
+        "List every Skill",
+        shell_command(
+            &["skilld".to_owned(), "run".to_owned(), handle.clone()],
+            platform,
+        ),
+    ));
+    lines.push(Line::field(
+        "Install all",
+        shell_command(&["skilld".to_owned(), "add".to_owned(), handle], platform),
+    ));
+    lines.push(Line::plain(""));
+    lines.push(Line::item(count(
+        curator.collections.len() as u64,
+        "collection",
+        "collections",
+    )));
+    if curator.collections.is_empty() {
+        lines.push(Line::plain("No collections yet."));
+    }
+    for collection in &curator.collections {
+        let reference = format!("@{}/{}", curator.login, collection.slug);
+        let mut details = Vec::new();
+        if let Some(description) = &collection.description {
+            details.push(Detail::plain("About", screen_message(description)));
+        }
+        details.push(Detail::command(
+            "View",
+            shell_command(
+                &["skilld".to_owned(), "view".to_owned(), reference.clone()],
+                platform,
+            ),
+        ));
+        let plain = [
+            escape_plain(&reference),
+            escape_plain(&collection.title),
+            collection.skill_count.to_string(),
+            escape_plain(collection.description.as_deref().unwrap_or_default()),
+        ]
+        .join("\t");
+        lines.push(Line::record(
+            Marker::Note,
+            plain,
+            screen_message(&collection.title),
+            Some(format!(
+                "{} · {}",
+                screen_message(&reference),
+                count(collection.skill_count, "Skill", "Skills")
+            )),
+            details,
+        ));
+    }
+    Ok(ApiOutput::screen(
+        "view",
+        answer.raw,
+        Screen::with_header(curator_name(&curator.login, curator.name.as_deref()), lines),
+    ))
+}
+
+/// `skilld view @LOGIN/SLUG`: one collection and the Skills it names, each
+/// with the curator's reason.
+pub(crate) fn view_collection(
+    api: &dyn SkilldApi,
+    login: &str,
+    slug: &str,
+    platform: CommandPlatform,
+) -> Result<ApiOutput, CommandError> {
+    let answer = api
+        .collection(login, slug, ApiPage::default())
+        .map_err(CommandError::remote)?;
+    let origin = api.site_origin();
+    let collection: &CollectionDetail = &answer.data;
+    let reference = format!("@{}/{}", collection.curator.login, collection.slug);
+    let mut lines = vec![
+        Line::field("Collection", screen_message(&collection.title)),
+        Line::field(
+            "Curator",
+            curator_name(
+                &collection.curator.login,
+                collection.curator.name.as_deref(),
+            ),
+        ),
+    ];
+    if let Some(description) = &collection.description {
+        lines.push(Line::field("Description", screen_message(description)));
+    }
+    if let Some(page) = site_link(&origin, &collection.page_url) {
+        lines.push(Line::linked_field("Page", page.clone(), page));
+    }
+    lines.push(Line::field(
+        "Install all",
+        shell_command(
+            &["skilld".to_owned(), "add".to_owned(), reference.clone()],
+            platform,
+        ),
+    ));
+    lines.push(Line::field(
+        "Watch",
+        shell_command(
+            &["skilld".to_owned(), "watch".to_owned(), reference],
+            platform,
+        ),
+    ));
+    lines.push(Line::plain(""));
+    lines.push(Line::item(count(
+        collection.skills.total,
+        "Skill",
+        "Skills",
+    )));
+    for skill in &collection.skills.items {
+        let reason = skill
+            .reason
+            .as_deref()
+            .map(|reason| vec![Detail::plain("Why", screen_message(reason))])
+            .unwrap_or_default();
+        lines.push(skill_row(&skill.summary, &origin, platform, reason).0);
+    }
+    let shown = collection.skills.items.len() as u64;
+    if shown < collection.skills.total {
+        lines.push(Line::hint(format!(
+            "skilld.dev shows the first {shown} of {} Skills here.",
+            collection.skills.total
+        )));
+    }
+    Ok(ApiOutput::screen(
+        "view",
+        answer.raw,
+        Screen::with_header(screen_message(&collection.title), lines),
+    ))
+}
+
+/// `skilld curators`
+pub(crate) fn curators(
+    api: &dyn SkilldApi,
+    page: ApiPage,
+    platform: CommandPlatform,
+) -> Result<ApiOutput, CommandError> {
+    let answer = api.curators(page).map_err(CommandError::remote)?;
+    let origin = api.site_origin();
+    let list: &ApiList<CuratorSummary> = &answer.data;
+    let mut lines = Vec::new();
+    let mut plain = String::new();
+    for curator in &list.items {
+        let handle = format!("@{}", curator.login);
+        let mut details = Vec::new();
+        if let Some(page) = site_link(&origin, &curator.page_url) {
+            details.push(Detail::path("Page", page));
+        }
+        details.push(Detail::command(
+            "View",
+            shell_command(
+                &["skilld".to_owned(), "view".to_owned(), handle.clone()],
+                platform,
+            ),
+        ));
+        let record = [
+            escape_plain(&handle),
+            escape_plain(curator.name.as_deref().unwrap_or_default()),
+            curator.collection_count.to_string(),
+        ]
+        .join("\t");
+        plain.push_str(&record);
+        plain.push('\n');
+        lines.push(Line::record(
+            Marker::Note,
+            record,
+            curator_name(&curator.login, curator.name.as_deref()),
+            Some(count(curator.collection_count, "collection", "collections")),
+            details,
+        ));
+    }
+    if lines.is_empty() {
+        lines.push(Line::plain("No curators found."));
+    }
+    lines.extend(
+        Paging {
+            offset: u64::from(page.offset.unwrap_or(0)),
+            shown: list.items.len() as u64,
+            total: list.total,
+        }
+        .hint()
+        .map(Line::hint),
+    );
+    Ok(ApiOutput::records(
+        "curators",
+        answer.raw,
+        Screen::with_header(format!("Curators  {}", list.total), lines),
+        plain,
+    ))
 }
