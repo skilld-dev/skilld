@@ -4771,3 +4771,34 @@ fn installing_every_skill_of_a_repository_downloads_one_tarball() {
     assert_eq!(without_tarball.requests.lock().unwrap().len(), 169);
     assert_eq!(with_tarball.requests.lock().unwrap().len(), 4);
 }
+
+#[test]
+fn an_endpoint_override_must_be_one_https_or_loopback_origin() {
+    let remote = || {
+        SkilldRemote::new(
+            Arc::new(FakeHttp::default()),
+            Arc::new(NoTokenProvider),
+            NativeRemoteConfig::Unconfigured,
+        )
+    };
+    for accepted in [
+        "https://preview.skilld.dev",
+        "https://preview.skilld.dev/",
+        "http://localhost:3000",
+        "http://127.0.0.1:8787/",
+    ] {
+        assert!(remote().with_endpoint(accepted).is_ok(), "{accepted}");
+    }
+    for rejected in [
+        "http://preview.skilld.dev",
+        "https://skilld.dev/api",
+        "https://skilld.dev/?next=x",
+        "https://user:secret@skilld.dev",
+        "not a url",
+    ] {
+        let Err(error) = remote().with_endpoint(rejected) else {
+            panic!("{rejected} must be refused");
+        };
+        assert_eq!(error.code, "INVALID_ENDPOINT", "{rejected}");
+    }
+}

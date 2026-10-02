@@ -54,6 +54,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
 | `SKILLD_NO_WEEKLY` | weekly notice opt-out |
+| `SKILLD_API_URL` | API origin override |
 | `skilld auth status` | account authentication status |
 | `skilld auth logout` | account logout |
 | `skilld config get` | configuration read |

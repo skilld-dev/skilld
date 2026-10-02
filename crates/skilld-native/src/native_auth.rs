@@ -7,7 +7,7 @@ use skilld_auth::{
     AuthDependencies, AuthError, AuthErrorKind, AuthStatus, BoundaryError, BoundaryErrorKind,
     BrowserLauncher, CancellationToken, Clock, CredentialStore, HttpClient, HttpRequest,
     HttpResponse, KeychainCredentialStore, LoginOptions, NativeLoopbackListener, OsRandom,
-    SKILLD_ORIGIN, SystemClock, login, logout, refresh, status,
+    ServiceOrigin, SystemClock, login, logout, refresh, status,
 };
 use skilld_command::{AccountProvider, CommandError, SecretValue, TokenProvider};
 use skilld_core::{RemoteError, VERSION};
@@ -81,18 +81,21 @@ impl HttpClient for NativeAuthHttp {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct NativeBrowser;
+#[derive(Clone, Debug, Default)]
+struct NativeBrowser {
+    origin: ServiceOrigin,
+}
 
 impl BrowserLauncher for NativeBrowser {
     fn open(&self, url: &str) -> Result<(), BoundaryError> {
-        let launch = auth_browser_command(std::env::consts::OS, url).map_err(|error| {
-            boundary(if error.code == "UNSUPPORTED_HOST" {
-                BoundaryErrorKind::Unsupported
-            } else {
-                BoundaryErrorKind::Failed
-            })
-        })?;
+        let launch =
+            auth_browser_command(std::env::consts::OS, url, &self.origin).map_err(|error| {
+                boundary(if error.code == "UNSUPPORTED_HOST" {
+                    BoundaryErrorKind::Unsupported
+                } else {
+                    BoundaryErrorKind::Failed
+                })
+            })?;
         Command::new(launch.program)
             .args(launch.arguments)
             .status()
@@ -104,6 +107,7 @@ impl BrowserLauncher for NativeBrowser {
 }
 
 pub struct NativeAccount {
+    origin: ServiceOrigin,
     http: NativeAuthHttp,
     browser: NativeBrowser,
     clock: SystemClock,
@@ -120,8 +124,9 @@ impl NativeAccount {
     /// The account backed by the given credential store.
     pub fn with_credentials(credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
+            origin: ServiceOrigin::production(),
             http: NativeAuthHttp,
-            browser: NativeBrowser,
+            browser: NativeBrowser::default(),
             clock: SystemClock,
             random: OsRandom,
             callbacks: NativeLoopbackListener,
@@ -129,8 +134,20 @@ impl NativeAccount {
         }
     }
 
+    /// The account on another skilld.dev origin. Its credential is separate
+    /// from the production one.
+    #[must_use]
+    pub fn with_origin(mut self, origin: ServiceOrigin) -> Self {
+        self.browser = NativeBrowser {
+            origin: origin.clone(),
+        };
+        self.origin = origin;
+        self
+    }
+
     fn dependencies(&self) -> AuthDependencies<'_> {
         AuthDependencies {
+            origin: &self.origin,
             http: &self.http,
             browser: &self.browser,
             clock: &self.clock,
@@ -143,7 +160,7 @@ impl NativeAccount {
     fn current_token(&self) -> Result<Option<SecretValue>, RemoteError> {
         let mut credential = self
             .credentials
-            .load(SKILLD_ORIGIN)
+            .load(self.origin.as_str())
             .map_err(|_| RemoteError::new("SERVICE_UNAVAILABLE", "the account keychain failed"))?;
         if credential
             .as_ref()
@@ -155,7 +172,7 @@ impl NativeAccount {
                 &CancellationToken::new(),
             )
             .map_err(remote_auth_error)?;
-            credential = self.credentials.load(SKILLD_ORIGIN).map_err(|_| {
+            credential = self.credentials.load(self.origin.as_str()).map_err(|_| {
                 RemoteError::new("SERVICE_UNAVAILABLE", "the account keychain failed")
             })?;
         }

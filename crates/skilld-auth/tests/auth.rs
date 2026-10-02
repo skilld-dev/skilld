@@ -15,8 +15,8 @@ use skilld_auth::{
     AuthDependencies, AuthErrorKind, AuthStatus, BoundaryError, BoundaryErrorKind, BrowserLauncher,
     CallbackBinding, CallbackListener, CallbackReply, CallbackRequest, CancellationToken, Clock,
     CredentialStore, HttpClient, HttpRequest, HttpResponse, LoginOptions, NativeLoopbackListener,
-    RandomSource, SKILLD_ORIGIN, SecretString, StoredCredential, UnsupportedCredentialStore, login,
-    logout, parse_callback_request, refresh, status,
+    RandomSource, SKILLD_ORIGIN, SecretString, ServiceOrigin, StoredCredential,
+    UnsupportedCredentialStore, login, logout, parse_callback_request, refresh, status,
 };
 use url::Url;
 
@@ -231,6 +231,7 @@ impl CredentialStore for FakeCredentials {
 }
 
 struct Fixture {
+    origin: ServiceOrigin,
     http: FakeHttp,
     browser: FakeBrowser,
     clock: FakeClock,
@@ -243,6 +244,7 @@ impl Fixture {
     fn login_with(responses: Vec<Result<HttpResponse, BoundaryError>>) -> Self {
         let clock = FakeClock::new(NOW);
         Self {
+            origin: ServiceOrigin::production(),
             http: FakeHttp::new(responses),
             browser: FakeBrowser::default(),
             callbacks: FakeCallbacks::new(
@@ -257,6 +259,7 @@ impl Fixture {
 
     fn dependencies(&self) -> AuthDependencies<'_> {
         AuthDependencies {
+            origin: &self.origin,
             http: &self.http,
             browser: &self.browser,
             clock: &self.clock,
@@ -436,6 +439,7 @@ fn login_maps_a_rejected_site_code_to_expiry() {
 #[test]
 fn refresh_uses_each_rotated_token_once() {
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(vec![
             Ok(token_response(
                 ACCESS_TWO,
@@ -492,6 +496,7 @@ fn refresh_uses_each_rotated_token_once() {
 #[test]
 fn refresh_rejects_a_response_that_replays_the_same_token() {
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(vec![Ok(token_response(
             ACCESS_TWO,
             REFRESH_ONE,
@@ -548,6 +553,7 @@ fn keychain_failure_returns_a_redacted_error() {
 #[test]
 fn logout_revokes_then_deletes_the_bound_account() {
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(vec![Ok(HttpResponse {
             status: 200,
             headers: Vec::new(),
@@ -595,6 +601,7 @@ fn logout_revokes_then_deletes_the_bound_account() {
 #[test]
 fn logout_deletes_the_local_credential_when_revocation_fails() {
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(vec![Err(BoundaryError::new(BoundaryErrorKind::Failed))]),
         browser: FakeBrowser::default(),
         clock: FakeClock::new(NOW),
@@ -704,6 +711,7 @@ fn login_stops_before_side_effects_when_cancelled() {
 #[test]
 fn status_reports_expiry_without_returning_tokens() {
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(Vec::new()),
         browser: FakeBrowser::default(),
         clock: FakeClock::new(NOW),
@@ -731,6 +739,7 @@ fn status_rejects_a_credential_bound_to_another_origin() {
     let mut wrong = credential(ACCESS_ONE, REFRESH_ONE, NOW + 100);
     wrong.origin = "https://example.com".to_owned();
     let fixture = Fixture {
+        origin: ServiceOrigin::production(),
         http: FakeHttp::new(Vec::new()),
         browser: FakeBrowser::default(),
         clock: FakeClock::new(NOW),
@@ -758,7 +767,9 @@ fn status_surfaces_the_wasi_credential_capability_seam() {
         clock.clone(),
     );
     let credentials = UnsupportedCredentialStore;
+    let origin = ServiceOrigin::production();
     let dependencies = AuthDependencies {
+        origin: &origin,
         http: &http,
         browser: &browser,
         clock: &clock,
@@ -900,4 +911,90 @@ fn login_omits_a_device_label_with_no_printable_characters() {
     let body = token_body_for_label(" \u{1b}\t");
 
     assert!(body.get("device_label").is_none());
+}
+
+#[test]
+fn a_service_origin_accepts_https_and_loopback_http_only() {
+    assert_eq!(
+        ServiceOrigin::parse("https://preview.skilld.dev/")
+            .expect("https origin")
+            .as_str(),
+        "https://preview.skilld.dev"
+    );
+    assert_eq!(
+        ServiceOrigin::parse("http://localhost:3000")
+            .expect("loopback origin")
+            .as_str(),
+        "http://localhost:3000"
+    );
+    assert_eq!(
+        ServiceOrigin::parse("http://127.0.0.1:8787")
+            .expect("loopback address")
+            .as_str(),
+        "http://127.0.0.1:8787"
+    );
+    assert!(
+        ServiceOrigin::parse("https://skilld.dev")
+            .expect("production")
+            .is_production()
+    );
+    for rejected in [
+        "http://skilld.dev",
+        "http://192.168.1.4:3000",
+        "https://skilld.dev/api",
+        "https://skilld.dev/?q=1",
+        "https://skilld.dev/#top",
+        "https://user:secret@skilld.dev",
+        "ftp://skilld.dev",
+        "skilld.dev",
+        "",
+    ] {
+        let error = ServiceOrigin::parse(rejected).expect_err(rejected);
+        assert_eq!(error.kind(), AuthErrorKind::InvalidOrigin, "{rejected}");
+    }
+}
+
+#[test]
+fn login_against_another_origin_uses_its_endpoints_and_binds_the_credential_to_it() {
+    let mut fixture = Fixture::login_with(vec![Ok(token_response(
+        ACCESS_ONE,
+        REFRESH_ONE,
+        NOW + 3600,
+        "harlan",
+    ))]);
+    fixture.origin = ServiceOrigin::parse("http://localhost:3000").expect("loopback origin");
+
+    login(&fixture.dependencies(), &LoginOptions::new("3.0.0")).expect("login");
+
+    let authorization_url = fixture.browser.urls.lock().expect("browser lock")[0].clone();
+    assert!(
+        authorization_url.starts_with("http://localhost:3000/cli/authorize?"),
+        "{authorization_url}"
+    );
+    assert_eq!(
+        fixture.http.requests()[0].url,
+        "http://localhost:3000/api/cli/oauth/token"
+    );
+    assert_eq!(
+        fixture.credentials.current().map(|value| value.origin),
+        Some("http://localhost:3000".to_owned())
+    );
+}
+
+#[test]
+fn a_production_credential_never_answers_for_another_origin() {
+    let mut fixture = Fixture::login_with(Vec::new());
+    fixture.credentials = FakeCredentials::with(StoredCredential {
+        origin: SKILLD_ORIGIN.to_owned(),
+        account: "harlan".to_owned(),
+        access_token: SecretString::new(ACCESS_ONE),
+        refresh_token: Some(SecretString::new(REFRESH_ONE)),
+        expires_at: NOW + 3600,
+        scopes: None,
+    });
+    fixture.origin = ServiceOrigin::parse("https://preview.skilld.dev").expect("preview origin");
+
+    let error = status(&fixture.dependencies()).expect_err("origin mismatch");
+
+    assert_eq!(error.kind(), AuthErrorKind::AccountMismatch);
 }

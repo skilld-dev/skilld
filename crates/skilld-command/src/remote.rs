@@ -798,6 +798,12 @@ impl SkilldRemote {
         self
     }
 
+    /// Point every skilld.dev request at another origin.
+    ///
+    /// The value is one origin: HTTPS on any host, or HTTP on `localhost` or
+    /// `127.0.0.1` for a local site. Every service, Artifact, and Skill page
+    /// origin check then follows it, so a response can never send skilld to
+    /// a host outside the configured one.
     pub fn with_endpoint(mut self, endpoint: &str) -> Result<Self, RemoteError> {
         let endpoint = Url::parse(endpoint)
             .map_err(|_| RemoteError::new("INVALID_ENDPOINT", "the API endpoint is invalid"))?;
@@ -808,6 +814,17 @@ impl SkilldRemote {
             return Err(RemoteError::new(
                 "INVALID_ENDPOINT",
                 "the API endpoint must use HTTPS",
+            ));
+        }
+        if !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || endpoint.path() != "/"
+        {
+            return Err(RemoteError::new(
+                "INVALID_ENDPOINT",
+                "the API endpoint must be an origin with no path, query, or credentials",
             ));
         }
         self.endpoint = endpoint;

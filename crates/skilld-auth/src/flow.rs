@@ -12,13 +12,13 @@ use crate::callback::parse_callback_request;
 use crate::model::{
     AuthDependencies, AuthError, AuthErrorKind, AuthStatus, BoundaryError, BoundaryErrorKind,
     CallbackReply, CancellationToken, HttpMethod, HttpRequest, HttpResponse, LoginOptions,
-    SKILLD_ORIGIN, SecretString, SessionSummary, StoredCredential,
+    SecretString, ServiceOrigin, SessionSummary, StoredCredential,
 };
 
-const AUTHORIZE_URL: &str = "https://skilld.dev/cli/authorize";
-const TOKEN_URL: &str = "https://skilld.dev/api/cli/oauth/token";
-const REFRESH_URL: &str = "https://skilld.dev/api/cli/oauth/refresh";
-const LOGOUT_URL: &str = "https://skilld.dev/api/cli/logout";
+const AUTHORIZE_PATH: &str = "/cli/authorize";
+const TOKEN_PATH: &str = "/api/cli/oauth/token";
+const REFRESH_PATH: &str = "/api/cli/oauth/refresh";
+const LOGOUT_PATH: &str = "/api/cli/logout";
 const MAX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -83,6 +83,7 @@ pub fn login(
     })?;
     let port = callback.port();
     let authorization_url = authorization_url(
+        dependencies.origin,
         &challenge,
         state.expose_secret(),
         port,
@@ -176,7 +177,8 @@ pub fn refresh(
     })?;
     let response = send_json(
         dependencies.http,
-        REFRESH_URL,
+        dependencies.origin,
+        &dependencies.origin.endpoint(REFRESH_PATH),
         Vec::new(),
         body,
         http_timeout,
@@ -194,7 +196,12 @@ pub fn refresh(
             "The account refresh failed.",
         ));
     }
-    let rotated = parse_token_response(&response, dependencies.clock.now_unix_seconds(), true)?;
+    let rotated = parse_token_response(
+        &response,
+        dependencies.origin,
+        dependencies.clock.now_unix_seconds(),
+        true,
+    )?;
     if rotated.account != current.account {
         return Err(AuthError::new(
             AuthErrorKind::AccountMismatch,
@@ -249,7 +256,8 @@ pub fn logout(
     )];
     let remote = send_json(
         dependencies.http,
-        LOGOUT_URL,
+        dependencies.origin,
+        &dependencies.origin.endpoint(LOGOUT_PATH),
         headers,
         b"{}".to_vec(),
         http_timeout,
@@ -267,7 +275,7 @@ pub fn logout(
     });
     dependencies
         .credentials
-        .delete(SKILLD_ORIGIN, &credential.account)
+        .delete(dependencies.origin.as_str(), &credential.account)
         .map_err(map_store_error)?;
     remote.map(|_| ())
 }
@@ -301,12 +309,13 @@ fn validate_http_timeout(timeout: Duration) -> Result<(), AuthError> {
 }
 
 fn authorization_url(
+    origin: &ServiceOrigin,
     challenge: &str,
     state: &str,
     port: u16,
     cli_version: &str,
 ) -> Result<String, AuthError> {
-    let mut url = Url::parse(AUTHORIZE_URL).map_err(|_| {
+    let mut url = Url::parse(&origin.endpoint(AUTHORIZE_PATH)).map_err(|_| {
         AuthError::new(
             AuthErrorKind::BrowserFailed,
             "The account login URL is invalid.",
@@ -345,7 +354,8 @@ fn exchange_login_token(
     })?;
     let response = send_json(
         dependencies.http,
-        TOKEN_URL,
+        dependencies.origin,
+        &dependencies.origin.endpoint(TOKEN_PATH),
         Vec::new(),
         body,
         options.http_timeout,
@@ -363,7 +373,12 @@ fn exchange_login_token(
             "The token exchange failed.",
         ));
     }
-    parse_token_response(&response, dependencies.clock.now_unix_seconds(), true)
+    parse_token_response(
+        &response,
+        dependencies.origin,
+        dependencies.clock.now_unix_seconds(),
+        true,
+    )
 }
 
 const DEVICE_LABEL_MAX_CHARS: usize = 64;
@@ -396,6 +411,7 @@ fn device_label(value: &str) -> Option<String> {
 
 fn parse_token_response(
     response: &HttpResponse,
+    origin: &ServiceOrigin,
     now: u64,
     require_refresh: bool,
 ) -> Result<StoredCredential, AuthError> {
@@ -434,7 +450,7 @@ fn parse_token_response(
         ));
     }
     Ok(StoredCredential {
-        origin: SKILLD_ORIGIN.to_owned(),
+        origin: origin.as_str().to_owned(),
         account: parsed.login,
         access_token: SecretString::new(parsed.access_token),
         refresh_token: parsed.refresh_token.map(SecretString::new),
@@ -454,13 +470,14 @@ fn is_account(value: &str) -> bool {
 }
 
 fn load_bound(dependencies: &AuthDependencies<'_>) -> Result<Option<StoredCredential>, AuthError> {
+    let origin = dependencies.origin.as_str();
     let credential = dependencies
         .credentials
-        .load(SKILLD_ORIGIN)
+        .load(origin)
         .map_err(map_store_error)?;
     if credential
         .as_ref()
-        .is_some_and(|value| value.origin != SKILLD_ORIGIN || !is_account(&value.account))
+        .is_some_and(|value| value.origin != origin || !is_account(&value.account))
     {
         return Err(AuthError::new(
             AuthErrorKind::AccountMismatch,
@@ -491,6 +508,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), AuthError> {
 
 fn send_json(
     http: &dyn crate::model::HttpClient,
+    origin: &ServiceOrigin,
     initial_url: &str,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
@@ -551,10 +569,10 @@ fn send_json(
                 "The account endpoint redirect URL was invalid.",
             )
         })?;
-        if !is_skilld_origin(&next) {
+        if !origin.contains(&next) {
             return Err(AuthError::new(
                 AuthErrorKind::RedirectRejected,
-                "The account endpoint redirect left skilld.dev.",
+                "The account endpoint redirect left the skilld.dev origin.",
             ));
         }
         url = next;
@@ -584,15 +602,6 @@ fn single_header<'a>(
         ));
     }
     Ok(values.first().copied())
-}
-
-fn is_skilld_origin(url: &Url) -> bool {
-    url.scheme() == "https"
-        && url.host_str() == Some("skilld.dev")
-        && url.port_or_known_default() == Some(443)
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.fragment().is_none()
 }
 
 fn map_boundary(

@@ -8,12 +8,11 @@ mod supported {
     use zeroize::Zeroize;
 
     use crate::model::{
-        BoundaryError, BoundaryErrorKind, CredentialStore, SKILLD_ORIGIN, SecretString,
+        BoundaryError, BoundaryErrorKind, CredentialStore, SecretString, ServiceOrigin,
         StoredCredential,
     };
 
     const SERVICE: &str = "skilld.dev";
-    const ACTIVE_ACCOUNT: &str = "https://skilld.dev:active-account";
 
     #[derive(Clone, Copy, Debug, Default)]
     pub struct KeychainCredentialStore;
@@ -35,17 +34,18 @@ mod supported {
             Self
         }
 
-        fn entry() -> Result<Entry, BoundaryError> {
-            Entry::new(SERVICE, ACTIVE_ACCOUNT).map_err(|_| failed())
+        /// One keychain entry per origin. Production keeps the entry name
+        /// `https://skilld.dev:active-account`, so an existing sign-in stays.
+        fn entry(origin: &str) -> Result<Entry, BoundaryError> {
+            let origin = ServiceOrigin::parse(origin).map_err(|_| failed())?;
+            Entry::new(SERVICE, &format!("{}:active-account", origin.as_str()))
+                .map_err(|_| failed())
         }
     }
 
     impl CredentialStore for KeychainCredentialStore {
         fn load(&self, origin: &str) -> Result<Option<StoredCredential>, BoundaryError> {
-            if origin != SKILLD_ORIGIN {
-                return Err(failed());
-            }
-            let mut encoded = match Self::entry()?.get_password() {
+            let mut encoded = match Self::entry(origin)?.get_password() {
                 Ok(value) => value,
                 Err(Error::NoEntry) => return Ok(None),
                 Err(_) => return Err(failed()),
@@ -67,10 +67,7 @@ mod supported {
         }
 
         fn save(&self, credential: &StoredCredential) -> Result<(), BoundaryError> {
-            if credential.origin != SKILLD_ORIGIN {
-                return Err(failed());
-            }
-            let entry = Self::entry()?;
+            let entry = Self::entry(&credential.origin)?;
             let mut value = PersistedCredential {
                 origin: credential.origin.clone(),
                 account: credential.account.clone(),
@@ -94,9 +91,6 @@ mod supported {
         }
 
         fn delete(&self, origin: &str, account: &str) -> Result<(), BoundaryError> {
-            if origin != SKILLD_ORIGIN {
-                return Err(failed());
-            }
             if self
                 .load(origin)?
                 .as_ref()
@@ -104,7 +98,7 @@ mod supported {
             {
                 return Err(failed());
             }
-            match Self::entry()?.delete_credential() {
+            match Self::entry(origin)?.delete_credential() {
                 Ok(()) | Err(Error::NoEntry) => Ok(()),
                 Err(_) => Err(failed()),
             }

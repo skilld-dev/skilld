@@ -4,9 +4,86 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use url::Url;
 use zeroize::Zeroize;
 
 pub const SKILLD_ORIGIN: &str = "https://skilld.dev";
+
+/// The skilld.dev origin that every account request and stored credential
+/// binds to.
+///
+/// Production is `https://skilld.dev`. `SKILLD_API_URL` can name another
+/// HTTPS origin, or an HTTP origin on `localhost` or `127.0.0.1` for a local
+/// site. A credential belongs to exactly one origin, so a token that one
+/// origin issued never reaches another.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceOrigin(String);
+
+impl ServiceOrigin {
+    /// The production origin, `https://skilld.dev`.
+    #[must_use]
+    pub fn production() -> Self {
+        Self(SKILLD_ORIGIN.to_owned())
+    }
+
+    /// Parse one origin a person configured.
+    ///
+    /// A path of `/` is the only path an origin may carry. Credentials, a
+    /// query, and a fragment are refused, because each would change where a
+    /// token goes.
+    pub fn parse(value: &str) -> Result<Self, AuthError> {
+        const INVALID: &str =
+            "SKILLD_API_URL must be an HTTPS origin, or an HTTP origin on localhost or 127.0.0.1.";
+        let url = Url::parse(value.trim())
+            .map_err(|_| AuthError::new(AuthErrorKind::InvalidOrigin, INVALID))?;
+        let secure = url.scheme() == "https" && url.host_str().is_some_and(|host| !host.is_empty());
+        let loopback =
+            url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost"));
+        if !(secure || loopback)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return Err(AuthError::new(AuthErrorKind::InvalidOrigin, INVALID));
+        }
+        Ok(Self(url.origin().ascii_serialization()))
+    }
+
+    /// The origin as `scheme://host[:port]`, with no trailing slash.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether this is the production origin.
+    #[must_use]
+    pub fn is_production(&self) -> bool {
+        self.0 == SKILLD_ORIGIN
+    }
+
+    /// One absolute URL on this origin. `path` starts with `/`.
+    #[must_use]
+    pub fn endpoint(&self, path: &str) -> String {
+        format!("{}{path}", self.0)
+    }
+
+    /// Whether `url` stays on this origin and carries no credentials or fragment.
+    #[must_use]
+    pub fn contains(&self, url: &Url) -> bool {
+        url.origin().ascii_serialization() == self.0
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+    }
+}
+
+impl Default for ServiceOrigin {
+    fn default() -> Self {
+        Self::production()
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
@@ -49,6 +126,7 @@ pub enum AuthErrorKind {
     ExpiredToken,
     HttpFailed,
     InvalidAuthorizationCode,
+    InvalidOrigin,
     InvalidResponse,
     LogoutFailed,
     MissingRefreshToken,
@@ -334,6 +412,8 @@ pub trait CredentialStore: Send + Sync {
 }
 
 pub struct AuthDependencies<'a> {
+    /// The origin every request goes to and every credential binds to.
+    pub origin: &'a ServiceOrigin,
     pub http: &'a dyn HttpClient,
     pub browser: &'a dyn BrowserLauncher,
     pub clock: &'a dyn Clock,

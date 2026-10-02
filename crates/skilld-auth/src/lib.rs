@@ -11,5 +11,5 @@ pub use model::{
     BoundaryErrorKind, BrowserLauncher, CallbackBinding, CallbackListener, CallbackReply,
     CallbackRequest, CancellationToken, Clock, CredentialStore, HttpClient, HttpMethod,
     HttpRequest, HttpResponse, LoginOptions, OsRandom, RandomSource, SKILLD_ORIGIN, SecretString,
-    SessionSummary, StoredCredential, SystemClock, UnsupportedCredentialStore,
+    ServiceOrigin, SessionSummary, StoredCredential, SystemClock, UnsupportedCredentialStore,
 };

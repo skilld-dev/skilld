@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::Duration;
 
+use skilld_auth::ServiceOrigin;
 use skilld_command::{Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpResponse};
 use skilld_core::RemoteError;
 use url::Url;
@@ -19,22 +20,21 @@ pub struct BrowserCommand {
     pub arguments: Vec<String>,
 }
 
+/// The command that opens one authorization URL in the browser.
+///
+/// The URL must stay on `origin`, the skilld.dev origin the account signs in
+/// to. Production is `https://skilld.dev`; `SKILLD_API_URL` can name another.
 pub fn auth_browser_command(
     platform: &str,
     authorization_url: &str,
+    origin: &ServiceOrigin,
 ) -> Result<BrowserCommand, RemoteError> {
     let url = Url::parse(authorization_url)
         .map_err(|_| RemoteError::new("INVALID_AUTH_URL", "the authorization URL is invalid"))?;
-    if url.scheme() != "https"
-        || url.host_str() != Some("skilld.dev")
-        || url.port_or_known_default() != Some(443)
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
+    if !origin.contains(&url) {
         return Err(RemoteError::new(
             "INVALID_AUTH_URL",
-            "the authorization URL must stay on skilld.dev",
+            "the authorization URL must stay on the skilld.dev origin",
         ));
     }
     let program = match platform {
@@ -52,6 +52,29 @@ pub fn auth_browser_command(
         program,
         arguments: vec![authorization_url.to_owned()],
     })
+}
+
+/// The environment variable that points the CLI at another skilld.dev origin.
+pub const API_URL_VARIABLE: &str = "SKILLD_API_URL";
+
+/// The skilld.dev origin this run talks to.
+///
+/// `SKILLD_API_URL` names a local or preview site. Unset or empty, the CLI
+/// uses `https://skilld.dev`. Remote Skills, search, account sign-in, and
+/// every account command use the same origin, so a credential stays with the
+/// origin that issued it.
+pub fn api_origin(value: Option<&std::ffi::OsStr>) -> Result<ServiceOrigin, RemoteError> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(ServiceOrigin::production());
+    };
+    let invalid = || {
+        RemoteError::new(
+            "INVALID_ENDPOINT",
+            "SKILLD_API_URL must be an HTTPS origin, or an HTTP origin on localhost or 127.0.0.1. Unset it to use https://skilld.dev.",
+        )
+    };
+    let value = value.to_str().ok_or_else(invalid)?;
+    ServiceOrigin::parse(value).map_err(|_| invalid())
 }
 
 #[derive(Clone, Debug)]

@@ -316,6 +316,25 @@ skilld config list
 Native builds store account credentials in the operating system keychain.
 The CLI does not store tokens in environment variables or plain text files.
 
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `SKILLD_DATA_DIR` | The directory for global Skills and configuration. The default is `~/.skilld`, or `%LOCALAPPDATA%\skilld` on Windows. |
+| `SKILLD_API_URL` | The skilld.dev origin the CLI talks to. The default is `https://skilld.dev`. |
+| `SKILLD_NO_UPGRADE` | Set to `1` to turn off upgrade checks. |
+| `SKILLD_NO_WEEKLY` | Set to `1` to turn off the note about the weekly email. |
+
+Use `SKILLD_API_URL` to test a local or preview site:
+
+```sh
+SKILLD_API_URL=http://localhost:3000 skilld search vue
+```
+
+It accepts an HTTPS origin, or an HTTP origin on `localhost` or `127.0.0.1`.
+Search, Skill delivery, sign-in, and account commands all use that origin.
+Each origin keeps its own sign-in, so a skilld.dev token never goes to another origin.
+
 ## Privacy
 
 The skilld CLI sends no telemetry or analytics.
