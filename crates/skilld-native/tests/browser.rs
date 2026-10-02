@@ -1,5 +1,5 @@
 use skilld_auth::ServiceOrigin;
-use skilld_native::{api_origin, auth_browser_command};
+use skilld_native::{api_origin, auth_browser_command, token_override};
 
 #[test]
 fn windows_opens_the_validated_authorization_url_as_one_direct_argument() {
@@ -59,5 +59,25 @@ fn the_api_origin_defaults_to_production_and_parses_an_override_once() {
         error.message.contains("SKILLD_API_URL"),
         "{}",
         error.message
+    );
+}
+
+#[test]
+fn a_token_in_the_environment_is_used_as_given_and_an_empty_one_is_ignored() {
+    assert!(token_override(None).unwrap().is_none());
+    assert!(
+        token_override(Some(std::ffi::OsStr::new("  ")))
+            .unwrap()
+            .is_none()
+    );
+    let token = token_override(Some(std::ffi::OsStr::new(" eyJ.a.b \n")))
+        .unwrap()
+        .unwrap();
+    assert_eq!(token.expose(), "eyJ.a.b");
+    assert_eq!(
+        token_override(Some(std::ffi::OsStr::new("a\nb")))
+            .unwrap_err()
+            .code,
+        "INVALID_TOKEN"
     );
 }

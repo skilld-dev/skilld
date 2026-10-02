@@ -342,7 +342,7 @@ skilld auth logout --plain
 
 ## Act for the user's skilld.dev account
 
-Account commands need `skilld auth login`.
+Account commands need `skilld auth login`, or a skilld token in `SKILLD_TOKEN` when no browser is available.
 Without a sign-in they fail with `AUTH_REQUIRED` before any request.
 
 Read account state when the user asks about it:

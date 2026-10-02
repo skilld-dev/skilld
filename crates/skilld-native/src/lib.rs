@@ -3,7 +3,9 @@ use std::io::Read;
 use std::time::Duration;
 
 use skilld_auth::ServiceOrigin;
-use skilld_command::{Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpResponse};
+use skilld_command::{
+    Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpResponse, SecretValue,
+};
 use skilld_core::RemoteError;
 use url::Url;
 
@@ -56,6 +58,8 @@ pub fn auth_browser_command(
 
 /// The environment variable that points the CLI at another skilld.dev origin.
 pub const API_URL_VARIABLE: &str = "SKILLD_API_URL";
+/// A skilld token for scripts and CI. It wins over the stored sign-in.
+pub const TOKEN_VARIABLE: &str = "SKILLD_TOKEN";
 
 /// The skilld.dev origin this run talks to.
 ///
@@ -75,6 +79,29 @@ pub fn api_origin(value: Option<&std::ffi::OsStr>) -> Result<ServiceOrigin, Remo
     };
     let value = value.to_str().ok_or_else(invalid)?;
     ServiceOrigin::parse(value).map_err(|_| invalid())
+}
+
+/// The skilld token `SKILLD_TOKEN` names, if any.
+///
+/// A token created at skilld.dev/me/cli-tokens/new, or with `skilld tokens
+/// create`, lets a script or a CI job act for an account without a browser
+/// sign-in. It wins over the stored sign-in and is never refreshed or stored.
+/// Unset or blank, the CLI uses the sign-in from `skilld auth login`.
+pub fn token_override(value: Option<&std::ffi::OsStr>) -> Result<Option<SecretValue>, RemoteError> {
+    let invalid = || {
+        RemoteError::new(
+            "INVALID_TOKEN",
+            "SKILLD_TOKEN must be one skilld token on one line. Unset it to use the stored sign-in.",
+        )
+    };
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(invalid)?.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    SecretValue::new(value).map(Some).map_err(|_| invalid())
 }
 
 #[derive(Clone, Debug)]

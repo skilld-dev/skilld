@@ -31,7 +31,9 @@ use skilld_native::upgrade::{
     self as cli_upgrade, InstallTarget, LAUNCHER_VARIABLE, NativeReleaseFetcher, WORKER_VARIABLE,
 };
 use skilld_native::weekly as native_weekly;
-use skilld_native::{API_URL_VARIABLE, NativeHttpAdapter, api_origin};
+use skilld_native::{
+    API_URL_VARIABLE, NativeHttpAdapter, TOKEN_VARIABLE, api_origin, token_override,
+};
 use status::StatusLine;
 use terminal_size::Width;
 
@@ -101,7 +103,18 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let account = Arc::new(NativeAccount::new().with_origin(origin.clone()));
+    let token = match token_override(env::var_os(TOKEN_VARIABLE).as_deref()) {
+        Ok(token) => token,
+        Err(error) => {
+            eprintln!("{}: {}", error.code, error.message);
+            return ExitCode::from(2);
+        }
+    };
+    let account = Arc::new(
+        NativeAccount::new()
+            .with_origin(origin.clone())
+            .with_token_override(token),
+    );
     let auth_command = is_auth_command(args.iter().map(|arg| arg.to_string_lossy()));
     let remote = match SkilldRemote::new(
         Arc::new(NativeHttpAdapter::new()),

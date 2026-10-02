@@ -396,12 +396,17 @@ skilld config list
 Native builds store account credentials in the operating system keychain.
 The CLI does not store tokens in environment variables or plain text files.
 
+A script or a CI job without a browser can send a skilld token instead.
+Create one at skilld.dev/me/cli-tokens/new or with `skilld tokens create`, then set `SKILLD_TOKEN`.
+The CLI reads it for that run only, and never stores or refreshes it.
+
 ### Environment variables
 
 | Variable | Effect |
 | --- | --- |
 | `SKILLD_DATA_DIR` | The directory for global Skills and configuration. The default is `~/.skilld`, or `%LOCALAPPDATA%\skilld` on Windows. |
 | `SKILLD_API_URL` | The skilld.dev origin the CLI talks to. The default is `https://skilld.dev`. |
+| `SKILLD_TOKEN` | A skilld token to send instead of the stored sign-in. For scripts and CI. |
 | `SKILLD_NO_UPGRADE` | Set to `1` to turn off upgrade checks. |
 | `SKILLD_NO_WEEKLY` | Set to `1` to turn off the note about the weekly email. |
 

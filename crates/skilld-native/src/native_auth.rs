@@ -114,6 +114,8 @@ pub struct NativeAccount {
     random: OsRandom,
     callbacks: NativeLoopbackListener,
     credentials: Arc<dyn CredentialStore>,
+    /// `SKILLD_TOKEN`. When set, it is the only credential this run sends.
+    token_override: Option<SecretValue>,
 }
 
 impl NativeAccount {
@@ -131,7 +133,15 @@ impl NativeAccount {
             random: OsRandom,
             callbacks: NativeLoopbackListener,
             credentials,
+            token_override: None,
         }
+    }
+
+    /// Send this token instead of the stored sign-in. See `token_override`.
+    #[must_use]
+    pub fn with_token_override(mut self, token: Option<SecretValue>) -> Self {
+        self.token_override = token;
+        self
     }
 
     /// The account on another skilld.dev origin. Its credential is separate
@@ -158,6 +168,9 @@ impl NativeAccount {
     }
 
     fn current_token(&self) -> Result<Option<SecretValue>, RemoteError> {
+        if let Some(token) = &self.token_override {
+            return Ok(Some(token.clone()));
+        }
         let mut credential = self
             .credentials
             .load(self.origin.as_str())
@@ -197,6 +210,9 @@ impl TokenProvider for NativeAccount {
 impl AccountProvider for NativeAccount {
     /// What `skilld auth status` prints: only a fresh credential counts.
     fn status(&self) -> Result<bool, CommandError> {
+        if self.token_override.is_some() {
+            return Ok(true);
+        }
         status(&self.dependencies())
             .map(|status| matches!(status, AuthStatus::Authenticated(_)))
             .map_err(command_auth_error)
@@ -205,6 +221,9 @@ impl AccountProvider for NativeAccount {
     /// Whether the person has an account at all. An expired token still
     /// belongs to an account that already receives the weekly, so it counts.
     fn has_account(&self) -> Result<bool, CommandError> {
+        if self.token_override.is_some() {
+            return Ok(true);
+        }
         status(&self.dependencies())
             .map(|status| {
                 matches!(
