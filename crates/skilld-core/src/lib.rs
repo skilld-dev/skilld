@@ -1,3 +1,4 @@
+pub mod api;
 mod lock;
 mod reference;
 mod release;

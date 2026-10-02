@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::Duration;
 
-use skilld_command::{Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpResponse};
+use skilld_auth::ServiceOrigin;
+use skilld_command::{
+    Cancellation, HttpAdapter, HttpMethod, HttpRequest, HttpResponse, SecretValue,
+};
 use skilld_core::RemoteError;
 use url::Url;
 
@@ -19,22 +22,21 @@ pub struct BrowserCommand {
     pub arguments: Vec<String>,
 }
 
+/// The command that opens one authorization URL in the browser.
+///
+/// The URL must stay on `origin`, the skilld.dev origin the account signs in
+/// to. Production is `https://skilld.dev`; `SKILLD_API_URL` can name another.
 pub fn auth_browser_command(
     platform: &str,
     authorization_url: &str,
+    origin: &ServiceOrigin,
 ) -> Result<BrowserCommand, RemoteError> {
     let url = Url::parse(authorization_url)
         .map_err(|_| RemoteError::new("INVALID_AUTH_URL", "the authorization URL is invalid"))?;
-    if url.scheme() != "https"
-        || url.host_str() != Some("skilld.dev")
-        || url.port_or_known_default() != Some(443)
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
+    if !origin.contains(&url) {
         return Err(RemoteError::new(
             "INVALID_AUTH_URL",
-            "the authorization URL must stay on skilld.dev",
+            "the authorization URL must stay on the skilld.dev origin",
         ));
     }
     let program = match platform {
@@ -54,6 +56,54 @@ pub fn auth_browser_command(
     })
 }
 
+/// The environment variable that points the CLI at another skilld.dev origin.
+pub const API_URL_VARIABLE: &str = "SKILLD_API_URL";
+/// A skilld token for scripts and CI. It wins over the stored sign-in.
+pub const TOKEN_VARIABLE: &str = "SKILLD_TOKEN";
+
+/// The skilld.dev origin this run talks to.
+///
+/// `SKILLD_API_URL` names a local or preview site. Unset or empty, the CLI
+/// uses `https://skilld.dev`. Remote Skills, search, account sign-in, and
+/// every account command use the same origin, so a credential stays with the
+/// origin that issued it.
+pub fn api_origin(value: Option<&std::ffi::OsStr>) -> Result<ServiceOrigin, RemoteError> {
+    let Some(value) = value.filter(|value| !value.is_empty()) else {
+        return Ok(ServiceOrigin::production());
+    };
+    let invalid = || {
+        RemoteError::new(
+            "INVALID_ENDPOINT",
+            "SKILLD_API_URL must be an HTTPS origin, or an HTTP origin on localhost or 127.0.0.1. Unset it to use https://skilld.dev.",
+        )
+    };
+    let value = value.to_str().ok_or_else(invalid)?;
+    ServiceOrigin::parse(value).map_err(|_| invalid())
+}
+
+/// The skilld token `SKILLD_TOKEN` names, if any.
+///
+/// A token created at skilld.dev/me/cli-tokens/new, or with `skilld tokens
+/// create`, lets a script or a CI job act for an account without a browser
+/// sign-in. It wins over the stored sign-in and is never refreshed or stored.
+/// Unset or blank, the CLI uses the sign-in from `skilld auth login`.
+pub fn token_override(value: Option<&std::ffi::OsStr>) -> Result<Option<SecretValue>, RemoteError> {
+    let invalid = || {
+        RemoteError::new(
+            "INVALID_TOKEN",
+            "SKILLD_TOKEN must be one skilld token on one line. Unset it to use the stored sign-in.",
+        )
+    };
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(invalid)?.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    SecretValue::new(value).map(Some).map_err(|_| invalid())
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeHttpAdapter {
     agent: ureq::Agent,
@@ -69,6 +119,27 @@ impl NativeHttpAdapter {
             .build()
             .into();
         Self { agent }
+    }
+}
+
+impl NativeHttpAdapter {
+    /// Apply the request headers and the bounded timeout to one builder.
+    fn prepared<B>(
+        &self,
+        mut builder: ureq::RequestBuilder<B>,
+        request: &HttpRequest,
+        timeout: Option<Duration>,
+    ) -> ureq::RequestBuilder<B> {
+        for header in &request.headers {
+            builder = builder.header(&header.name, header.value.expose());
+        }
+        if let Some(timeout) = timeout {
+            builder = builder
+                .config()
+                .timeout_global(Some(timeout.min(Duration::from_secs(30))))
+                .build();
+        }
+        builder
     }
 }
 
@@ -92,32 +163,25 @@ impl HttpAdapter for NativeHttpAdapter {
             ));
         }
         let response = match request.method {
-            HttpMethod::Get => {
-                let mut builder = self.agent.get(&request.url);
-                for header in &request.headers {
-                    builder = builder.header(&header.name, header.value.expose());
-                }
-                if let Some(timeout) = timeout {
-                    builder = builder
-                        .config()
-                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
-                        .build();
-                }
-                builder.call()
-            }
-            HttpMethod::Post => {
-                let mut builder = self.agent.post(&request.url);
-                for header in &request.headers {
-                    builder = builder.header(&header.name, header.value.expose());
-                }
-                if let Some(timeout) = timeout {
-                    builder = builder
-                        .config()
-                        .timeout_global(Some(timeout.min(Duration::from_secs(30))))
-                        .build();
-                }
-                builder.send(request.body.as_slice())
-            }
+            HttpMethod::Get => self
+                .prepared(self.agent.get(&request.url), request, timeout)
+                .call(),
+            HttpMethod::Delete if request.body.is_empty() => self
+                .prepared(self.agent.delete(&request.url), request, timeout)
+                .call(),
+            HttpMethod::Delete => self
+                .prepared(self.agent.delete(&request.url), request, timeout)
+                .force_send_body()
+                .send(request.body.as_slice()),
+            HttpMethod::Post => self
+                .prepared(self.agent.post(&request.url), request, timeout)
+                .send(request.body.as_slice()),
+            HttpMethod::Put => self
+                .prepared(self.agent.put(&request.url), request, timeout)
+                .send(request.body.as_slice()),
+            HttpMethod::Patch => self
+                .prepared(self.agent.patch(&request.url), request, timeout)
+                .send(request.body.as_slice()),
         }
         .map_err(|error| transport_error(&error, &request.url))?;
         let status = response.status().as_u16();

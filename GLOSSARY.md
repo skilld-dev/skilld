@@ -34,6 +34,14 @@ Every public export, command, error, route, and document uses these terms.
 | Multi-skill ref | `skilld run`, `skilld add` | published argument | developer, Agent | ref |
 | CLI upgrade | skilld CLI | published behavior | developer | upgrade |
 | release manifest | GitHub release | published file | skilld CLI, install script | release manifest |
+| public API | `skilld.dev/api/v1`, `skilld-api-v1.json` | published protocol | skilld CLI, developer | skilld API |
+| track | skilld.dev and `skilld tracks` | published route | developer, Agent | track |
+| trending | skilld.dev and `skilld trending` | published route | developer, Agent | trending |
+| like | skilld.dev and `skilld like` | published value | account | like |
+| watch | skilld.dev and `skilld watch` | published value | account | watch |
+| digest | skilld.dev | published email | account | digest |
+| index request | `skilld.dev/api/v1` and `skilld index` | published protocol | developer, Agent | index request |
+| skilld token | skilld.dev and `skilld tokens` | published credential | account, CI | token |
 
 | Identifier | Term |
 | --- | --- |
@@ -54,11 +62,42 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
 | `SKILLD_NO_WEEKLY` | weekly notice opt-out |
+| `SKILLD_API_URL` | API origin override |
 | `skilld auth status` | account authentication status |
 | `skilld auth logout` | account logout |
 | `skilld config get` | configuration read |
 | `skilld config set` | configuration write |
 | `skilld config list` | configuration list |
+| `skilld view OWNER/REPOSITORY/SKILL` | registry Skill details |
+| `skilld view OWNER/REPOSITORY` | registry Repository details |
+| `skilld view @LOGIN` | curator details |
+| `skilld view @LOGIN/SLUG` | collection details |
+| `skilld browse` | registry browse |
+| `skilld trending` | trending Skills |
+| `skilld tracks` | track list |
+| `skilld tracks SLUG` | track details |
+| `skilld curators` | curator list |
+| `skilld index` | index request |
+| `skilld account` | account settings |
+| `skilld account set` | account setting change |
+| `skilld account scan` | Repository scan |
+| `skilld account unpublish` | Repository unpublish |
+| `skilld like` | Skill like |
+| `skilld unlike` | like removal |
+| `skilld likes` | liked Skills |
+| `skilld likes @LOGIN` | a curator's liked Skills |
+| `skilld watch` | watch |
+| `skilld unwatch` | watch removal |
+| `skilld watches` | watched Repositories |
+| `skilld changes` | digest changes |
+| `skilld stars` | starred Repositories |
+| `skilld stars import` | star import |
+| `skilld collection create` | collection creation |
+| `skilld collection add` | collection Skill add |
+| `skilld collection remove` | collection Skill removal |
+| `skilld tokens` | skilld token list |
+| `skilld tokens create` | skilld token creation |
+| `skilld tokens revoke` | skilld token revocation |
 
 ```mermaid
 flowchart LR
@@ -94,6 +133,22 @@ Collisions
 A Skill run is one Harness execution.
 A transient Skill is one Skill that `skilld run` loads for a session.
 The Rust type for the second is `TransientSkill`, never `SkillRun`.
+
+`skilld index` and the Skill index of `skilld run OWNER/REPOSITORY` share a word.
+`skilld index` sends an index request: it asks skilld.dev to add a Repository to the registry.
+The Skill index is the list of Skills that `skilld run` prints for a ref.
+
+`skilld add` and `skilld collection add` share a verb.
+`skilld add` installs every Skill one ref names.
+`skilld collection add` puts one Skill in one of your collections and installs nothing.
+
+The weekly and the digest are two emails.
+The weekly reports liked Skills that changed, plus what trended.
+The digest reports changes in watched Repositories.
+`skilld account set weekly` and `skilld account set digest` switch them apart.
+
+`stars` on a Skill counts GitHub stars of its Repository.
+`skilld stars` lists the Repositories you starred on GitHub that hold Skills.
 
 ## Terms
 
@@ -367,6 +422,86 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 
 **Casing:** `release manifest` in sentences, `skilld-release.txt` for the file name.
 
+### public API
+
+**Is:** the skilld.dev HTTP API under `/api/v1`, described by the OpenAPI file `packages/protocol/openapi/skilld-api-v1.json` vendors.
+
+**Use for:** every discovery and account command, and the Rust types they parse.
+
+**Never:** SDK in CLI prose, endpoint list, private API.
+
+**Casing:** `public API` in sentences, `SkilldApi` in Rust.
+
+### track
+
+**Is:** a skilld.dev page of Skills for one kind of work, at `/skills/SLUG`.
+
+**Use for:** `skilld tracks` and its output.
+
+**Never:** category, cluster, topic.
+
+**Casing:** `track` in sentences.
+
+### trending
+
+**Is:** the skilld.dev board of Skills that devs talk about on X and Bluesky, each with the reason it is there.
+
+**Use for:** `skilld trending` and its `Why` rows.
+
+**Never:** popular, hot, top, leaderboard.
+
+**Casing:** `trending` in sentences.
+
+### like
+
+**Is:** an account's mark on one Skill. A like also watches the Skill's Repository.
+
+**Use for:** `skilld like`, `skilld unlike`, and `skilld likes`.
+
+**Never:** favorite, upvote, star. `stars` means GitHub stars.
+
+**Casing:** `like` in sentences.
+
+### watch
+
+**Is:** an account's subscription to one Repository, so the digest reports its changes. Watching a collection watches each Repository it names.
+
+**Use for:** `skilld watch`, `skilld unwatch`, and `skilld watches`.
+
+**Never:** follow, subscribe, sync.
+
+**Casing:** `watch` in sentences.
+
+### digest
+
+**Is:** the email that reports changes in an account's watched Repositories. `skilld changes` prints the same selection.
+
+**Use for:** `skilld account set digest` and `skilld changes`.
+
+**Never:** newsletter, notification, alert. The weekly is a separate email.
+
+**Casing:** `digest` in sentences.
+
+### index request
+
+**Is:** a request that asks skilld.dev to add one GitHub Repository to the registry.
+
+**Use for:** `skilld index` and the `index_requests` operations.
+
+**Never:** submission, import, crawl.
+
+**Casing:** `index request` in sentences.
+
+### skilld token
+
+**Is:** a credential that acts for one account in `Authorization: Bearer`. `skilld auth login` stores one; `skilld tokens create` makes another.
+
+**Use for:** `skilld tokens` and CI sign-in.
+
+**Never:** API key, personal access token in CLI prose, password.
+
+**Casing:** `skilld token` in sentences, `token` after the first use.
+
 ## Banned
 
 | Never | Use instead | Why |
@@ -380,7 +515,20 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 | trust state | source status | State exactly what is verified. |
 | Skill generator CLI | skilld-maintained Skill or Harness | The skilld CLI has no generation logic. |
 | hidden prompt | skilld-maintained Skill asset | Judgment instructions stay visible. |
+| follow, subscribe | watch | One verb for the digest. |
+| popular | trending, stars | Installs never rank a Skill. |
+| newsletter | the weekly, digest | Name the exact email. |
 
 ## Open questions
 
-None.
+1. **`skilld index` beside the Skill index.**
+   The verb matches the `index_requests` operations and the site.
+   It shares a word with the Skill index that `skilld run OWNER/REPOSITORY` prints.
+   - Keep `skilld index`, and keep the Collisions note.
+   - Rename it `skilld submit`, which the site does not use.
+2. **`repository-indexing` as an account setting key.**
+   The API names it `repositoryIndexing`. `repo` is banned here, so the key spells it out.
+3. **`skilld collection add` beside `skilld add`.**
+   The site bans `add` as a CLI verb, but this glossary keeps `skilld add`.
+   - Keep `collection add` and the Collisions note.
+   - Rename the pair `skilld collection put` and `skilld collection drop`.

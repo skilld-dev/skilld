@@ -22,7 +22,6 @@ use skilld_core::{
     InstallScope, InstallSource, ReleasePin, SearchResponse, SearchResult, SourceProvider,
     SourceRequest, SourceSelector, TrustedRootPin, VERSION,
 };
-use skilld_native::NativeHttpAdapter;
 use skilld_native::select_ui::TtySkillChooser;
 use skilld_native::update_ui::{
     CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
@@ -32,6 +31,9 @@ use skilld_native::upgrade::{
     self as cli_upgrade, InstallTarget, LAUNCHER_VARIABLE, NativeReleaseFetcher, WORKER_VARIABLE,
 };
 use skilld_native::weekly as native_weekly;
+use skilld_native::{
+    API_URL_VARIABLE, NativeHttpAdapter, TOKEN_VARIABLE, api_origin, token_override,
+};
 use status::StatusLine;
 use terminal_size::Width;
 
@@ -94,21 +96,47 @@ fn main() -> ExitCode {
         None => StatusLine::disabled(),
     };
     let remote_progress = status.remote_progress();
-    let account = Arc::new(NativeAccount::new());
+    let origin = match api_origin(env::var_os(API_URL_VARIABLE).as_deref()) {
+        Ok(origin) => origin,
+        Err(error) => {
+            eprintln!("{}: {}", error.code, error.message);
+            return ExitCode::from(2);
+        }
+    };
+    let token = match token_override(env::var_os(TOKEN_VARIABLE).as_deref()) {
+        Ok(token) => token,
+        Err(error) => {
+            eprintln!("{}: {}", error.code, error.message);
+            return ExitCode::from(2);
+        }
+    };
+    let account = Arc::new(
+        NativeAccount::new()
+            .with_origin(origin.clone())
+            .with_token_override(token),
+    );
     let auth_command = is_auth_command(args.iter().map(|arg| arg.to_string_lossy()));
+    let remote = match SkilldRemote::new(
+        Arc::new(NativeHttpAdapter::new()),
+        account.clone(),
+        native_remote_config(),
+    )
+    .with_progress(remote_progress)
+    .with_endpoint(origin.as_str())
+    {
+        Ok(remote) => Arc::new(remote),
+        Err(error) => {
+            eprintln!("{}: {}", error.code, error.message);
+            return ExitCode::from(2);
+        }
+    };
     let host = LocalHost::new(project_root, global_root)
         .with_target_roots(target_roots())
         .with_detection_environment(detection.clone())
         .with_bundled_provider(Arc::new(EmbeddedSkilld::new()))
         .with_account_provider(account.clone())
-        .with_remote_provider(Arc::new(
-            SkilldRemote::new(
-                Arc::new(NativeHttpAdapter::new()),
-                account.clone(),
-                native_remote_config(),
-            )
-            .with_progress(remote_progress),
-        ));
+        .with_api(remote.clone())
+        .with_remote_provider(remote);
     // Only a person at a terminal can answer the Skill picker. An Agent, a
     // pipe, or CI installs every Skill the ref names.
     let host = if asks_which_skills(&args) {

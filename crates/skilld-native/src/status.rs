@@ -230,7 +230,12 @@ where
         Some("search") => Some("Searching"),
         Some("install") => Some("Installing"),
         Some("run") => Some("Loading"),
-        Some("view") => Some("Loading"),
+        Some(
+            "view" | "browse" | "trending" | "tracks" | "curators" | "account" | "likes"
+            | "watches" | "changes" | "stars" | "tokens",
+        ) => Some("Loading"),
+        Some("like" | "unlike" | "watch" | "unwatch" | "collection") => Some("Saving"),
+        Some("index") => Some("Indexing"),
         Some("verify") => Some("Verifying"),
         Some("update") => Some("Updating"),
         _ => None,

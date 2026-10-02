@@ -143,9 +143,12 @@ It cannot restore a v2 lockfile.
 | `skilld author eject` | Copy the reviewed canonical Skill directory |
 | `skilld author publish` | Commit the Skill to a GitHub repository |
 
-The v2 `watch`, `unwatch`, `cache`, `changes`, `setup`, `uninstall`, and `pull` commands are removed.
+The v2 `cache`, `setup`, `uninstall`, and `pull` commands are removed.
 v3 has no one for one replacements for them.
 They exit with `REMOVED_COMMAND` and a link to this guide.
+
+`skilld watch`, `skilld unwatch`, and `skilld changes` return as skilld.dev account commands.
+They watch Repositories and collections for your digest, and they need `skilld auth login`.
 The `author` subcommands also exit with `REMOVED_COMMAND`.
 
 A v2 lockfile makes v3 exit with `INVALID_LOCKFILE`.

@@ -79,19 +79,28 @@ fn removed_v2_commands_name_their_replacement() {
     assert!(stderr.contains("generate-package-skill"), "{stderr}");
     assert!(stderr.contains("generate-project-skill"), "{stderr}");
 
-    for command in [
-        "watch",
-        "unwatch",
-        "cache",
-        "changes",
-        "setup",
-        "uninstall",
-        "pull",
-    ] {
+    for command in ["cache", "setup", "uninstall", "pull"] {
         let (code, _, stderr) = run(&["skilld", command]);
         assert_eq!(code, 2, "{command}");
         assert!(stderr.starts_with("REMOVED_COMMAND"), "{command}: {stderr}");
         assert!(stderr.contains("migrate-v2-to-v3"), "{command}: {stderr}");
+    }
+}
+
+#[test]
+fn watch_unwatch_and_changes_are_v3_account_commands_again() {
+    for command in [
+        vec!["skilld", "watch", "vercel-labs/agent-skills"],
+        vec!["skilld", "unwatch", "vercel-labs/agent-skills"],
+        vec!["skilld", "changes"],
+    ] {
+        let (code, _, stderr) = run(&command);
+        assert!(!stderr.contains("REMOVED_COMMAND"), "{command:?}: {stderr}");
+        assert_eq!(code, 1, "{command:?}: {stderr}");
+        assert!(
+            stderr.starts_with("UNSUPPORTED_HOST"),
+            "{command:?}: {stderr}"
+        );
     }
 }
 

@@ -20,6 +20,10 @@ use skilld_core::{
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
 
+mod api;
+
+pub use api::{ApiAnswer, ApiPage, BrowseQuery, BrowseSort, SkilldApi, TrendingWindow};
+
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const UPDATE_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
 const SEARCH_LIMIT: usize = 1024 * 1024;
@@ -144,6 +148,9 @@ impl ResolutionDeadline {
 pub enum HttpMethod {
     Get,
     Post,
+    Put,
+    Patch,
+    Delete,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -798,6 +805,12 @@ impl SkilldRemote {
         self
     }
 
+    /// Point every skilld.dev request at another origin.
+    ///
+    /// The value is one origin: HTTPS on any host, or HTTP on `localhost` or
+    /// `127.0.0.1` for a local site. Every service, Artifact, and Skill page
+    /// origin check then follows it, so a response can never send skilld to
+    /// a host outside the configured one.
     pub fn with_endpoint(mut self, endpoint: &str) -> Result<Self, RemoteError> {
         let endpoint = Url::parse(endpoint)
             .map_err(|_| RemoteError::new("INVALID_ENDPOINT", "the API endpoint is invalid"))?;
@@ -808,6 +821,17 @@ impl SkilldRemote {
             return Err(RemoteError::new(
                 "INVALID_ENDPOINT",
                 "the API endpoint must use HTTPS",
+            ));
+        }
+        if !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+            || endpoint.path() != "/"
+        {
+            return Err(RemoteError::new(
+                "INVALID_ENDPOINT",
+                "the API endpoint must be an origin with no path, query, or credentials",
             ));
         }
         self.endpoint = endpoint;
@@ -830,9 +854,24 @@ impl SkilldRemote {
 
     fn execute_with_deadline(
         &self,
+        request: HttpRequest,
+        allowed: AllowedOrigin,
+        deadline: Option<&mut ResolutionDeadline>,
+    ) -> Result<HttpResponse, RemoteError> {
+        self.execute_with_retries(request, allowed, deadline, MAX_RETRIES)
+    }
+
+    /// Send one request and follow its redirects.
+    ///
+    /// A 429, a 503, or a transport failure repeats the request up to
+    /// `max_retries` times. A request that must never repeat, such as a
+    /// public API POST or PATCH, passes zero.
+    fn execute_with_retries(
+        &self,
         mut request: HttpRequest,
         allowed: AllowedOrigin,
         mut deadline: Option<&mut ResolutionDeadline>,
+        max_retries: usize,
     ) -> Result<HttpResponse, RemoteError> {
         let mut redirects = 0_usize;
         loop {
@@ -863,14 +902,14 @@ impl SkilldRemote {
                                 "a remote response exceeded its limit",
                             ));
                         }
-                        if matches!(response.status, 429 | 503) && retry < MAX_RETRIES {
+                        if matches!(response.status, 429 | 503) && retry < max_retries {
                             retry += 1;
                             self.sleep(retry_delay(&response, retry), deadline.as_deref_mut())?;
                             continue;
                         }
                         break response;
                     }
-                    Err(error) if error.code == "HTTP_TRANSPORT" && retry < MAX_RETRIES => {
+                    Err(error) if error.code == "HTTP_TRANSPORT" && retry < max_retries => {
                         retry += 1;
                         self.sleep(
                             Duration::from_millis(100 * retry as u64),
@@ -921,6 +960,7 @@ impl SkilldRemote {
                     AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => {
                         problem_error(&response)
                     }
+                    AllowedOrigin::Api(_) => api::api_problem_error(&response),
                 });
             }
             return Ok(response);
@@ -3206,6 +3246,9 @@ fn invalid_update_response() -> RemoteError {
 #[derive(Clone)]
 enum AllowedOrigin {
     Service(Url),
+    /// The public API on the service origin. Its failures carry the public
+    /// API problem codes, so they map apart from Artifact delivery.
+    Api(Url),
     /// Artifact bytes come from the service origin or from one of its
     /// subdomains, such as `artifacts.skilld.dev` for `skilld.dev`.
     Artifact(Url),
@@ -3250,7 +3293,7 @@ fn validate_url(url: &Url, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
         ));
     }
     let allowed = match allowed {
-        AllowedOrigin::Service(base) => same_origin(url, base),
+        AllowedOrigin::Service(base) | AllowedOrigin::Api(base) => same_origin(url, base),
         AllowedOrigin::Artifact(base) => same_origin(url, base) || is_https_subdomain_of(url, base),
         AllowedOrigin::Github => {
             url.scheme() == "https"
@@ -3319,17 +3362,19 @@ fn parse_json<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, RemoteErr
     })
 }
 
+/// RFC 9457 problem details, exactly the six fields skilld.dev sends.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Problem {
+    code: String,
+    detail: Option<String>,
+    title: String,
+    status: u16,
+    r#type: String,
+    instance: Option<String>,
+}
+
 fn problem_error(response: &HttpResponse) -> RemoteError {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Problem {
-        code: String,
-        detail: Option<String>,
-        title: String,
-        status: u16,
-        r#type: String,
-        instance: Option<String>,
-    }
     serde_json::from_slice::<Problem>(&response.body).map_or_else(
         |_| service_unavailable_error(response),
         |problem| {

@@ -22,6 +22,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Refresh the vendored skilld.dev public API contract, then check every Rust type against it:
+
+```sh
+node scripts/sync-api-spec.mjs ../skilld.dev/packages/sdk/generated/openapi.v1.json
+cargo test -p skilld-core --test api_contract
+```
+
 Score the skilld-maintained Skills against scaffolded projects:
 
 ```sh
@@ -35,6 +42,7 @@ before changing a case or a grader.
 
 The native `skilld` CLI searches, runs, installs, lists, views, removes, updates, and verifies Skills.
 It also manages account authentication and Agent target configuration.
+It reads the skilld.dev registry and acts for a skilld.dev account through the public API.
 
 `skilld run` loads a transient Skill: it prints the Skill and installs nothing.
 The calling Agent follows the instructions. The CLI never executes them.
