@@ -1,7 +1,7 @@
 //! The parity guard between the skilld CLI and the skilld.dev public API.
 //!
-//! The vendored contract lives at `packages/protocol/openapi/skilld-api-v1.json`.
-//! `node scripts/sync-api-spec.mjs` refreshes it. This test then fails when:
+//! The contract lives at `packages/sdk/generated/openapi.v1.json`.
+//! `pnpm --filter skilld-sdk generate` refreshes it. This test then fails when:
 //!
 //! - an operation in the contract has no Rust mapping, or the CLI maps one the
 //!   contract lacks;
@@ -20,7 +20,7 @@ use skilld_core::api::{
     TrackDetail, TrackSummary, TrendingSkill, Watch, operations,
 };
 
-const SPEC: &str = include_str!("../../../packages/protocol/openapi/skilld-api-v1.json");
+const SPEC: &str = include_str!("../../../packages/sdk/generated/openapi.v1.json");
 
 /// Parses one example into a Rust type, or says why it cannot.
 type Parser = fn(&Value) -> Result<(), String>;

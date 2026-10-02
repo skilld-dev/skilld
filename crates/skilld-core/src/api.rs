@@ -1,6 +1,6 @@
 //! The skilld.dev public API, version 1.
 //!
-//! `packages/protocol/openapi/skilld-api-v1.json` vendors the contract that
+//! `packages/sdk/generated/openapi.v1.json` contains the generated contract that
 //! skilld.dev generates. Each operation the CLI calls has one [`ApiOperation`]
 //! here, and each answer parses into one wire type here.
 //!

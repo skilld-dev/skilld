@@ -468,7 +468,8 @@ pnpm build
 
 The Rust workspace owns the skilld CLI.
 `packages/harness` owns generation and review execution.
-`packages/protocol` owns the skilld.dev wire contract.
+`packages/protocol` owns the Artifact delivery wire contract.
+`packages/sdk` owns the public API contract and publishes as `skilld-sdk`.
 `skills` owns the visible skilld-maintained Skills.
 
 The WASIp2 build remains an internal proof.

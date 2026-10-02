@@ -34,7 +34,7 @@ Every public export, command, error, route, and document uses these terms.
 | Multi-skill ref | `skilld run`, `skilld add` | published argument | developer, Agent | ref |
 | CLI upgrade | skilld CLI | published behavior | developer | upgrade |
 | release manifest | GitHub release | published file | skilld CLI, install script | release manifest |
-| public API | `skilld.dev/api/v1`, `skilld-api-v1.json` | published protocol | skilld CLI, developer | skilld API |
+| public API | `skilld.dev/api/v1`, `skilld-sdk/openapi.json` | published protocol | skilld CLI, developer | skilld API |
 | track | skilld.dev and `skilld tracks` | published route | developer, Agent | track |
 | trending | skilld.dev and `skilld trending` | published route | developer, Agent | trending |
 | like | skilld.dev and `skilld like` | published value | account | like |
@@ -424,7 +424,7 @@ The digest reports changes in watched Repositories.
 
 ### public API
 
-**Is:** the skilld.dev HTTP API under `/api/v1`, described by the OpenAPI file `packages/protocol/openapi/skilld-api-v1.json` vendors.
+**Is:** the skilld.dev HTTP API under `/api/v1`, described by `packages/sdk/generated/openapi.v1.json`, generated from the contract in `packages/sdk`.
 
 **Use for:** every discovery and account command, and the Rust types they parse.
 

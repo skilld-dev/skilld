@@ -16,9 +16,9 @@ ESM only. Node 22 or newer. One dependency: `zod` v4.
 - `skilld-protocol/v1`: TypeScript types generated from `openapi/skilld-v1.yaml`. This is the Artifact delivery contract the v3 CLI uses: source resolution, Skill search, Artifact descriptors, attestations, check results, grants, trusted roots, and problems.
 - `skilld-protocol/openapi/skilld-v1.yaml`: the OpenAPI 3.1 document itself.
 
-`openapi/skilld-api-v1.json` vendors the skilld.dev public API contract that `skilld-sdk` generates.
+`../sdk/generated/openapi.v1.json` contains the public API contract that `skilld-sdk` generates.
 The Rust test `crates/skilld-core/tests/api_contract.rs` parses every example in it.
-Refresh it with `node scripts/sync-api-spec.mjs` from the repository root.
+Refresh it with `pnpm --filter skilld-sdk generate` from the repository root.
 - `skilld-protocol/wire`: zod schemas (suffix `Schema`) and inferred types (no suffix) for the endpoints skilld.dev still serves to older clients. Use `import { FooSchema }` for runtime validation and `import type { Foo }` for the type.
 - `skilld-protocol/constants`: readonly tuples behind the closed enums, plus their inferred unions.
 - `skilld-protocol/test-fixtures`: canonical payloads that each consumer round-trips through its schema on CI.

@@ -22,10 +22,10 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Refresh the vendored skilld.dev public API contract, then check every Rust type against it:
+Regenerate the skilld.dev public API contract, then check every Rust type against it:
 
 ```sh
-node scripts/sync-api-spec.mjs ../skilld.dev/packages/sdk/generated/openapi.v1.json
+pnpm --filter skilld-sdk generate
 cargo test -p skilld-core --test api_contract
 ```
 
@@ -65,7 +65,8 @@ Harness and CI runs enforce strict output checks.
 - `bin` and `loader`: minimal npm native executable selector
 - `packages/cli-*`: system specific native npm packages
 - `packages/harness`: JavaScript Harness package
-- `packages/protocol`: skilld.dev API wire contract
+- `packages/protocol`: Artifact delivery wire contract
+- `packages/sdk`: public API contract, OpenAPI generator, and typed client
 - `skills`: visible skilld-maintained Skills
 
 The npm package has no JavaScript CLI fallback.
