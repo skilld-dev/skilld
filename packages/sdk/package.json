@@ -1,7 +1,7 @@
 {
   "name": "skilld-sdk",
   "type": "module",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed client and OpenAPI contract for the skilld API.",
   "license": "MIT",
   "homepage": "https://skilld.dev/developers?setup=api",
@@ -38,7 +38,7 @@
     "build": "tsdown",
     "generate": "tsx scripts/generate-openapi.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc6 --noEmit",
     "prepack": "tsdown",
     "test:run": "vitest run"
   },

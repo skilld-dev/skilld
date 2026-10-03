@@ -308,7 +308,7 @@ export const likesV1 = defineRegistry({
       cache: { _tag: 'private' },
       request: { params: skillParams, query: null, body: null },
       response: { status: 204, body: null },
-      errors: ['INVALID_REQUEST', 'AUTH_REQUIRED', 'NOT_FOUND', 'RATE_LIMITED'],
+      errors: ['INVALID_REQUEST', 'AUTH_REQUIRED', 'NOT_FOUND'],
       lifecycle: { introduced: '1.0.0' },
       docs: {
         summary: 'Like a Skill',

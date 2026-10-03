@@ -54,7 +54,7 @@
     "check:v1": "pnpm generate:v1 && git diff --exit-code -- ./src/generated/skilld-v1.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc6 --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "publint": "publint",
