@@ -52,7 +52,7 @@
     "build": "obuild && node scripts/copy-skilld-maintained-skills.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc6 --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "publint": "publint",

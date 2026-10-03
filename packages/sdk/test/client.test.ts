@@ -1,7 +1,9 @@
+import type { OperationInput } from '../src/contract/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { createProtocolClient, createSkilldClient } from '../src/client'
 import { defineOperation, defineProtocol, defineRegistry, defineResponseObject } from '../src/contract/core'
+import { listOperations, skilldV1Protocol } from '../src/contract/index'
 
 const thing = defineResponseObject({ id: z.string() })
 const protocol = defineProtocol({
@@ -132,6 +134,35 @@ describe('createProtocolClient', () => {
 })
 
 describe('createSkilldClient', () => {
+  it.each(listOperations(skilldV1Protocol).map(({ operation }) => [operation.id, operation] as const))(
+    'returns a typed rate limit for %s without retrying when disabled',
+    async (_id, operation) => {
+      const fetch = vi.fn(async () => problem('RATE_LIMITED', 429, { 'x-request-id': 'req_rate_limit' }))
+      const skilld = createSkilldClient({ fetch, retry: { maxAttempts: 1 } })
+      // listOperations erases each operation's input type. Its examples were parsed during definition.
+      const input = operation.docs.examples[0]!.request as OperationInput<typeof operation>
+      const result = await skilld.execute(operation, input)
+      expect(result).toMatchObject({
+        _tag: 'Err',
+        error: { _tag: 'ApiFailure', code: 'RATE_LIMITED', status: 429, requestId: 'req_rate_limit' },
+      })
+      expect(fetch).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('honours Retry-After when public search is rate limited', async () => {
+    const sleep = vi.fn(async () => {})
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(problem('RATE_LIMITED', 429, { 'retry-after': '2' }))
+      .mockResolvedValueOnce(json({ items: [], total: 0 }))
+    const skilld = createSkilldClient({ fetch, retry: { sleep } })
+    expect(await skilld.skills.search({ query: { q: 'tailwind' } })).toMatchObject({
+      _tag: 'Ok', value: { items: [], total: 0 },
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledWith(2000, undefined)
+  })
+
   it('reads skilld.dev by default and exposes every registry', async () => {
     const fetch = vi.fn(async (_url: string, _init: RequestInit) => json({ items: [], total: 0 }))
     const skilld = createSkilldClient({ fetch })

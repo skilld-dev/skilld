@@ -30,3 +30,6 @@ coverage
 
 .guides-out
 evals/results
+
+# PR Lens writes its previews here. They are rebuilt on demand.
+.pr-lens/

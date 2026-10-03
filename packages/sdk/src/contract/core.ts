@@ -58,7 +58,7 @@ export const SKILLD_V1_ERROR_TITLES = {
 } as const satisfies Record<typeof SKILLD_V1_ERROR_CODES[number], string>
 
 /** Every operation can answer these, so no descriptor lists them. */
-export const SKILLD_V1_IMPLICIT_ERRORS = ['INTERNAL_ERROR', 'SERVICE_UNAVAILABLE'] as const
+export const SKILLD_V1_IMPLICIT_ERRORS = ['RATE_LIMITED', 'INTERNAL_ERROR', 'SERVICE_UNAVAILABLE'] as const
 
 /** A retry can succeed for these codes, and for no others. */
 export const SKILLD_V1_RETRYABLE_ERRORS: ReadonlySet<SkilldV1ErrorCode> = new Set(['RATE_LIMITED', 'SERVICE_UNAVAILABLE'])

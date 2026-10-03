@@ -3354,6 +3354,33 @@
               "AUTH_REQUIRED"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "account.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -3540,6 +3567,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "account.update",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -3745,6 +3799,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "changes.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -3956,6 +4037,33 @@
               "AUTH_REQUIRED"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "likes.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -4149,6 +4257,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "likes.delete",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -4570,6 +4705,33 @@
               "FORBIDDEN"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "account.repositories.scan",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -4781,6 +4943,33 @@
               "FORBIDDEN"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "account.repositories.unpublish",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -4984,6 +5173,33 @@
               "AUTH_REQUIRED"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "stars.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -5164,6 +5380,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "stars.import",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -5367,6 +5610,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tokens.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -5578,6 +5848,33 @@
               "FORBIDDEN"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tokens.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -5774,6 +6071,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tokens.revoke",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -5978,6 +6302,33 @@
               "AUTH_REQUIRED"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "watches.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -6159,6 +6510,33 @@
             },
             "x-skilld-problem-codes": [
               "AUTH_REQUIRED"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "watches.delete",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -6368,6 +6746,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "watches.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -6598,6 +7003,33 @@
             },
             "x-skilld-problem-codes": [
               "INVALID_REQUEST"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.browse",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -6837,6 +7269,33 @@
             },
             "x-skilld-problem-codes": [
               "CONFLICT"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "collections.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -7082,6 +7541,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "collections.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -7348,6 +7834,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "collections.skills.remove",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -7657,6 +8170,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "collections.skills.add",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -7878,6 +8418,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "collections.watch",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -8051,6 +8618,33 @@
             },
             "x-skilld-problem-codes": [
               "INVALID_REQUEST"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "curators.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -8239,6 +8833,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "curators.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -8454,6 +9075,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "curators.likes",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -8604,6 +9252,33 @@
             },
             "x-skilld-problem-codes": [
               "INVALID_REQUEST"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.create",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -8786,6 +9461,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "index_requests.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -8973,6 +9675,33 @@
             },
             "x-skilld-problem-codes": [
               "NOT_FOUND"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "owners.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -9184,6 +9913,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "repositories.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -9356,6 +10112,33 @@
             },
             "x-skilld-problem-codes": [
               "INVALID_REQUEST"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.search",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
@@ -9587,6 +10370,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "skills.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -9701,6 +10511,33 @@
                 }
               }
             }
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
           },
           "500": {
             "content": {
@@ -9919,6 +10756,33 @@
               "NOT_FOUND"
             ]
           },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "tracks.get",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
+            ]
+          },
           "500": {
             "content": {
               "application/problem+json": {
@@ -10107,6 +10971,33 @@
             },
             "x-skilld-problem-codes": [
               "INVALID_REQUEST"
+            ]
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Problem codes: RATE_LIMITED.",
+            "headers": {
+              "Skilld-Operation": {
+                "schema": {
+                  "const": "trending.list",
+                  "type": "string"
+                }
+              },
+              "X-Request-Id": {
+                "description": "Quote this when you report a problem.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-skilld-problem-codes": [
+              "RATE_LIMITED"
             ]
           },
           "500": {
