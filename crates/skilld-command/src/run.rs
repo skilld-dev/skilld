@@ -367,6 +367,26 @@ fn collect_local_metadata(
     Ok(())
 }
 
+/// Read only instructions before installing a selected local Skill.
+pub(crate) fn read_local_instructions(root: &Path) -> Result<String, CommandError> {
+    let path = root.join(INSTRUCTIONS_FILE);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| CommandError::filesystem(format!("cannot inspect SKILL.md: {error}")))?;
+    if !metadata.is_file() {
+        return Err(invalid_local("SKILL.md must be a regular file"));
+    }
+    if metadata.len() > MAX_LOCAL_BYTES {
+        return Err(too_large("SKILL.md exceeds the local byte limit"));
+    }
+    let file = read_local_file(LocalFile {
+        path,
+        relative: INSTRUCTIONS_FILE.to_owned(),
+        mode: local_mode(&metadata),
+        size: metadata.len(),
+    })?;
+    read_instructions(&[file])
+}
+
 fn read_local_file(file: LocalFile) -> Result<PreparedFile, CommandError> {
     let input = File::open(&file.path)
         .map_err(|error| CommandError::filesystem(format!("cannot read a Skill file: {error}")))?;

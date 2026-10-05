@@ -73,6 +73,15 @@ It retains no remote Skill files after the command exits.
 Read the printed SKILL.md, then follow it for the current task.
 Prefer `skilld run` for a one-off task.
 
+Read `data.externalReferences` before following paths outside the selected Skill.
+These notices identify references, not verified dependencies.
+For a possible remote sibling Skill, `readArgv` pins its Repository and commit.
+Run that array only when the task and access permissions allow the read.
+Never add `--direct` to bypass an access failure.
+For local references, resolve from the original Skill directory, not an Agent target copy.
+If a reference is unresolved, identify its source before following it.
+Install extra Skills only when the user asks to keep them.
+
 Read `data.files` for each supporting file's path, kind, and size.
 The initial load prints no supporting file content.
 Read one only when the instructions name it:
