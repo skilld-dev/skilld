@@ -138,6 +138,13 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ArtifactId'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: x-skilld-resolution-id
+          in: header
+          required: false
+          description: Select the exact Resolution attestation. If absent, select an existing attestation.
+          schema:
+            type: string
+            format: uuid
       responses:
         '200':
           description: Current download authorization.

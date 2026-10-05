@@ -1064,6 +1064,7 @@ impl SkilldRemote {
                     }
                     validate_resolved_source(source, &artifact.attestation)?;
                     return Ok(ResolvedArtifact {
+                        resolution_id,
                         descriptor: *artifact,
                         page_url,
                     });
@@ -1155,10 +1156,14 @@ impl SkilldRemote {
         .then(|| url.into())
     }
 
-    fn grant(&self, artifact_id: &str) -> Result<ArtifactGrant, RemoteError> {
+    fn grant(&self, artifact_id: &str, resolution_id: &str) -> Result<ArtifactGrant, RemoteError> {
         let path = format!("/api/v1/artifacts/{}/grants", path_segment(artifact_id));
         let mut headers = self.authenticated_headers()?;
         headers.push(idempotency_header());
+        headers.push(HttpHeader {
+            name: "x-skilld-resolution-id".to_owned(),
+            value: HeaderValue::Public(resolution_id.to_owned()),
+        });
         let request = HttpRequest {
             method: HttpMethod::Post,
             url: self.service_url(&path)?.into(),
@@ -2674,6 +2679,7 @@ impl RemoteProvider for SkilldRemote {
             return self.direct(selector);
         }
         let ResolvedArtifact {
+            resolution_id,
             descriptor,
             page_url,
         } = self.resolve(selector.source())?;
@@ -2682,7 +2688,7 @@ impl RemoteProvider for SkilldRemote {
         let root = self.verified_root()?;
         verify_attestation(&descriptor.attestation, &root)?;
         self.progress.stage(RemoteProgressStage::RequestingDownload);
-        let grant = self.grant(&descriptor.artifact_id)?;
+        let grant = self.grant(&descriptor.artifact_id, &resolution_id)?;
         self.progress
             .stage(RemoteProgressStage::DownloadingArtifact);
         let archive = self.download_grant(&descriptor, grant)?;
@@ -3639,6 +3645,7 @@ impl Resolution {
 const PAGE_URL_HEADER: &str = "skilld-page-url";
 
 struct ResolvedArtifact {
+    resolution_id: String,
     descriptor: ArtifactDescriptor,
     page_url: Option<String>,
 }
