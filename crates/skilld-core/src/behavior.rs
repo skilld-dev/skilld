@@ -1,7 +1,7 @@
 //! Skill behaviors: what a Skill's files ask an Agent to do.
 //!
 //! skilld matches every Skill file against the fixed rules in
-//! `contracts/skill-behaviors.json`. A match names the behavior and where it
+//! `packages/protocol/rules/skill-behaviors.json`. A match names the behavior and where it
 //! appears. No match proves nothing: text patterns miss obfuscated code.
 //!
 //! The rules are data so that skilld.dev can apply the same rules. The cases in
@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use crate::PreparedFile;
 
-const RULES_JSON: &str = include_str!("../../../contracts/skill-behaviors.json");
+const RULES_JSON: &str = include_str!("../../../packages/protocol/rules/skill-behaviors.json");
 
 /// The locations one behavior keeps. `total` still counts every match.
 pub const MAX_BEHAVIOR_LOCATIONS: usize = 5;
@@ -69,7 +69,7 @@ pub struct Behavior {
     pub total: usize,
 }
 
-/// One behavior rule as `contracts/skill-behaviors.json` states it.
+/// One behavior rule as `packages/protocol/rules/skill-behaviors.json` states it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BehaviorRule {
@@ -110,8 +110,9 @@ struct Rules {
 
 fn rules() -> &'static Rules {
     static RULES: OnceLock<Rules> = OnceLock::new();
-    RULES
-        .get_or_init(|| parse_rules(RULES_JSON).expect("contracts/skill-behaviors.json must parse"))
+    RULES.get_or_init(|| {
+        parse_rules(RULES_JSON).expect("packages/protocol/rules/skill-behaviors.json must parse")
+    })
 }
 
 fn parse_rules(source: &str) -> Result<Rules, String> {

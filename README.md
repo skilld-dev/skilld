@@ -158,7 +158,7 @@ A Skill that must run its own script needs an install.
 ### Skill behaviors
 
 Every run lists what the Skill files ask an Agent to do, with the file and line.
-skilld finds behaviors with the fixed text patterns in `contracts/skill-behaviors.json`.
+skilld finds behaviors with the fixed text patterns in `packages/protocol/rules/skill-behaviors.json`.
 Patterns miss obfuscated code, so an empty list proves nothing.
 
 Five behaviors stop a remote `run`, `install`, or `add` until the user approves them:

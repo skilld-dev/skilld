@@ -1,7 +1,7 @@
 {
   "name": "skilld-protocol",
   "type": "module",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Wire shapes and constants shared between the skilld CLI and skilld.dev",
   "author": {
     "name": "Harlan Wilton",
@@ -38,11 +38,17 @@
     "./test-fixtures": {
       "types": "./dist/test-fixtures.d.mts",
       "import": "./dist/test-fixtures.mjs"
-    }
+    },
+    "./behaviors": {
+      "types": "./dist/behaviors.d.mts",
+      "import": "./dist/behaviors.mjs"
+    },
+    "./rules/skill-behaviors.json": "./rules/skill-behaviors.json"
   },
   "files": [
     "dist",
-    "openapi"
+    "openapi",
+    "rules"
   ],
   "engines": {
     "node": ">=22.0.0"
