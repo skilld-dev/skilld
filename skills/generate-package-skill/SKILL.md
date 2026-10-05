@@ -93,6 +93,22 @@ Good: `Add and debug Schema.org JSON-LD in Nuxt with nuxt-schema-org. Use when a
 
 ## 4. Check and report
 
+### Cross-Agent portability
+
+Keep one source Skill for compatible Agents. Keep their discovery paths outside the generated Skill.
+Use capability descriptions instead of provider-specific tool names.
+Ask for inputs explicitly; do not depend on `$ARGUMENTS`, hooks, or dynamic context injection.
+Resolve bundled files from the Skill directory and consumer commands from the consumer project root.
+Name script runtimes, binaries, network access, and credential requirements beside their use.
+If a required capability is unavailable, report it and stop that dependent step.
+Never invent evidence or silently skip a required check.
+
+Check a matching task, an unrelated task, and a missing-input task.
+When available, use a fresh session in each Agent the user asks to support.
+Record its version, model, task, output, and required permissions.
+Distinguish format validation, discovery, activation, and task completion.
+Report unavailable Agent paths untested. Package example checks do not prove cross-Agent execution.
+
 Before finishing, confirm:
 
 - Each example ran against the recorded version, or is reported untested.
