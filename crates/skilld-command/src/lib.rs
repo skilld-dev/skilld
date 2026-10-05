@@ -1974,7 +1974,7 @@ fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
     for reference in &skill.external_references {
         lines.push(Line::hint(format!(
             "SKILL.md references {} outside this Skill.",
-            reference.reference()
+            skilld_ui::text::sanitize(reference.reference())
         )));
     }
     if !skill.external_references.is_empty() {

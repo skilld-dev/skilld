@@ -19,6 +19,38 @@ const INSTRUCTIONS: &[u8] =
 const MAX_TEST_DEPTH: usize = 9;
 
 #[test]
+fn install_notices_escape_untrusted_terminal_text() {
+    let fixture = remote_fixture(skill_files());
+    let source = fixture.project.join("fork/vue");
+    fs::create_dir_all(&source).unwrap();
+    let instructions =
+        "---\nname: vue\ndescription: Vue\n---\nCall ../foo\u{009b}2J and ../bar\u{202e}.\n";
+    fs::write(source.join("SKILL.md"), instructions).unwrap();
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&[
+            "skilld",
+            "install",
+            "./fork/vue",
+            "--agent",
+            "codex",
+            "--mode",
+            "copy",
+            "--plain",
+        ]),
+    );
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(stdout.contains("../foo"));
+    assert!(stdout.contains("../bar"));
+    assert!(!stdout.contains('\u{009b}'));
+    assert!(!stdout.contains('\u{202e}'));
+    assert_eq!(
+        fs::read_to_string(fixture.project.join(".agents/skills/vue/SKILL.md")).unwrap(),
+        instructions
+    );
+}
+
+#[test]
 fn installing_a_fork_warns_without_installing_its_sibling() {
     let fixture = remote_fixture(skill_files());
     let source = fixture.project.join("fork/vue");
