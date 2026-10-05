@@ -1926,7 +1926,7 @@ checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
 
 [[package]]
 name = "skilld-auth"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "base64",
  "getrandom 0.4.3",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-command"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "base64",
  "clap",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-core"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-native"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "base64",
  "crossterm",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "skilld-ui"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "unicode-width",
 ]
