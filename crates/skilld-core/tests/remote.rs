@@ -273,6 +273,65 @@ fn verifies_exact_statements_root_signatures_and_ustar_files() {
 }
 
 #[test]
+fn verifies_a_skill_at_the_repository_root() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    let verified = verify_artifact(
+        attestation_at_path(
+            &archive,
+            vec![file("SKILL.md", 0o644, skill)],
+            &signing_key,
+            ".",
+        ),
+        &root,
+        &archive,
+    )
+    .unwrap();
+
+    assert_eq!(verified.name.as_str(), "example");
+    assert_eq!(verified.files[0].bytes, skill);
+    assert_eq!(verified.attestation.source.skill_path, ".");
+}
+
+#[test]
+fn rejects_root_aliases_and_traversal_in_attested_source_paths() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    for path in ["", "./", "..", "../skill", "/", "./skill"] {
+        let error = verify_artifact(
+            attestation_at_path(
+                &archive,
+                vec![file("SKILL.md", 0o644, skill)],
+                &signing_key,
+                path,
+            ),
+            &root,
+            &archive,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "INVALID_PATH", "{path}");
+    }
+}
+
+#[test]
+fn rejects_a_repository_root_marker_as_an_artifact_file() {
+    let error = prepare_unverified_files(vec![PreparedFile {
+        path: ".".to_owned(),
+        mode: 0o644,
+        bytes: b"---\nname: example\n---\n".to_vec(),
+    }])
+    .unwrap_err();
+
+    assert_eq!(error.code, "INVALID_PATH");
+}
+
+#[test]
 fn rejects_a_hash_in_the_attested_skill_path_but_allows_it_in_supporting_files() {
     let skill = b"---\nname: example\ndescription: fixture\n---\n";
     let supporting = b"# Fragment\n";
