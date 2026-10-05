@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -50,6 +51,220 @@ fn command(host: &LocalHost, args: &[&str]) -> (u8, String, String) {
         String::from_utf8(stdout).unwrap(),
         String::from_utf8(stderr).unwrap(),
     )
+}
+
+fn declaration(root: &Path, name: &str, agents: &[&str], source: &str, mode: &str) -> String {
+    let path = root.join("project/.skills").join(format!("{name}.json"));
+    fs::write(
+        &path,
+        json!({
+            "version": 1, "name": name, "agents": agents, "mode": mode,
+            "skills": {"alpha": {"source": source}}, "requires": {"consumer": ["alpha"]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
+#[test]
+fn shared_skill_keeps_every_declarations_targets_and_each_check_stays_current() {
+    let (root, host) = fixture();
+    let one = declaration(
+        root.path(),
+        "one",
+        &["codex"],
+        "../sources/alpha",
+        "symlink",
+    );
+    let two = declaration(
+        root.path(),
+        "two",
+        &["claude-code"],
+        "../sources/alpha",
+        "symlink",
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &two]).0, 0);
+    for target in [".agents/skills", ".claude/skills"] {
+        assert!(
+            root.path()
+                .join("project")
+                .join(target)
+                .join("alpha/SKILL.md")
+                .is_file(),
+            "{target}"
+        );
+    }
+    for manifest in [&one, &two] {
+        assert_eq!(
+            command(
+                &host,
+                &["skilld", "sync", "--manifest", manifest, "--check"]
+            )
+            .0,
+            0
+        );
+        assert_eq!(
+            command(&host, &["skilld", "sync", "--manifest", manifest]).0,
+            0
+        );
+    }
+}
+
+#[test]
+fn changing_one_declarations_targets_preserves_targets_required_by_other_declarations() {
+    let (root, host) = fixture();
+    let one = declaration(
+        root.path(),
+        "one",
+        &["codex", "opencode"],
+        "../sources/alpha",
+        "symlink",
+    );
+    let two = declaration(
+        root.path(),
+        "two",
+        &["codex", "claude-code"],
+        "../sources/alpha",
+        "symlink",
+    );
+    for manifest in [&one, &two] {
+        assert_eq!(
+            command(&host, &["skilld", "sync", "--manifest", manifest]).0,
+            0
+        );
+    }
+    declaration(
+        root.path(),
+        "one",
+        &["opencode"],
+        "../sources/alpha",
+        "symlink",
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+    for target in [".agents/skills", ".claude/skills", ".opencode/skills"] {
+        assert!(
+            root.path()
+                .join("project")
+                .join(target)
+                .join("alpha/SKILL.md")
+                .is_file()
+        );
+    }
+    declaration(
+        root.path(),
+        "two",
+        &["claude-code"],
+        "../sources/alpha",
+        "symlink",
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &two]).0, 0);
+    assert!(!root.path().join("project/.agents/skills/alpha").exists());
+    for manifest in [&one, &two] {
+        assert_eq!(
+            command(
+                &host,
+                &["skilld", "sync", "--manifest", manifest, "--check"]
+            )
+            .0,
+            0
+        );
+    }
+}
+
+#[test]
+fn a_second_declaration_cannot_replace_an_owned_source_or_target_mode() {
+    let (root, host) = fixture();
+    let one = declaration(
+        root.path(),
+        "one",
+        &["codex"],
+        "../sources/alpha",
+        "symlink",
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+    let other = root.path().join("project/other/alpha");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        other.join("SKILL.md"),
+        "---\nname: alpha\ndescription: Other.\n---\nOther instructions.\n",
+    )
+    .unwrap();
+    let two = declaration(
+        root.path(),
+        "two",
+        &["claude-code"],
+        "../other/alpha",
+        "symlink",
+    );
+    let result = command(&host, &["skilld", "sync", "--manifest", &two]);
+    assert_ne!(result.0, 0);
+    assert!(result.2.contains("one"), "{}", result.2);
+    assert!(
+        fs::read_to_string(root.path().join("project/.agents/skills/alpha/SKILL.md"))
+            .unwrap()
+            .contains("Original.")
+    );
+    assert!(!root.path().join("project/.claude/skills/alpha").exists());
+    let two = declaration(root.path(), "two", &["codex"], "../sources/alpha", "copy");
+    assert_ne!(command(&host, &["skilld", "sync", "--manifest", &two]).0, 0);
+    assert!(
+        fs::symlink_metadata(root.path().join("project/.agents/skills/alpha"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_detects_permission_only_edits_and_updates_every_target_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let (root, host) = fixture();
+    let script = root.path().join("project/sources/alpha/scripts/tool.sh");
+    fs::create_dir_all(script.parent().unwrap()).unwrap();
+    fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+    let one = declaration(
+        root.path(),
+        "one",
+        &["codex"],
+        "../sources/alpha",
+        "symlink",
+    );
+    let two = declaration(
+        root.path(),
+        "two",
+        &["claude-code"],
+        "../sources/alpha",
+        "copy",
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &two]).0, 0);
+    for mode in [0o755, 0o644] {
+        fs::set_permissions(&script, fs::Permissions::from_mode(mode)).unwrap();
+        assert_eq!(
+            command(&host, &["skilld", "sync", "--manifest", &one, "--check"]).0,
+            1
+        );
+        assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+        for target in [".agents/skills", ".claude/skills"] {
+            let installed = root
+                .path()
+                .join("project")
+                .join(target)
+                .join("alpha/scripts/tool.sh");
+            assert_eq!(
+                fs::metadata(installed).unwrap().permissions().mode() & 0o777,
+                mode
+            );
+        }
+        assert_eq!(
+            command(&host, &["skilld", "sync", "--manifest", &two, "--check"]).0,
+            0
+        );
+    }
 }
 
 #[test]
@@ -333,6 +548,59 @@ fn pinned_hosted_sync_repeats_offline_and_restores_missing_targets_without_fetch
     fs::remove_file(root.path().join("project/.agents/skills/alpha")).unwrap();
     assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
     assert_eq!(remote.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn shared_hosted_skills_reuse_the_pin_and_reject_a_conflicting_pin_without_fetching() {
+    let (root, host, remote) = hosted_fixture(false);
+    let source = format!(
+        "github:owner/private/skills/alpha#commit:{}",
+        "a".repeat(40)
+    );
+    let one = declaration(root.path(), "one", &["codex"], &source, "symlink");
+    let two = declaration(root.path(), "two", &["claude-code"], &source, "copy");
+    for manifest in [&one, &two] {
+        assert_eq!(
+            command(&host, &["skilld", "sync", "--manifest", manifest]).0,
+            0
+        );
+        assert_eq!(
+            command(
+                &host,
+                &["skilld", "sync", "--manifest", manifest, "--check"]
+            )
+            .0,
+            0
+        );
+    }
+    assert_eq!(remote.calls.load(Ordering::SeqCst), 1);
+    let old_lock = fs::read(root.path().join("project/.skills/skilld-lock.yaml")).unwrap();
+    let other_source = format!(
+        "github:owner/private/skills/alpha#commit:{}",
+        "b".repeat(40)
+    );
+    declaration(root.path(), "two", &["claude-code"], &other_source, "copy");
+    for extra in [vec![], vec!["--check"]] {
+        let mut args = vec!["skilld", "sync", "--manifest", &two];
+        args.extend(extra);
+        let result = command(&host, &args);
+        assert_ne!(result.0, 0);
+        assert!(result.2.contains("one"), "{}", result.2);
+    }
+    assert_eq!(remote.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fs::read(root.path().join("project/.skills/skilld-lock.yaml")).unwrap(),
+        old_lock
+    );
+    for target in [".agents/skills", ".claude/skills"] {
+        assert!(
+            root.path()
+                .join("project")
+                .join(target)
+                .join("alpha/SKILL.md")
+                .is_file()
+        );
+    }
 }
 
 #[test]

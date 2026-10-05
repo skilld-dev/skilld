@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, LockedSource,
-    RemoteSelector, SkillName, SourceRef, SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, LockedDeclarationSkill,
+    LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceStatus,
 };
 use skilld_ui::Line;
 
@@ -37,6 +37,19 @@ enum Source {
         selector: RemoteSelector,
         commit: CommitSha,
     },
+}
+
+fn matches_source(source: &Source, locked: &LockedSource) -> bool {
+    match (source, locked) {
+        (Source::Local(path), LockedSource::Local { path: locked }) => path == Path::new(locked),
+        (
+            Source::Remote { selector, commit },
+            LockedSource::Remote {
+                source, commit_sha, ..
+            },
+        ) => source == &selector.canonical() && commit_sha == commit.as_str(),
+        _ => false,
+    }
 }
 
 fn manifest_error(message: impl Into<String>) -> CommandError {
@@ -83,11 +96,14 @@ fn read_manifest(path: &Path) -> Result<(Manifest, BTreeMap<SkillName, Source>),
         .iter()
         .map(|(name, skill)| {
             let source = match InstallSource::parse(&skill.source) {
-                InstallSource::Local(path) => Source::Local(if path.is_absolute() {
-                    path
-                } else {
-                    parent.join(path)
-                }),
+                InstallSource::Local(path) => Source::Local(
+                    fs::canonicalize(if path.is_absolute() {
+                        path
+                    } else {
+                        parent.join(path)
+                    })
+                    .map_err(|error| CommandError::filesystem(error.to_string()))?,
+                ),
                 InstallSource::Remote(source) => {
                     let selector = RemoteSelector::parse(&source).map_err(CommandError::remote)?;
                     let Some(SourceRef::Commit { value }) = &selector.source().r#ref else {
@@ -124,6 +140,7 @@ pub struct SyncReport {
     pub current: bool,
     pub changed: Vec<String>,
     pub requirements_changed: bool,
+    pub declarations_changed: bool,
 }
 
 impl SyncReport {
@@ -138,6 +155,9 @@ impl SyncReport {
                 .collect();
             if self.requirements_changed {
                 lines.push(Line::warn("Declared Skill requirements need sync."));
+            }
+            if self.declarations_changed {
+                lines.push(Line::warn("Skill declarations need sync."));
             }
             lines
         }
@@ -187,7 +207,50 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
     let mut installs = Vec::new();
     // Keep every remote staging directory alive until the batch commits.
     let mut staging = Vec::new();
+    let mut ownership = BTreeMap::new();
+    let own_targets = targets
+        .iter()
+        .map(|target| LockedTarget {
+            agent: target.target.agent,
+            mode: target.mode,
+        })
+        .collect::<Vec<_>>();
     for (name, source) in sources {
+        let mut targets = targets.clone();
+        for (owner, skills) in &snapshot.declarations {
+            if owner == manifest.name.as_str() {
+                continue;
+            }
+            let Some(shared) = skills.get(name.as_str()) else {
+                continue;
+            };
+            if !matches_source(&source, &shared.source) {
+                return Err(CommandError::store(StoreError::Conflict(format!(
+                    "Skill {name} has a different source in declaration {owner}"
+                ))));
+            }
+            for locked in &shared.targets {
+                if let Some(target) = targets
+                    .iter()
+                    .find(|target| target.target.agent == locked.agent)
+                {
+                    if target.mode != locked.mode {
+                        return Err(CommandError::store(StoreError::Conflict(format!(
+                            "Skill {name} has a different Agent target mode in declaration {owner}"
+                        ))));
+                    }
+                } else {
+                    let target = known
+                        .iter()
+                        .find(|target| target.agent == locked.agent)
+                        .expect("every Agent target has a known path");
+                    targets.push(TargetInstall {
+                        target: target.clone(),
+                        mode: locked.mode,
+                    });
+                }
+            }
+        }
         let old = snapshot.skills.get(name.as_str());
         let integrity_changed = match store.verify_content(&name, &known) {
             Ok(_) => false,
@@ -204,6 +267,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
                 let digest = store.source_digest(&path).map_err(CommandError::store)?;
                 let locked = LockedSource::Local { path: path.to_str().ok_or_else(|| manifest_error("local Skill paths must use UTF-8"))?.to_owned() };
                 old.is_none_or(|old| old.source != locked || old.source_status != SourceStatus::Local { content_sha256: digest.clone() })
+                    || !store.source_permissions_match(&path, &name).map_err(CommandError::store)?
             }
             Source::Remote { selector, commit } => old.is_none_or(|old| {
                 !matches!(&old.source, LockedSource::Remote { source, commit_sha, .. } if source == &selector.canonical() && commit_sha == commit.as_str())
@@ -228,6 +292,26 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
             changed.push(name.to_string());
         }
         if request.check {
+            let locked_source = match &source {
+                Source::Local(path) => Some(LockedSource::Local {
+                    path: path
+                        .to_str()
+                        .ok_or_else(|| manifest_error("local Skill paths must use UTF-8"))?
+                        .to_owned(),
+                }),
+                Source::Remote { .. } => old
+                    .filter(|old| matches_source(&source, &old.source))
+                    .map(|old| old.source.clone()),
+            };
+            if let Some(locked_source) = locked_source {
+                ownership.insert(
+                    name.to_string(),
+                    LockedDeclarationSkill {
+                        source: locked_source,
+                        targets: own_targets.clone(),
+                    },
+                );
+            }
             continue;
         }
         let install = match source {
@@ -301,22 +385,35 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
         } else {
             install
         };
+        ownership.insert(
+            name.to_string(),
+            LockedDeclarationSkill {
+                source: install.locked_source.clone(),
+                targets: own_targets.clone(),
+            },
+        );
         installs.push(install);
     }
+    let declarations_changed =
+        snapshot.declarations.get(manifest.name.as_str()) != Some(&ownership);
     if request.check {
         return Ok(SyncReport {
-            current: changed.is_empty() && !requirements_changed,
+            current: changed.is_empty() && !requirements_changed && !declarations_changed,
             changed,
             requirements_changed,
+            declarations_changed,
         });
     }
-    if !changed.is_empty() || requirements_changed {
+    if !changed.is_empty() || requirements_changed || declarations_changed {
         store
             .apply_sync_batch(
                 installs,
                 &snapshot,
-                manifest.name.to_string(),
-                requirements,
+                crate::local_store::StoreDeclaration {
+                    name: manifest.name.to_string(),
+                    skills: ownership,
+                    requirements,
+                },
                 request.adopt,
                 &known,
             )
@@ -326,5 +423,6 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
         current: true,
         changed,
         requirements_changed: false,
+        declarations_changed: false,
     })
 }

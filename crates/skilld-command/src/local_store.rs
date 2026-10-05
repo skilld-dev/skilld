@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, LockDocument, LockedSkill, LockedSource, LockedTarget,
-    RemoteSelector, SkillName, SourceRef, SourceSelector, SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, LockDocument, LockedDeclarationSkill, LockedSkill,
+    LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceSelector, SourceStatus,
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
@@ -19,6 +19,12 @@ const JOURNAL_NAME: &str = ".skilld-transaction";
 const LOCK_NAME: &str = ".skilld-store-lock";
 const LOCKFILE_NAME: &str = "skilld-lock.yaml";
 static TRANSACTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub struct StoreDeclaration {
+    pub name: String,
+    pub skills: BTreeMap<String, LockedDeclarationSkill>,
+    pub requirements: BTreeMap<String, Vec<String>>,
+}
 
 #[cfg(not(target_os = "wasi"))]
 struct StoreLock {
@@ -235,12 +241,23 @@ impl LocalStore {
         hash_skill_tree(source)
     }
 
+    pub fn source_permissions_match(
+        &self,
+        source: &Path,
+        name: &SkillName,
+    ) -> Result<bool, StoreError> {
+        let installed = self.root.join(name.as_str());
+        if !installed.is_dir() {
+            return Ok(false);
+        }
+        Ok(file_permissions(source)? == file_permissions(&installed)?)
+    }
+
     pub fn apply_sync_batch(
         &self,
         installs: Vec<PreparedStoreInstall>,
         snapshot: &LockDocument,
-        manifest: String,
-        requirements: BTreeMap<String, Vec<String>>,
+        declaration: StoreDeclaration,
         adopt: bool,
         known_targets: &[ResolvedTarget],
     ) -> Result<Vec<SkillName>, StoreError> {
@@ -258,7 +275,7 @@ impl LocalStore {
             .collect::<Result<Vec<_>, StoreError>>()?;
         self.apply_batch(
             updates,
-            Some((manifest, requirements)),
+            Some(declaration),
             adopt,
             known_targets,
             &AllowTransaction,
@@ -547,7 +564,7 @@ impl LocalStore {
     fn apply_batch<G: TransactionGate>(
         &self,
         updates: Vec<PreparedBatchSkill>,
-        requirements: Option<(String, BTreeMap<String, Vec<String>>)>,
+        requirements: Option<StoreDeclaration>,
         adopt: bool,
         known_targets: &[ResolvedTarget],
         gate: &G,
@@ -706,8 +723,13 @@ impl LocalStore {
             gate.before_lock_commit(&self.lockfile_path())?;
             let mut new_lock = old_lock;
             new_lock.transaction_id.clone_from(&transaction);
-            if let Some((manifest, requirements)) = requirements {
-                new_lock.requirements.insert(manifest, requirements);
+            if let Some(declaration) = requirements {
+                new_lock
+                    .requirements
+                    .insert(declaration.name.clone(), declaration.requirements);
+                new_lock
+                    .declarations
+                    .insert(declaration.name, declaration.skills);
             }
             for prepared in &prepared {
                 new_lock.skills.insert(
@@ -987,6 +1009,26 @@ impl LocalStore {
             SkillName::parse(name.clone())
                 .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
             normalize_locked_source(&mut skill.source)?;
+        }
+        for (declaration, skills) in &mut document.declarations {
+            SkillName::parse(declaration.clone())
+                .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+            for (name, skill) in skills {
+                SkillName::parse(name.clone())
+                    .map_err(|error| StoreError::InvalidLockfile(error.to_string()))?;
+                normalize_locked_source(&mut skill.source)?;
+                let mut agents = BTreeSet::new();
+                if skill.targets.is_empty()
+                    || skill
+                        .targets
+                        .iter()
+                        .any(|target| !agents.insert(target.agent))
+                {
+                    return Err(StoreError::InvalidLockfile(
+                        "a declared Skill needs distinct Agent targets".to_owned(),
+                    ));
+                }
+            }
         }
         Ok(document)
     }
@@ -1506,6 +1548,25 @@ fn read_frontmatter_name(path: &Path) -> Result<String, StoreError> {
             name = Some(value.to_owned());
         }
     }
+}
+
+fn file_permissions(root: &Path) -> Result<BTreeMap<String, u32>, StoreError> {
+    let mut files = Vec::new();
+    collect_files(root, root, &mut files)?;
+    files
+        .into_iter()
+        .map(|(relative, path)| {
+            let permissions = fs::metadata(path).map_err(fs_error)?.permissions();
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                permissions.mode() & 0o777
+            };
+            #[cfg(not(unix))]
+            let mode = u32::from(permissions.readonly());
+            Ok((relative, mode))
+        })
+        .collect()
 }
 
 fn collect_files(

@@ -65,12 +65,21 @@ pub struct LockedSkill {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LockedDeclarationSkill {
+    pub source: LockedSource,
+    pub targets: Vec<LockedTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LockDocument {
     pub version: u8,
     pub transaction_id: String,
     pub skills: BTreeMap<String, LockedSkill>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub requirements: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub declarations: BTreeMap<String, BTreeMap<String, LockedDeclarationSkill>>,
 }
 
 impl Default for LockDocument {
@@ -80,6 +89,7 @@ impl Default for LockDocument {
             transaction_id: "initial".to_owned(),
             skills: BTreeMap::new(),
             requirements: BTreeMap::new(),
+            declarations: BTreeMap::new(),
         }
     }
 }
