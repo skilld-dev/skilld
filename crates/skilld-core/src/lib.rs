@@ -10,7 +10,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub use lock::{
-    LockDocument, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES, SourceStatus,
+    LockDocument, LockedDeclarationSkill, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES,
+    SourceStatus,
 };
 pub use reference::{ListedOrigin, ListedSkill, MultiSkillRef, SkillListing, SkillRef};
 pub use release::{

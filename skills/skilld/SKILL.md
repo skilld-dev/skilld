@@ -14,7 +14,8 @@ Run a Skill first. Install a Skill only when the user asks to keep it.
 Use `--json` with `search`, `run`, and `update --check`.
 Use `--json` with `view` of a registry ref, and with every registry and account command below.
 Their `data` is the skilld.dev answer. A command whose answer has no body returns `data: null`.
-The other commands do not support JSON output.
+Use `--json` with `sync --check` for declared Skills.
+The remaining commands do not support JSON output.
 Use `--plain` when another command needs stable text.
 
 Check the exit code before reading stdout.
@@ -25,6 +26,21 @@ Report the error `code` and `message`.
 An update check can exit with code 1 and return valid JSON.
 Read its update relations before treating that exit as a failure.
 Never parse formatted terminal output.
+
+## Sync declared Skills
+
+Read [Declared Skills](references/declared-skills.md) when a project needs explicit Skill requirements.
+Use `.skills/skilld.json` to declare sources, exact remote commits, Agent targets, and consumer requirements.
+Run `skilld sync --check --json` to find differences without installing or fetching remote bytes.
+Exit code `1` with success data means sync is needed.
+Run `skilld sync` to install the full declaration in one transaction.
+Use `--global` for global Agent targets.
+Use `--adopt` only when migrating identical unmanaged symlinks.
+Changed unmanaged targets block sync.
+Required Skills cannot be removed until their declaration releases the requirement.
+
+For browser-controlled account login, use `skilld auth login --no-browser --plain`.
+Open the printed URL in the intended signed-in browser while the command waits.
 
 ## Search for a Skill
 

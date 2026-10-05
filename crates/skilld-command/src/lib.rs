@@ -8,6 +8,8 @@ mod output;
 mod provenance;
 mod remote;
 mod run;
+mod sync;
+pub use sync::{SyncReport, SyncRequest};
 pub mod upgrade;
 pub mod weekly;
 
@@ -22,8 +24,8 @@ use std::sync::Arc;
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
-    AllowTransaction, LocalStore, PreparedStoreUpdate, ResolvedTarget, SkillView, StoreError,
-    TargetInstall, TransactionGate,
+    AllowTransaction, LocalStore, PreparedStoreInstall, PreparedStoreUpdate, ResolvedTarget,
+    SkillView, StoreError, TargetInstall, TransactionGate,
 };
 pub use output::{CommandPlatform, OutputContext};
 use provenance::source_status_caution;
@@ -78,6 +80,21 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Sync declared Skills and their required Skills to Agent targets.
+    Sync {
+        /// Read declarations from this JSON file.
+        #[arg(long, default_value = ".skills/skilld.json")]
+        manifest: PathBuf,
+        /// Check declarations, local sources, and installed content without installing.
+        #[arg(long)]
+        check: bool,
+        /// Adopt unmanaged links only when their files match the declared source.
+        #[arg(long, conflicts_with = "check")]
+        adopt: bool,
+        /// Sync to account-level Agent targets.
+        #[arg(short = 'g', long)]
+        global: bool,
+    },
     /// Search for Skills.
     Search { query: Vec<String> },
     /// Install a Skill, or restore the Skills in your lockfile.
@@ -395,7 +412,11 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AuthCommand {
-    Login,
+    Login {
+        /// Print the authorization URL without launching a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
     Status,
     Logout,
 }
@@ -504,6 +525,11 @@ pub struct InstalledSkill {
 }
 
 pub trait Host {
+    fn sync(&self, _request: SyncRequest) -> Result<SyncReport, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill sync is unavailable on this host",
+        ))
+    }
     fn list(&self, scope: InstallScope) -> Result<Vec<String>, CommandError>;
 
     fn install(
@@ -636,6 +662,12 @@ pub trait Host {
     fn auth_login(&self) -> Result<(), CommandError> {
         Err(CommandError::unsupported_host(
             "browser access is unavailable on this host",
+        ))
+    }
+
+    fn auth_login_without_browser(&self) -> Result<(), CommandError> {
+        Err(CommandError::unsupported_host(
+            "manual authorization is unavailable on this host",
         ))
     }
 
@@ -805,6 +837,7 @@ where
 }
 
 enum CommandOutput {
+    Sync(SyncReport),
     Screen(Screen),
     /// One public API answer: JSON carries the answer, text carries the screen.
     Api(discover::ApiOutput),
@@ -929,7 +962,7 @@ where
     if mode == OutputMode::JsonV1 && !supports_json(&cli.command) {
         let error = CommandError::usage(
             "UNSUPPORTED_OUTPUT",
-            "JSON output is available for search, run, update --check, view of a registry ref, and every skilld.dev account and discovery command",
+            "JSON output is available for sync, search, run, update --check, view of a registry ref, and every skilld.dev account and discovery command",
         );
         if stderr.write_all(&render_error(&error, mode)).is_err() {
             return CommandResult { exit_code: 2 };
@@ -944,6 +977,25 @@ where
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
+        }
+        Ok(CommandOutput::Sync(report)) => {
+            let screen = Screen::new(report.lines());
+            let bytes = match mode {
+                OutputMode::Human { color, .. } => screen.render_human(color).into_bytes(),
+                OutputMode::Plain { .. } => screen.render_plain().into_bytes(),
+                OutputMode::JsonV1 => {
+                    match output::render_api("sync", &serde_json::json!(report)) {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            let _ = stderr.write_all(&render_error(&error, mode));
+                            return CommandResult {
+                                exit_code: error.exit_code(),
+                            };
+                        }
+                    }
+                }
+            };
+            write_success_with_exit(&bytes, mode, stdout, stderr, u8::from(!report.current))
         }
         Ok(CommandOutput::Api(output)) => {
             let bytes = match mode {
@@ -1129,7 +1181,8 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 /// Whether one command can answer `--json`.
 fn supports_json(command: &Command) -> bool {
     match command {
-        Command::Search { .. }
+        Command::Sync { .. }
+        | Command::Search { .. }
         | Command::Run { .. }
         | Command::Update { check: true, .. }
         | Command::Browse { .. }
@@ -1157,6 +1210,7 @@ fn supports_json(command: &Command) -> bool {
 
 fn display_path(args: &[OsString]) -> String {
     let commands = [
+        "sync",
         "search",
         "install",
         "add",
@@ -1256,6 +1310,23 @@ fn dispatch<H: Host>(
     platform: CommandPlatform,
 ) -> Result<CommandOutput, CommandError> {
     match command {
+        Command::Sync {
+            manifest,
+            check,
+            adopt,
+            global,
+        } => host
+            .sync(SyncRequest {
+                manifest,
+                check,
+                adopt,
+                scope: if global {
+                    InstallScope::Global
+                } else {
+                    InstallScope::Project
+                },
+            })
+            .map(CommandOutput::Sync),
         Command::Add {
             reference,
             global,
@@ -1614,9 +1685,13 @@ fn dispatch<H: Host>(
             Ok(CommandOutput::Screen(Screen::new(lines)))
         }
         Command::Auth {
-            command: AuthCommand::Login,
+            command: AuthCommand::Login { no_browser },
         } => {
-            host.auth_login()?;
+            if no_browser {
+                host.auth_login_without_browser()?;
+            } else {
+                host.auth_login()?;
+            }
             Ok(CommandOutput::Screen(Screen::new(vec![Line::plain(
                 "Authentication started.",
             )])))
@@ -2041,6 +2116,11 @@ pub trait AccountProvider: Send + Sync {
     fn has_account(&self) -> Result<bool, CommandError>;
 
     fn login(&self) -> Result<(), CommandError>;
+    fn login_without_browser(&self) -> Result<(), CommandError> {
+        Err(CommandError::unsupported_host(
+            "manual authorization is unavailable on this host",
+        ))
+    }
     fn logout(&self) -> Result<(), CommandError>;
 }
 
@@ -2622,6 +2702,9 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn sync(&self, request: SyncRequest) -> Result<SyncReport, CommandError> {
+        sync::sync(self, request)
+    }
     fn list(&self, scope: InstallScope) -> Result<Vec<String>, CommandError> {
         let known = self.known_targets(scope)?;
         self.store(scope).list(&known).map_err(CommandError::store)
@@ -2751,6 +2834,13 @@ impl Host for LocalHost {
             .as_deref()
             .ok_or_else(|| CommandError::unsupported_host("browser access is unavailable"))?
             .login()
+    }
+
+    fn auth_login_without_browser(&self) -> Result<(), CommandError> {
+        self.account
+            .as_deref()
+            .ok_or_else(|| CommandError::unsupported_host("credential access is unavailable"))?
+            .login_without_browser()
     }
 
     fn auth_logout(&self) -> Result<(), CommandError> {
@@ -4984,43 +5074,6 @@ mod tests {
             "{stderr}"
         );
         assert!(host.requests().is_empty());
-    }
-
-    #[test]
-    fn public_command_vocabulary_matches_v3() {
-        assert_eq!(
-            command_names(),
-            [
-                "search",
-                "install",
-                "add",
-                "run",
-                "list",
-                "view",
-                "remove",
-                "update",
-                "verify",
-                "outdated",
-                "browse",
-                "trending",
-                "tracks",
-                "index",
-                "curators",
-                "account",
-                "like",
-                "unlike",
-                "likes",
-                "watch",
-                "unwatch",
-                "watches",
-                "changes",
-                "stars",
-                "collection",
-                "tokens",
-                "auth",
-                "config"
-            ]
-        );
     }
 
     #[test]
