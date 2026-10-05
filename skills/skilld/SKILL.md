@@ -90,6 +90,17 @@ A file with `readable: false` never prints.
 Its `kind` is `executable` or `binary`.
 Tell the user the Skill needs an install to use that file.
 
+Read `data.behaviors` before you follow the Skill.
+Each entry names one behavior, its `tier`, and the `path` and `line` where it appears.
+Tell the user about every behavior before you act on it.
+An empty list proves nothing. Patterns miss obfuscated code.
+
+A remote run stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the Skill has an `ask` behavior.
+skilld loaded nothing. Show the user every behavior in `error.message`.
+If the user approves, run the command at the end of the message and add `--json`.
+Never add `--allow` without the user's approval in this session.
+If the user declines, stop and load nothing.
+
 Report which Skill you ran and that skilld wrote no Skill files.
 Read `data.sourceStatus`, `data.origin`, and `data.revision`.
 A `verified` status covers where the Skill came from.

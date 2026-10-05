@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "matching": [
+    "Matches ignore ASCII case. Rules store every token and substring in lowercase.",
+    "commands: one token list matches a line when its tokens appear in order without overlap.",
+    "A token edge that is one of | & ; ( ) < > ' \" ` needs no boundary.",
+    "Any other left edge needs the line start, whitespace, one of those characters, / or = before it.",
+    "Any other right edge needs the line end, whitespace, or one of those characters after it.",
+    "substrings: the text appears anywhere in one line.",
+    "commands and substrings read code only: fenced blocks and inline code spans in Markdown, and every line of other text files. SKILL.md frontmatter is not code.",
+    "fences: a Markdown fenced block opens with one of these words as the first word of its info string.",
+    "tools: an allowed-tools entry in the SKILL.md frontmatter names this tool. A trailing * matches a prefix.",
+    "codepoints: one character inside an inclusive hexadecimal range, anywhere in a text file. A byte order mark at the start of a file does not count.",
+    "executable and extensions: a file carries an executable mode, or its name ends with one of the extensions.",
+    "A behavior reports each matching line once, and each matching file once when the rule reads no lines."
+  ],
+  "behaviors": [
+    {
+      "id": "remote-code",
+      "tier": "ask",
+      "label": "Runs code downloaded from the network",
+      "commands": [
+        ["curl", "|", "sh"],
+        ["curl", "|", "bash"],
+        ["curl", "|", "zsh"],
+        ["curl", "|", "sudo"],
+        ["curl", "|", "python"],
+        ["curl", "|", "python3"],
+        ["curl", "|", "node"],
+        ["curl", "|", "perl"],
+        ["curl", "|", "ruby"],
+        ["wget", "|", "sh"],
+        ["wget", "|", "bash"],
+        ["wget", "|", "zsh"],
+        ["wget", "|", "sudo"],
+        ["wget", "|", "python"],
+        ["wget", "|", "python3"],
+        ["sh", "<(curl"],
+        ["bash", "<(curl"],
+        ["zsh", "<(curl"],
+        ["sh", "<(wget"],
+        ["bash", "<(wget"],
+        ["eval", "$(curl"],
+        ["eval", "\"$(curl"],
+        ["eval", "$(wget"],
+        ["eval", "\"$(wget"],
+        ["sh", "-c", "$(curl"],
+        ["sh", "-c", "\"$(curl"],
+        ["bash", "-c", "$(curl"],
+        ["bash", "-c", "\"$(curl"],
+        ["sh", "-c", "\"$(wget"],
+        ["bash", "-c", "\"$(wget"],
+        ["irm", "|", "iex"],
+        ["iwr", "|", "iex"],
+        ["invoke-restmethod", "|", "invoke-expression"],
+        ["invoke-webrequest", "|", "invoke-expression"],
+        ["iex", "(irm"],
+        ["iex", "(iwr"],
+        ["iex", "(new-object"]
+      ]
+    },
+    {
+      "id": "privilege",
+      "tier": "ask",
+      "label": "Runs commands as root",
+      "commands": [
+        ["sudo"],
+        ["doas"],
+        ["pkexec"],
+        ["runas"],
+        ["su", "-c"],
+        ["su", "-"]
+      ]
+    },
+    {
+      "id": "credentials",
+      "tier": "ask",
+      "label": "Reads credential files or tokens",
+      "commands": [
+        ["gh", "auth", "token"],
+        ["security", "find-generic-password"],
+        ["security", "find-internet-password"]
+      ],
+      "substrings": [
+        ".ssh/",
+        "~/.ssh",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        ".aws/credentials",
+        ".netrc",
+        ".git-credentials",
+        ".docker/config.json",
+        ".kube/config",
+        ".gnupg/",
+        "gh/hosts.yml",
+        "_authtoken",
+        "/etc/shadow"
+      ]
+    },
+    {
+      "id": "destructive",
+      "tier": "ask",
+      "label": "Deletes system or home directories",
+      "commands": [
+        ["rm", "-rf", "/"],
+        ["rm", "-rf", "/*"],
+        ["rm", "-rf", "~"],
+        ["rm", "-rf", "~/"],
+        ["rm", "-rf", "~/*"],
+        ["rm", "-rf", "$home"],
+        ["rm", "-rf", "$home/"],
+        ["rm", "-rf", "$home/*"],
+        ["rm", "-fr", "/"],
+        ["rm", "-fr", "~"],
+        ["rm", "-fr", "$home"],
+        ["--no-preserve-root"],
+        ["mkfs"]
+      ],
+      "substrings": [
+        "mkfs.",
+        "of=/dev/sd",
+        "of=/dev/nvme",
+        "of=/dev/disk",
+        ":(){ :|:& };:"
+      ]
+    },
+    {
+      "id": "hidden-text",
+      "tier": "ask",
+      "label": "Contains invisible characters",
+      "codepoints": [
+        ["180E", "180E"],
+        ["200B", "200B"],
+        ["200E", "200F"],
+        ["202A", "202E"],
+        ["2060", "2064"],
+        ["2066", "2069"],
+        ["FEFF", "FEFF"],
+        ["E0000", "E007F"],
+        ["E0100", "E01EF"]
+      ]
+    },
+    {
+      "id": "shell",
+      "tier": "show",
+      "label": "Runs shell commands",
+      "fences": ["bash", "sh", "shell", "zsh", "fish", "console", "terminal", "shellsession", "powershell", "pwsh", "ps1", "bat", "cmd", "batch"],
+      "tools": ["bash"]
+    },
+    {
+      "id": "scripts",
+      "tier": "show",
+      "label": "Ships scripts",
+      "executable": true,
+      "extensions": [".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".rb", ".pl", ".php", ".lua", ".ps1", ".psm1", ".bat", ".cmd"]
+    },
+    {
+      "id": "packages",
+      "tier": "show",
+      "label": "Installs or runs packages",
+      "commands": [
+        ["npm", "install"],
+        ["npm", "i"],
+        ["npm", "add"],
+        ["npm", "exec"],
+        ["npx"],
+        ["pnpm", "add"],
+        ["pnpm", "install"],
+        ["pnpm", "i"],
+        ["pnpm", "dlx"],
+        ["yarn", "add"],
+        ["yarn", "dlx"],
+        ["bun", "add"],
+        ["bun", "install"],
+        ["bunx"],
+        ["deno", "install"],
+        ["pip", "install"],
+        ["pip3", "install"],
+        ["pipx"],
+        ["uv", "add"],
+        ["uv", "pip", "install"],
+        ["uv", "tool", "install"],
+        ["uvx"],
+        ["brew", "install"],
+        ["cargo", "install"],
+        ["cargo", "add"],
+        ["go", "install"],
+        ["go", "get"],
+        ["gem", "install"],
+        ["apt", "install"],
+        ["apt-get", "install"],
+        ["choco", "install"],
+        ["winget", "install"]
+      ]
+    },
+    {
+      "id": "network",
+      "tier": "show",
+      "label": "Fetches URLs",
+      "commands": [
+        ["curl"],
+        ["wget"],
+        ["iwr"],
+        ["irm"],
+        ["invoke-webrequest"],
+        ["invoke-restmethod"],
+        ["git", "clone"]
+      ],
+      "substrings": [
+        "fetch(",
+        "requests.get(",
+        "requests.post(",
+        "urllib.request",
+        "http.get(",
+        "https.get(",
+        "axios.",
+        "httpx."
+      ],
+      "tools": ["webfetch", "websearch"]
+    },
+    {
+      "id": "env",
+      "tier": "show",
+      "label": "Reads environment variables",
+      "commands": [
+        ["printenv"]
+      ],
+      "substrings": [
+        "process.env",
+        "import.meta.env",
+        "deno.env",
+        "bun.env",
+        "os.environ",
+        "getenv(",
+        "$env:"
+      ]
+    },
+    {
+      "id": "mcp",
+      "tier": "show",
+      "label": "Calls MCP servers",
+      "tools": ["mcp__*"]
+    }
+  ]
+}
