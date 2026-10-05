@@ -5,6 +5,7 @@
     "rootDir": ".",
     "module": "Preserve",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "types": ["node"],
     "allowImportingTsExtensions": true,
     "strict": true,

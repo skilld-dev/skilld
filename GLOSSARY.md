@@ -21,7 +21,7 @@ Every public export, command, error, route, and document uses these terms.
 | Artifact | `skilld.dev/api/v1` | published protocol | skilld CLI | Artifact |
 | Artifact attestation | `skilld.dev/api/v1` | published protocol | skilld CLI | attestation |
 | Check result | `skilld.dev/api/v1` | published protocol | skilld CLI, developer | check result |
-| behavior | `contracts/skill-behaviors.json`, `skilld run` | published value | Agent, developer | behavior |
+| behavior | `packages/protocol/rules/skill-behaviors.json`, `skilld run` | published value | Agent, developer | behavior |
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
 | Skill page | `skilld.dev` and skilld CLI output | published value | Agent, developer | Skill page |
 | Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
@@ -279,7 +279,7 @@ The digest reports changes in watched Repositories.
 
 ### behavior
 
-**Is:** one thing a Skill's files ask an Agent to do, found by a fixed text pattern in `contracts/skill-behaviors.json`.
+**Is:** one thing a Skill's files ask an Agent to do, found by a fixed text pattern in `packages/protocol/rules/skill-behaviors.json`.
 
 **Use for:** the `Skill behaviors` list, the `behaviors` JSON field, and `--allow` ids. An `ask` behavior stops a remote run until the user approves it. A `show` behavior is listed only.
 

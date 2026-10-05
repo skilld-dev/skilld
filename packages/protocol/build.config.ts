@@ -9,6 +9,7 @@ export default defineBuildConfig({
         './src/v1.ts',
         './src/constants.ts',
         './src/test-fixtures.ts',
+        './src/behaviors.ts',
       ],
       outDir: './dist',
     },

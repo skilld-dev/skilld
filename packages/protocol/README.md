@@ -22,6 +22,8 @@ Refresh it with `pnpm --filter skilld-sdk generate` from the repository root.
 - `skilld-protocol/wire`: zod schemas (suffix `Schema`) and inferred types (no suffix) for the endpoints skilld.dev still serves to older clients. Use `import { FooSchema }` for runtime validation and `import type { Foo }` for the type.
 - `skilld-protocol/constants`: readonly tuples behind the closed enums, plus their inferred unions.
 - `skilld-protocol/test-fixtures`: canonical payloads that each consumer round-trips through its schema on CI.
+- `skilld-protocol/behaviors`: `detectBehaviors(files)` names what a Skill's files ask an Agent to do, with each location. The skilld CLI applies the same rules in Rust.
+- `skilld-protocol/rules/skill-behaviors.json`: the behavior rules both implementations read. `contracts/fixtures/skill-behaviors/cases.json` binds their matching.
 
 ## Repository
 
