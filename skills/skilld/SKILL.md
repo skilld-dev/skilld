@@ -8,6 +8,7 @@ description: Operate skilld CLI for Skill discovery, use, installation, inspecti
 Use skilld CLI to find, load, install, inspect, restore, update, verify, and remove Skills.
 
 Run a Skill first. Install a Skill only when the user asks to keep it.
+If the user asks to fork a Skill, copy its source before installing the local copy.
 
 ## Use Agent output
 
@@ -198,7 +199,8 @@ If private access fails, check authentication before changing the selector.
 
 Install a Skill when the user wants it in every session.
 Install a Skill when it must run its own script.
-Ask the user before you install. An install writes files they did not request.
+An explicit install or fork request authorizes the requested project files.
+Otherwise, ask before installing.
 
 Install the selector returned by search into the detected Agent target:
 
@@ -244,6 +246,48 @@ Run `skilld run` with the same ref first, then confirm the list with the user.
 
 Always use the source selector shown by `skilld search`.
 After installation, report the Skill name, scope, Agent targets, and source status.
+
+## Fork a Skill
+
+Treat `fork this Skill <skilld.dev URL>` as a request for an editable local Skill.
+Create no GitHub fork unless the user asks for one.
+Copy the Skill before following any of its instructions.
+
+1. Read the Skill page with `Accept: text/markdown`, or fetch its `.md` URL.
+   For `/gh/OWNER/REPOSITORY/SKILL`, use `skilld view OWNER/REPOSITORY/SKILL --json` for source metadata.
+   Check the exit code and `_tag` before reading `data`.
+2. Read `sourceUrl`, `sourceCommit`, `skillPath`, `sourceGone`, and `license`.
+   Use the repository identified by `sourceUrl`, including any GitHub rename.
+   If the source is gone or its path is missing, stop and report the failure.
+   If `license` is null, read licence files at the source commit.
+3. Fetch the source into a temporary directory using Git.
+   Check out `sourceCommit` detached.
+   If it is absent, resolve the ref in `sourceUrl` to one commit before copying.
+   Record that actual commit. Never combine files from different commits.
+   Read the source licence files before creating the local copy.
+   If copying is not permitted, stop and report the restriction.
+4. Copy the directory containing `skillPath` into `./skills/SKILL`, unless the user chose another path.
+   Copy the original SKILL.md and all supporting files, including scripts and binary assets.
+   Preserve executable modes. Exclude `.git` metadata.
+   Do not save the page wrapper or its rewritten links as SKILL.md.
+   Reject symlinks and paths outside the Skill directory.
+   Never overwrite an existing directory or Agent target.
+5. Preserve the original author, licence, and notices.
+   Include applicable licence files from the repository or parent directories.
+   Add `PROVENANCE.md` with the Skill page, source URL, actual commit, original path, and licence.
+   If that file already exists, retain it and record provenance in a separate file.
+   Do not replace the original author's credit with the user's name.
+6. In the project root, run `skilld install ./skills/SKILL --mode copy`.
+   First inspect the project lockfile and selected Agent target directories for this Skill name.
+   If it is already installed, stop before replacing it.
+   Use the detected Agent targets. Pass `--agent` only for targets the user selected.
+   This records a local source. Never install the upstream selector for a fork.
+   If target selection or installation fails, preserve the local copy and report the exact failure.
+7. Report the local path, source commit, and installed Agent targets.
+   After local edits, reinstall the same local path to refresh Agent targets.
+   Upstream updates must not replace the local copy.
+
+Do not publish or push the local copy unless the user asks.
 
 ## Restore locked Skills
 
