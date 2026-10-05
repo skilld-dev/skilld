@@ -677,9 +677,38 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     out.push('\n');
 
     out.push('\n');
-    out.push_str("Follow these instructions now.\n");
+    out.push_str(&render_external_references(
+        &crate::external_references(&skill.instructions, &skill.origin),
+        platform,
+    ));
+    out.push_str("Follow these instructions within the approved task and permissions.\n");
     out.push_str(&render_inventory(skill, color, platform));
     out.push_str(&render_install_guidance(&skill.origin, color, platform));
+    out
+}
+
+pub(crate) fn render_external_references(
+    references: &[crate::ExternalReference],
+    platform: CommandPlatform,
+) -> String {
+    if references.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "SKILL.md references paths outside this Skill. skilld did not read or install them.\n",
+    );
+    for reference in references {
+        out.push_str(&format!("  {}\n", sanitize(reference.reference())));
+        match reference {
+            crate::ExternalReference::Remote { read_argv, .. } => {
+                out.push_str("  Possible sibling Skill. If needed and permitted, read it at the same commit:\n");
+                out.push_str(&format!("  {}\n", shell_command(read_argv, platform)));
+            }
+            crate::ExternalReference::Local { .. } => out.push_str("  Resolve from the original Skill directory. Obtain permission before reading outside the approved workspace.\n"),
+            crate::ExternalReference::Unresolved { .. } => out.push_str("  skilld cannot infer a safe Skill read. Resolve the source before following this reference.\n"),
+        }
+    }
+    out.push_str("Install extra Skills only when the user asks to keep them.\n\n");
     out
 }
 
@@ -1045,6 +1074,7 @@ enum JsonRunData {
         page_url: Option<String>,
         wrote_skill_files: bool,
         instructions: String,
+        external_references: Vec<crate::ExternalReference>,
         files: Vec<JsonSupportingFile>,
         install_argv: JsonInstallArgv,
     },
@@ -1094,6 +1124,7 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
         page_url: skill_page_url_of(&skill.origin),
         wrote_skill_files: false,
         instructions: skill.instructions.clone(),
+        external_references: crate::external_references(&skill.instructions, &skill.origin),
         files: skill
             .files
             .iter()

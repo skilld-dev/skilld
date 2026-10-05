@@ -18,6 +18,157 @@ const INSTRUCTIONS: &[u8] =
 
 const MAX_TEST_DEPTH: usize = 9;
 
+#[test]
+fn installing_a_fork_warns_without_installing_its_sibling() {
+    let fixture = remote_fixture(skill_files());
+    let source = fixture.project.join("fork/vue");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        b"---\nname: vue\ndescription: Vue\n---\nCall skill ../foo.\n",
+    )
+    .unwrap();
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&[
+            "skilld",
+            "install",
+            "./fork/vue",
+            "--agent",
+            "codex",
+            "--mode",
+            "copy",
+            "--plain",
+        ]),
+    );
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(stdout.contains("../foo"));
+    assert!(stdout.contains("did not read or install them"));
+    assert!(!fixture.project.join(".agents/skills/foo").exists());
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_remote_run_surfaces_sibling_reads_without_fetching_them() {
+    let fixture = remote_fixture(vec![file("SKILL.md", 0o644,
+        b"---\nname: vue\ndescription: Vue\n---\n# Vue\nCall skill `../foo`. Read [bar](../bar/SKILL.md).\n")]);
+    let before = tree(&fixture.project);
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+    assert_eq!(exit, 0, "{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["data"]["externalReferences"][0]["reference"], "../foo");
+    assert_eq!(
+        json["data"]["externalReferences"][0]["readArgv"],
+        serde_json::json!([
+            "skilld",
+            "run",
+            format!("github:vuejs/core/skills/foo#commit:{}", "a".repeat(40)),
+            "--json"
+        ])
+    );
+    assert_eq!(
+        json["data"]["externalReferences"][1]["reference"],
+        "../bar/SKILL.md"
+    );
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(tree(&fixture.project), before);
+    let argv = json["data"]["externalReferences"][0]["readArgv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|part| part.as_str().unwrap().to_owned())
+        .collect();
+    let (read_exit, _, read_error) = run_cli(&fixture.host, argv);
+    assert_eq!(read_exit, 0, "{read_error}");
+    assert_eq!(fixture.remote.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn nested_paths_only_warn_when_they_leave_the_selected_skill() {
+    let fixture = remote_fixture(vec![file("SKILL.md", 0o644,
+        b"---\nname: vue\ndescription: Vue\n---\nRead references/../api.md. Call ./../foo. Call references/../../bar/SKILL.md.\n")]);
+    let (_, stdout, _) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let references = json["data"]["externalReferences"].as_array().unwrap();
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0]["reference"], "./../foo");
+    assert_eq!(references[1]["reference"], "references/../../bar/SKILL.md");
+    assert_eq!(
+        references[1]["readArgv"][2],
+        format!("github:vuejs/core/skills/bar#commit:{}", "a".repeat(40))
+    );
+}
+
+#[test]
+fn external_reference_notices_ignore_metadata_and_do_not_offer_repository_escapes() {
+    let fixture = remote_fixture(vec![file("SKILL.md", 0o644,
+        b"---\nname: vue\ndescription: Vue\nexample: ../frontmatter\n---\n\n![example](../image.png)\nCall ../../../outside. Read ../README.md.\n")]);
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+    assert_eq!(exit, 0, "{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let references = json["data"]["externalReferences"].as_array().unwrap();
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0]["_tag"], "unresolved");
+    assert!(references[0].get("readArgv").is_none());
+    assert_eq!(references[1]["_tag"], "unresolved");
+}
+
+#[test]
+fn install_rejects_unreadable_instructions_before_writing_targets() {
+    let fixture = remote_fixture(skill_files());
+    let source = fixture.project.join("fork/vue");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        b"---\nname: vue\ndescription: Vue\n---\n\xff",
+    )
+    .unwrap();
+    let before = tree(&fixture.project);
+    let (exit, _, stderr) = run_cli(
+        &fixture.host,
+        run_args(&[
+            "skilld",
+            "install",
+            "./fork/vue",
+            "--agent",
+            "codex",
+            "--mode",
+            "copy",
+            "--plain",
+        ]),
+    );
+    assert_eq!(exit, 1, "{stderr}");
+    assert_eq!(tree(&fixture.project), before);
+}
+
+#[test]
+fn shell_commands_surface_external_paths_and_keep_variable_paths_unresolved() {
+    let fixture = remote_fixture(vec![file("SKILL.md", 0o644,
+        b"---\nname: vue\ndescription: Vue\n---\nRun:\n```sh\npython ../shared/scripts/helper.py\nskill=../bar\nskilld run \"${SKILL_DIR}/../dynamic\"\n```\n")]);
+    let (_, stdout, _) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "vuejs/core/vue", "--json"]),
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let references = json["data"]["externalReferences"].as_array().unwrap();
+    assert_eq!(references.len(), 3);
+    assert_eq!(references[0]["reference"], "../shared/scripts/helper.py");
+    assert_eq!(references[0]["_tag"], "unresolved");
+    assert_eq!(references[1]["reference"], "../bar");
+    assert_eq!(references[1]["_tag"], "remote");
+    assert_eq!(references[2]["reference"], "${SKILL_DIR}/../dynamic");
+    assert_eq!(references[2]["_tag"], "unresolved");
+}
+
 struct StubRemote {
     calls: AtomicUsize,
     exact_calls: AtomicUsize,

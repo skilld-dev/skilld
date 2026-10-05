@@ -1,6 +1,8 @@
 mod account;
 mod config;
+mod dependencies;
 mod discover;
+pub use dependencies::{ExternalReference, external_references};
 mod local_store;
 mod outdated;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
@@ -522,6 +524,7 @@ pub struct InstalledSkill {
     /// The Skill page skilld.dev named for this delivery. `None` when it named
     /// none. The lockfile never records it.
     pub page_url: Option<String>,
+    pub external_references: Vec<ExternalReference>,
 }
 
 pub trait Host {
@@ -1968,6 +1971,21 @@ fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
     if let Some(page) = &skill.page_url {
         lines.push(Line::linked_field("Skill page", page.clone(), page.clone()));
     }
+    for reference in &skill.external_references {
+        lines.push(Line::hint(format!(
+            "SKILL.md references {} outside this Skill.",
+            reference.reference()
+        )));
+    }
+    if !skill.external_references.is_empty() {
+        lines.push(Line::hint("skilld did not read or install them."));
+        lines.push(Line::hint(
+            "Resolve them from the original Skill source within the approved task and permissions.",
+        ));
+        lines.push(Line::hint(
+            "Install extra Skills only when the user asks to keep them.",
+        ));
+    }
     Ok(lines)
 }
 
@@ -2370,6 +2388,10 @@ impl LocalHost {
             .remote_provider()?
             .prepare(&selector, direct)
             .map_err(CommandError::remote)?;
+        let external_references = dependencies::external_references_for_source(
+            &run::read_instructions(&prepared.files)?,
+            &prepared.locked_source,
+        )?;
         let staged = materialize_remote(&prepared.files)?;
         let name = self
             .store(scope)
@@ -2381,7 +2403,7 @@ impl LocalHost {
                 known,
             )
             .map_err(CommandError::store)?;
-        self.installed(scope, &name, known, prepared.page_url)
+        self.installed(scope, &name, known, prepared.page_url, external_references)
     }
 
     /// Read back what the lockfile recorded for one installed Skill.
@@ -2391,6 +2413,7 @@ impl LocalHost {
         name: &skilld_core::SkillName,
         known: &[ResolvedTarget],
         page_url: Option<String>,
+        external_references: Vec<ExternalReference>,
     ) -> Result<InstalledSkill, CommandError> {
         let view = self
             .store(scope)
@@ -2401,6 +2424,7 @@ impl LocalHost {
             source: view.skill.source,
             source_status: view.skill.source_status.as_str(),
             page_url,
+            external_references,
         })
     }
 
@@ -2636,21 +2660,30 @@ impl LocalHost {
                     })
                     .collect::<Result<Vec<_>, _>>()?
             };
-            let mut page_url = None;
-            match view.skill.source {
+            let (page_url, external_references) = match view.skill.source {
                 LockedSource::Local { path } => {
                     let (source, locked_source) =
                         self.resolve_source(InstallSource::Local(PathBuf::from(path)))?;
+                    let references = dependencies::external_references_for_source(
+                        &run::read_local_instructions(&source)?,
+                        &locked_source,
+                    )?;
                     store
                         .install_from(&source, locked_source, &restored_targets, &known)
                         .map_err(CommandError::store)?;
+                    (None, references)
                 }
                 LockedSource::BundledSkilld => {
                     let (source, locked_source) =
                         self.resolve_source(InstallSource::BundledSkilld)?;
+                    let references = dependencies::external_references_for_source(
+                        &run::read_local_instructions(&source)?,
+                        &locked_source,
+                    )?;
                     store
                         .install_from(&source, locked_source, &restored_targets, &known)
                         .map_err(CommandError::store)?;
+                    (None, references)
                 }
                 LockedSource::Remote {
                     source, commit_sha, ..
@@ -2682,8 +2715,11 @@ impl LocalHost {
                         .remote_provider()?
                         .prepare(&exact, direct)
                         .map_err(CommandError::remote)?;
+                    let references = dependencies::external_references_for_source(
+                        &run::read_instructions(&prepared.files)?,
+                        &prepared.locked_source,
+                    )?;
                     let staged = materialize_remote(&prepared.files)?;
-                    page_url = prepared.page_url;
                     store
                         .install_from_with_status(
                             staged.path(),
@@ -2693,9 +2729,16 @@ impl LocalHost {
                             &known,
                         )
                         .map_err(CommandError::store)?;
+                    (prepared.page_url, references)
                 }
-            }
-            restored.push(self.installed(request.scope, &skill_name, &known, page_url)?);
+            };
+            restored.push(self.installed(
+                request.scope,
+                &skill_name,
+                &known,
+                page_url,
+                external_references,
+            )?);
         }
         Ok(restored)
     }
@@ -2745,11 +2788,21 @@ impl Host for LocalHost {
                 .map(|skill| vec![skill]),
             source => {
                 let (source, locked_source) = self.resolve_source(source)?;
+                let external_references = dependencies::external_references_for_source(
+                    &run::read_local_instructions(&source)?,
+                    &locked_source,
+                )?;
                 let name = self
                     .store(request.scope)
                     .install_from(&source, locked_source, &targets, &known)
                     .map_err(CommandError::store)?;
-                Ok(vec![self.installed(request.scope, &name, &known, None)?])
+                Ok(vec![self.installed(
+                    request.scope,
+                    &name,
+                    &known,
+                    None,
+                    external_references,
+                )?])
             }
         }
     }
@@ -4237,6 +4290,7 @@ mod tests {
             source: LockedSource::BundledSkilld,
             source_status: "local",
             page_url: None,
+            external_references: vec![],
         }
     }
 
@@ -4292,6 +4346,7 @@ mod tests {
                 // skilld.dev names a page only for a Skill its registry holds.
                 page_url: (name == "vue")
                     .then(|| "https://skilld.dev/gh/skilld-dev/skills/vue".to_owned()),
+                external_references: vec![],
             };
             self.installs.lock().unwrap().push(request);
             Ok(vec![installed])
@@ -4579,6 +4634,7 @@ mod tests {
                     },
                     source_status: "unverified",
                     page_url: None,
+                    external_references: vec![],
                 }]),
                 other => panic!("unexpected source: {other:?}"),
             }
@@ -4645,6 +4701,7 @@ mod tests {
                 },
                 source_status: "verified",
                 page_url: None,
+                external_references: vec![],
             }])
         }
 
@@ -4709,6 +4766,7 @@ mod tests {
                 },
                 source_status: "verified",
                 page_url: None,
+                external_references: vec![],
             }])
         }
 
@@ -4843,6 +4901,7 @@ mod tests {
                         },
                         source_status: "unverified",
                         page_url: None,
+                        external_references: vec![],
                     }])
                 }
                 InstallSource::DirectRemote(_) => Err(CommandError::operation(
@@ -4970,6 +5029,7 @@ mod tests {
                         },
                         source_status: "unverified",
                         page_url: None,
+                        external_references: vec![],
                     }])
                 }
                 other => panic!("unexpected source: {other:?}"),
