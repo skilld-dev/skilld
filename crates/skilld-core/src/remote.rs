@@ -282,6 +282,8 @@ fn validate_source_request(source: &SourceRequest) -> Result<(), RemoteError> {
         ));
     }
     match &source.selector {
+        // The Repository root is a source directory, never an Artifact file.
+        SourceSelector::Path { path } if path == "." => Ok(()),
         SourceSelector::Path { path } if path.contains('#') => Err(RemoteError::new(
             "INVALID_SOURCE",
             "the Skill source path cannot contain #",
