@@ -50,7 +50,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld search` | Skill search |
 | `skilld run` | transient Skill load |
 | `skilld run --file` | supporting file read |
-| `skilld run --allow` | behavior approval |
+| `--allow` on `run`, `install`, `add`, `update` | behavior approval |
 | `skilld install` | Skill install |
 | `skilld add` | multi-skill install |
 | `skilld run OWNER/REPOSITORY` | Skill index |
@@ -281,7 +281,7 @@ The digest reports changes in watched Repositories.
 
 **Is:** one thing a Skill's files ask an Agent to do, found by a fixed text pattern in `contracts/skill-behaviors.json`.
 
-**Use for:** the `Skill behaviors` list, the `behaviors` JSON field, and `--allow` ids. An `ask` behavior stops a remote run until the user approves it. A `show` behavior is listed only.
+**Use for:** the `Skill behaviors` list, the `behaviors` JSON field, and `--allow` ids. An `ask` behavior stops a remote run, install, or add until the user approves it. An update stops only for an `ask` behavior the installed copy lacks. A `show` behavior is listed only.
 
 **Never:** permission, capability, risk, threat, scan result. A behavior names a match and its location. No match never means the Skill does nothing.
 

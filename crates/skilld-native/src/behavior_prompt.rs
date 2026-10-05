@@ -1,5 +1,5 @@
-//! The approval question `skilld run` asks before a remote Skill loads with a
-//! behavior that needs the user's approval.
+//! The approval question `run`, `install`, `add`, and `update` ask before a
+//! remote Skill brings a behavior that needs the user's approval.
 //!
 //! Only a person at a terminal sees it. An Agent, a pipe, or CI gets the
 //! stopped run and its `--allow` command instead.
@@ -50,14 +50,14 @@ pub fn ask(
     behaviors: &[&Behavior],
 ) -> Result<BehaviorDecision, CommandError> {
     let mut question = format!(
-        "The Skill {} needs your approval before it loads:\n",
+        "The Skill {} needs your approval for these behaviors:\n",
         sanitize(skill)
     );
     for behavior in behaviors {
         question.push_str(&format!("  {}\n", sanitize(&describe_behavior(behavior))));
     }
     question.push_str(BEHAVIOR_CAVEAT);
-    question.push_str("\nLoad this Skill for this session? [y/N] ");
+    question.push_str("\nContinue with this Skill? [y/N] ");
     output
         .write_all(question.as_bytes())
         .and_then(|()| output.flush())

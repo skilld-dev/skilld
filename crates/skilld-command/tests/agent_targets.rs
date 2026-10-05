@@ -70,6 +70,7 @@ fn every_project_signal_selects_the_matching_agent_target() {
                 scope: InstallScope::Project,
                 targets: vec![],
                 mode: None,
+                allowed_behaviors: Vec::new(),
             })
             .unwrap();
 
@@ -143,6 +144,7 @@ fn every_runtime_signal_selects_the_matching_agent_target() {
             scope: InstallScope::Project,
             targets: vec![],
             mode: None,
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
 
@@ -192,6 +194,7 @@ fn every_new_agent_target_resolves_its_global_and_project_paths() {
                 scope,
                 targets: vec![agent],
                 mode: None,
+                allowed_behaviors: Vec::new(),
             })
             .unwrap();
 
@@ -222,6 +225,7 @@ fn a_first_party_skills_directory_alone_does_not_select_openclaw() {
             scope: InstallScope::Project,
             targets: vec![],
             mode: None,
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
 
@@ -265,6 +269,7 @@ fn overridden_agent_homes_receive_global_installs_and_detection() {
             scope: InstallScope::Global,
             targets: vec![],
             mode: None,
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
 
@@ -306,6 +311,7 @@ fn an_existing_global_target_directory_is_detected() {
         scope: InstallScope::Global,
         targets: vec![],
         mode: None,
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
 
@@ -341,6 +347,7 @@ fn a_global_symlink_install_resolves_from_the_agent_skills_directory() {
         scope: InstallScope::Global,
         targets: vec![AgentTargetId::ClaudeCode],
         mode: Some(InstallMode::Symlink),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
 

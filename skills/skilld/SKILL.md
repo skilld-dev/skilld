@@ -107,7 +107,7 @@ An empty list proves nothing. Patterns miss obfuscated code.
 A remote run stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the Skill has an `ask` behavior.
 skilld loaded nothing. Show the user every behavior in `error.message`.
 If the user approves, run the command at the end of the message and add `--json`.
-Never add `--allow` without the user's approval in this session.
+Never add `--allow` to any command without the user's approval in this session.
 If the user declines, stop and load nothing.
 
 Report which Skill you ran and that skilld wrote no Skill files.
@@ -246,6 +246,11 @@ Do not guess a target when detection and `agent.targets` are empty.
 Use `--mode copy` or `--mode symlink` only when the user chooses a mode.
 Otherwise, use the configured `install.mode`.
 
+An install stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the Skill has an `ask` behavior.
+skilld wrote nothing. Show the user every behavior in the message.
+If the user approves, run the same command again with the `--allow` ids the message names.
+`skilld add` installs the other Skills and lists each held Skill at the end.
+
 Install this skilld-maintained Skill globally:
 
 ```sh
@@ -360,6 +365,10 @@ Treat `current`, `pinned`, and `notTracked` as no action.
 If the relation is `behind` or `diverged`, ask before changing files.
 If the relation is `unavailable`, report `failure.code` and `failure.message`.
 Treat `unavailable` as unknown. Do not infer a newer commit.
+
+An update stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the new version adds an `ask` behavior.
+skilld changed nothing. Show the user every behavior in the message.
+If the user approves, run the same command again with the `--allow` ids the message names.
 
 Update one named Skill unless the user explicitly requests all updates.
 Use `--global` only for a Skill in the global scope.

@@ -132,6 +132,13 @@ enum Command {
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive an explicit github: source or a GitHub tree URL.\nWithout --direct, these selectors use hosted Artifact delivery.\nA direct install records the unverified source status."
         )]
         direct: bool,
+        #[arg(
+            long = "allow",
+            value_name = "BEHAVIORS",
+            value_delimiter = ',',
+            long_help = "Approve Skill behaviors that need the user's approval. Separate ids with commas.\nA remote install stops before it writes a Skill with an unapproved behavior.\nOnly give this flag after the user approves those behaviors."
+        )]
+        allow: Vec<String>,
     },
     /// Install every Skill a Repository, curator, or collection names.
     #[command(
@@ -169,6 +176,13 @@ enum Command {
             long_help = "Install every Skill the ref names without asking.\nA terminal asks which Skills to install. Every other context installs all of them."
         )]
         all: bool,
+        #[arg(
+            long = "allow",
+            value_name = "BEHAVIORS",
+            value_delimiter = ',',
+            long_help = "Approve Skill behaviors that need the user's approval. Separate ids with commas.\nEach Skill with an unapproved behavior stays uninstalled. The rest install.\nOnly give this flag after the user approves those behaviors."
+        )]
+        allow: Vec<String>,
     },
     /// Load a Skill for this session without installing it.
     #[command(
@@ -246,6 +260,13 @@ enum Command {
         /// Update Skills in the global scope.
         #[arg(short = 'g', long)]
         global: bool,
+        #[arg(
+            long = "allow",
+            value_name = "BEHAVIORS",
+            value_delimiter = ',',
+            long_help = "Approve Skill behaviors that need the user's approval. Separate ids with commas.\nAn update stops before it writes a Skill version that adds an unapproved behavior.\nOnly give this flag after the user approves those behaviors."
+        )]
+        allow: Vec<String>,
     },
     /// Verify a Skill source and report its source status.
     Verify { skill: Option<String> },
@@ -625,7 +646,12 @@ pub trait Host {
         ))
     }
 
-    fn update(&self, _name: Option<&str>, _scope: InstallScope) -> Result<Vec<Line>, CommandError> {
+    fn update(
+        &self,
+        _name: Option<&str>,
+        _scope: InstallScope,
+        _allowed: &[String],
+    ) -> Result<Vec<Line>, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill update is unavailable on this host",
         ))
@@ -1356,9 +1382,11 @@ fn dispatch<H: Host>(
             mode,
             direct,
             all,
+            allow,
         } => {
             let reference = SkillRef::parse(&reference).map_err(CommandError::remote)?;
-            let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
+            let options = InstallOptions::parse(global, &agents, mode.as_deref())?
+                .with_allowed_behaviors(approved_behaviors(allow)?);
             match reference {
                 SkillRef::Skill(source) => install(host, Some(source), options, direct),
                 SkillRef::Many(reference) if direct => {
@@ -1447,8 +1475,10 @@ fn dispatch<H: Host>(
             agents,
             mode,
             direct,
+            allow,
         } => {
-            let options = InstallOptions::parse(global, &agents, mode.as_deref())?;
+            let options = InstallOptions::parse(global, &agents, mode.as_deref())?
+                .with_allowed_behaviors(approved_behaviors(allow)?);
             install(host, source, options, direct)
         }
         Command::Run {
@@ -1788,7 +1818,9 @@ fn dispatch<H: Host>(
             check,
             interactive,
             global,
+            allow,
         } => {
+            let allow = approved_behaviors(allow)?;
             if interactive {
                 Err(CommandError::unsupported_host(
                     "Interactive Skill update needs a native terminal host",
@@ -1797,7 +1829,7 @@ fn dispatch<H: Host>(
                 host.update_check(skill.as_deref())
                     .map(CommandOutput::UpdateCheck)
             } else {
-                host.update(skill.as_deref(), scope(global))
+                host.update(skill.as_deref(), scope(global), &allow)
                     .map(|lines| CommandOutput::Screen(Screen::new(lines)))
             }
         }
@@ -1816,6 +1848,7 @@ struct InstallOptions {
     scope: InstallScope,
     targets: Vec<AgentTargetId>,
     mode: Option<InstallMode>,
+    allowed_behaviors: Vec<String>,
 }
 
 impl InstallOptions {
@@ -1829,7 +1862,13 @@ impl InstallOptions {
             scope: scope(global),
             targets,
             mode,
+            allowed_behaviors: Vec::new(),
         })
+    }
+
+    fn with_allowed_behaviors(mut self, allowed_behaviors: Vec<String>) -> Self {
+        self.allowed_behaviors = allowed_behaviors;
+        self
     }
 }
 
@@ -1857,6 +1896,11 @@ fn install<H: Host>(
             }
             (false, source) => InstallOperation::Install(source),
         },
+        None if !options.allowed_behaviors.is_empty() => {
+            return Err(CommandError::input(
+                "--allow needs a Skill source. A restore installs the commits the lockfile names.",
+            ));
+        }
         None if direct => InstallOperation::DirectRestore,
         None => InstallOperation::Restore,
     };
@@ -1872,6 +1916,7 @@ fn install<H: Host>(
         scope,
         targets: options.targets,
         mode: options.mode,
+        allowed_behaviors: options.allowed_behaviors,
     })?;
     let mut lines = Vec::new();
     for skill in &installed {
@@ -1898,6 +1943,7 @@ fn install_listed<H: Host>(
         scope: options.scope,
         targets: options.targets.clone(),
         mode: options.mode,
+        allowed_behaviors: options.allowed_behaviors.clone(),
     };
     // A Repository the registry does not list resolves through GitHub, so its
     // Skills install in direct mode from the start.
@@ -1984,7 +2030,11 @@ fn gate_behaviors<H: Host>(
     allowed: &[String],
     platform: CommandPlatform,
 ) -> Result<(), CommandError> {
-    let held = run::held_behaviors(skill, allowed);
+    if !matches!(skill.origin, SkillOrigin::Remote { .. }) {
+        // A local or bundled Skill already sits on the user's disk.
+        return Ok(());
+    }
+    let held = run::held_behaviors(&skill.behaviors, allowed, &[]);
     if held.is_empty() {
         return Ok(());
     }
@@ -2020,6 +2070,84 @@ fn gate_behaviors<H: Host>(
 
 /// List the Skills a multi-skill ref names. An empty listing is a failure:
 /// the caller asked for Skills and got none to act on.
+/// What a held install or update would have written.
+#[derive(Clone, Copy)]
+enum BehaviorChange {
+    Install,
+    Update,
+}
+
+/// Stop an install or update until the user approves every ask behavior it adds.
+///
+/// The refusal names the --allow ids, since the caller already holds its own command.
+fn gate_new_behaviors(
+    confirm: impl FnOnce(&[&skilld_core::Behavior]) -> Result<BehaviorDecision, CommandError>,
+    skill: &str,
+    change: BehaviorChange,
+    behaviors: &[skilld_core::Behavior],
+    approved_before: &[skilld_core::Behavior],
+    allowed: &[String],
+) -> Result<(), CommandError> {
+    let held = run::held_behaviors(behaviors, allowed, approved_before);
+    if held.is_empty() {
+        return Ok(());
+    }
+    match confirm(&held)? {
+        BehaviorDecision::Approved => Ok(()),
+        BehaviorDecision::Declined => Err(CommandError::operation(
+            "BEHAVIOR_DECLINED",
+            "You declined the Skill behaviors. skilld changed nothing.",
+        )),
+        BehaviorDecision::Unavailable => {
+            let ids = allowed
+                .iter()
+                .map(String::as_str)
+                .chain(held.iter().map(|behavior| behavior.id))
+                .collect::<Vec<_>>()
+                .join(",");
+            let behaviors = held
+                .iter()
+                .map(|behavior| run::describe_behavior(behavior))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let opening = match change {
+                BehaviorChange::Install => {
+                    format!("The Skill {skill} needs the user's approval before it installs.")
+                }
+                BehaviorChange::Update => format!(
+                    "The update of Skill {skill} adds behaviors that need the user's approval."
+                ),
+            };
+            Err(CommandError::operation(
+                "BEHAVIOR_CONFIRMATION_REQUIRED",
+                format!(
+                    "{opening} skilld changed nothing. Behaviors: {behaviors}. {} Show these behaviors to the user. If the user approves, run the same command again with --allow {ids}",
+                    run::BEHAVIOR_CAVEAT,
+                ),
+            ))
+        }
+    }
+}
+
+/// Stop an update whose new version adds an ask behavior the installed copy lacks.
+fn gate_update_behaviors<H: Host>(
+    host: &H,
+    name: &str,
+    installed: &Path,
+    files: &[skilld_core::PreparedFile],
+    allowed: &[String],
+) -> Result<(), CommandError> {
+    let (_, installed_files) = run::read_local(installed)?;
+    gate_new_behaviors(
+        |held| host.confirm_behaviors(name, held),
+        name,
+        BehaviorChange::Update,
+        &skilld_core::detect_behaviors(files),
+        &skilld_core::detect_behaviors(&installed_files),
+        allowed,
+    )
+}
+
 fn list_skills<H: Host>(host: &H, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
     let listing = host.list_skills(reference)?;
     if listing.items.is_empty() {
@@ -2488,6 +2616,7 @@ impl LocalHost {
         scope: InstallScope,
         targets: &[TargetInstall],
         known: &[ResolvedTarget],
+        allowed: &[String],
     ) -> Result<InstalledSkill, CommandError> {
         let selector = skilld_core::RemoteSelector::parse(source).map_err(CommandError::remote)?;
         let prepared = self
@@ -2499,6 +2628,16 @@ impl LocalHost {
             &prepared.locked_source,
         )?;
         let staged = materialize_remote(&prepared.files)?;
+        let staged_name =
+            skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
+        gate_new_behaviors(
+            |held| self.confirm_behaviors(staged_name.as_str(), held),
+            staged_name.as_str(),
+            BehaviorChange::Install,
+            &skilld_core::detect_behaviors(&prepared.files),
+            &[],
+            allowed,
+        )?;
         let name = self
             .store(scope)
             .install_from_with_status(
@@ -2872,6 +3011,7 @@ impl Host for LocalHost {
             scope,
             targets: vec![],
             mode: None,
+            allowed_behaviors: Vec::new(),
         })?
         .into_iter()
         .next()
@@ -2890,10 +3030,24 @@ impl Host for LocalHost {
         let (targets, known) = self.select_installs(&request)?;
         match source {
             InstallSource::Remote(source) => self
-                .install_remote(&source, false, request.scope, &targets, &known)
+                .install_remote(
+                    &source,
+                    false,
+                    request.scope,
+                    &targets,
+                    &known,
+                    &request.allowed_behaviors,
+                )
                 .map(|skill| vec![skill]),
             InstallSource::DirectRemote(source) => self
-                .install_remote(&source, true, request.scope, &targets, &known)
+                .install_remote(
+                    &source,
+                    true,
+                    request.scope,
+                    &targets,
+                    &known,
+                    &request.allowed_behaviors,
+                )
                 .map(|skill| vec![skill]),
             source => {
                 let (source, locked_source) = self.resolve_source(source)?;
@@ -3099,6 +3253,7 @@ impl Host for LocalHost {
         &self,
         requested: Option<&str>,
         scope: InstallScope,
+        allowed: &[String],
     ) -> Result<Vec<Line>, CommandError> {
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
@@ -3229,6 +3384,13 @@ impl Host for LocalHost {
                     format!("the updated Skill name changed from {}", pending.name),
                 ));
             }
+            gate_update_behaviors(
+                self,
+                &pending.name,
+                &pending.view.canonical_path,
+                &prepared.files,
+                allowed,
+            )?;
             let targets = pending
                 .view
                 .skill
@@ -3284,7 +3446,8 @@ impl Host for LocalHost {
         let scope = InstallScope::Project;
         let known = self.known_targets(scope)?;
         let store = self.store(scope);
-        apply_update_selection(self, items, store, known)
+        // The terminal update screen has no --allow. A held behavior stops it.
+        apply_update_selection(self, items, store, known, &[])
     }
 
     fn update_check(&self, requested: Option<&str>) -> Result<UpdatePlanV1, CommandError> {
@@ -3649,6 +3812,7 @@ fn apply_update_selection(
     items: &[UpdatePlanItem],
     store: LocalStore,
     known: Vec<ResolvedTarget>,
+    allowed: &[String],
 ) -> Result<Vec<Line>, CommandError> {
     let provider = host.remote_provider()?;
     let mut pending = Vec::new();
@@ -3786,6 +3950,13 @@ fn apply_update_selection(
                 format!("the updated Skill name changed from {}", pending.name),
             ));
         }
+        gate_update_behaviors(
+            host,
+            &pending.name,
+            &pending.view.canonical_path,
+            &prepared.files,
+            allowed,
+        )?;
         let targets = pending
             .view
             .skill

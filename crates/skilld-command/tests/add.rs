@@ -174,3 +174,118 @@ fn add_installs_every_skill_the_repository_ref_names() {
         );
     }
 }
+
+/// Lists the same two Skills, but `nuxt` tells the Agent to run `sudo`.
+struct PrivilegedNuxtRemote;
+
+impl RemoteProvider for PrivilegedNuxtRemote {
+    fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
+        ListingRemote.list_skills(reference)
+    }
+
+    fn search(&self, query: &str, limit: u8) -> Result<SearchResponse, RemoteError> {
+        ListingRemote.search(query, limit)
+    }
+
+    fn prepare(
+        &self,
+        selector: &RemoteSelector,
+        direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        let mut prepared = ListingRemote.prepare(selector, direct)?;
+        let file = &mut prepared.files[0];
+        if String::from_utf8_lossy(&file.bytes).contains("name: nuxt") {
+            file.bytes
+                .extend_from_slice(b"\n```sh\nsudo nuxi upgrade\n```\n");
+            let digest = installed_digest(file);
+            prepared.source_status = SourceStatus::Unverified {
+                content_sha256: digest.clone(),
+                installed_sha256: digest,
+            };
+        }
+        Ok(prepared)
+    }
+
+    fn prepare_exact(
+        &self,
+        selector: &RemoteSelector,
+        expected_commit: &CommitSha,
+        direct: bool,
+    ) -> Result<PreparedRemoteSkill, RemoteError> {
+        ListingRemote.prepare_exact(selector, expected_commit, direct)
+    }
+
+    fn source_state(
+        &self,
+        selector: &RemoteSelector,
+        artifact_id: &str,
+        commit_sha: &str,
+    ) -> Result<RemoteSourceState, RemoteError> {
+        ListingRemote.source_state(selector, artifact_id, commit_sha)
+    }
+
+    fn latest_commit(
+        &self,
+        selector: &RemoteSelector,
+        direct: bool,
+    ) -> Result<RemoteLatestCommit, RemoteError> {
+        ListingRemote.latest_commit(selector, direct)
+    }
+
+    fn compare_updates(
+        &self,
+        comparisons: &[RemoteUpdateComparison],
+    ) -> Result<Vec<RemoteUpdateResult>, RemoteError> {
+        ListingRemote.compare_updates(comparisons)
+    }
+}
+
+fn add_with(host: &LocalHost, args: &[&str]) -> (u8, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run_with_output(
+        args,
+        host,
+        OutputContext::Plain {
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    (
+        result.exit_code,
+        String::from_utf8(stdout).unwrap() + &String::from_utf8(stderr).unwrap(),
+    )
+}
+
+#[test]
+fn add_holds_back_only_the_skill_with_an_unapproved_behavior() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host = LocalHost::new(project.clone(), temporary.path().join("global"))
+        .with_detection_environment(DetectionEnvironment::new(["CLAUDE_CODE".to_owned()]))
+        .with_remote_provider(Arc::new(PrivilegedNuxtRemote));
+
+    let (exit, output) = add_with(&host, &["skilld", "add", "vuejs/core"]);
+
+    assert_ne!(exit, 0, "{output}");
+    assert!(
+        output.contains("skilld installed 1 of 2 Skills"),
+        "{output}"
+    );
+    assert!(
+        output.contains("nuxt: BEHAVIOR_CONFIRMATION_REQUIRED:"),
+        "{output}"
+    );
+    assert!(output.contains("--allow privilege"), "{output}");
+    assert_eq!(host.list(InstallScope::Project).unwrap(), ["vue"]);
+
+    let (exit, output) = add_with(
+        &host,
+        &["skilld", "add", "vuejs/core", "--allow", "privilege"],
+    );
+
+    assert_eq!(exit, 0, "{output}");
+    assert_eq!(host.list(InstallScope::Project).unwrap(), ["nuxt", "vue"]);
+}

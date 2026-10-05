@@ -250,6 +250,7 @@ fn install_project(host: &LocalHost, selector: &str) {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
 }
@@ -260,6 +261,7 @@ fn install_global(host: &LocalHost, selector: &str) {
         scope: InstallScope::Global,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
 }
@@ -270,6 +272,7 @@ fn install_direct_project(host: &LocalHost, selector: &str) {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
 }
@@ -893,6 +896,7 @@ fn outdated_gives_the_direct_recovery_for_unverified_skills() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     let mut stdout = Vec::new();
@@ -928,6 +932,7 @@ fn outdated_reports_the_bundled_skill_by_its_source() {
         scope: InstallScope::Global,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     let mut stdout = Vec::new();

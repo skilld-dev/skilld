@@ -200,6 +200,8 @@ pub struct InstallRequest {
     pub scope: InstallScope,
     pub targets: Vec<AgentTargetId>,
     pub mode: Option<InstallMode>,
+    /// Behavior ids the user approved for this install.
+    pub allowed_behaviors: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

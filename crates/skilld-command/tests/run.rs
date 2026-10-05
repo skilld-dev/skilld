@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use sha2::{Digest, Sha256};
+
 use skilld_command::{
     BundledSkillProvider, CommandError, CommandPlatform, FileContent, FileKind, Host, LocalHost,
     OutputContext, PreparedRemoteSkill, RemoteLatestCommit, RemoteProvider, RemoteSourceState,
@@ -238,6 +240,8 @@ impl StubRemote {
     }
 
     fn prepared(&self, commit_sha: String) -> PreparedRemoteSkill {
+        // A real digest, so an install can verify what it wrote.
+        let digest = installed_digest(&self.files);
         PreparedRemoteSkill {
             files: self.files.clone(),
             locked_source: LockedSource::Remote {
@@ -248,20 +252,35 @@ impl StubRemote {
             source_status: if self.verified {
                 SourceStatus::Verified {
                     artifact_id: "artifact".to_owned(),
-                    content_sha256: "b".repeat(64),
-                    installed_sha256: "c".repeat(64),
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
                     attestation_key_id: "key".to_owned(),
                 }
             } else {
                 SourceStatus::Unverified {
-                    content_sha256: "b".repeat(64),
-                    installed_sha256: "c".repeat(64),
+                    content_sha256: digest.clone(),
+                    installed_sha256: digest,
                 }
             },
             // Only a delivery names a page. A direct read never does.
             page_url: self.verified.then(|| self.page_url.clone()).flatten(),
         }
     }
+}
+
+fn installed_digest(files: &[PreparedFile]) -> String {
+    let mut hasher = Sha256::new();
+    for file in files {
+        hasher.update((file.path.len() as u64).to_be_bytes());
+        hasher.update(file.path.as_bytes());
+        hasher.update((file.bytes.len() as u64).to_be_bytes());
+        hasher.update(&file.bytes);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn file(path: &str, mode: u32, bytes: &[u8]) -> PreparedFile {
@@ -2024,4 +2043,83 @@ fn an_approved_behavior_asks_nobody() {
 
     assert_eq!(exit, 0, "{stderr}");
     assert_eq!(confirmer.asked.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_remote_install_stops_before_an_unapproved_behavior_and_writes_nothing() {
+    let fixture = remote_fixture(remote_code_files());
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "install", "vuejs/core/vue", "--agent", "codex"]),
+    );
+
+    assert_eq!((exit, stdout.as_str()), (1, ""));
+    assert!(
+        stderr.starts_with("BEHAVIOR_CONFIRMATION_REQUIRED:"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Runs code downloaded from the network: SKILL.md:7"));
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("run the same command again with --allow remote-code")
+    );
+    assert!(
+        tree(&fixture.project).is_empty(),
+        "{:?}",
+        tree(&fixture.project)
+    );
+}
+
+#[test]
+fn an_approved_remote_install_writes_the_skill() {
+    let fixture = remote_fixture(remote_code_files());
+
+    let (exit, _, stderr) = run_cli(
+        &fixture.host,
+        run_args(&[
+            "skilld",
+            "install",
+            "vuejs/core/vue",
+            "--agent",
+            "codex",
+            "--allow",
+            "remote-code",
+        ]),
+    );
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert_eq!(
+        fs::read(fixture.project.join(".skills/vue/SKILL.md")).unwrap(),
+        REMOTE_CODE_INSTRUCTIONS
+    );
+}
+
+#[test]
+fn a_person_who_declines_an_install_gets_nothing_written() {
+    let (fixture, confirmer) = confirming_fixture(skilld_command::BehaviorDecision::Declined);
+
+    let (exit, _, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "install", "vuejs/core/vue", "--agent", "codex"]),
+    );
+
+    assert_eq!(exit, 1);
+    assert!(stderr.starts_with("BEHAVIOR_DECLINED:"), "{stderr}");
+    assert_eq!(confirmer.asked.load(Ordering::SeqCst), 1);
+    assert!(tree(&fixture.project).is_empty());
+}
+
+#[test]
+fn a_restore_takes_no_allow_ids() {
+    let fixture = remote_fixture(remote_code_files());
+
+    let (exit, _, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "install", "--allow", "remote-code"]),
+    );
+
+    assert_eq!(exit, 2);
+    assert!(stderr.contains("--allow needs a Skill source"), "{stderr}");
 }
