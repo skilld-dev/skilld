@@ -10,6 +10,7 @@ Every public export, command, error, route, and document uses these terms.
 | --- | --- | --- | --- | --- |
 | Skill | Agent Skills specification | external standard | Agent, skilld CLI, Harness | Skill |
 | transient Skill | `skilld run` | published command | Agent, developer | transient Skill |
+| fork | `skills/skilld` | Agent workflow | Agent, developer | fork |
 | skilld-maintained Skill | `skills/*` | published asset | Agent, Harness | skilld-maintained Skill |
 | skilld CLI | `skilld` | published CLI | developer, CI | skilld CLI |
 | Harness | `skilld-harness` | published package | application, CI | Harness |
@@ -183,6 +184,16 @@ The digest reports changes in watched Repositories.
 **Never:** ephemeral skill, temporary install, one-off install, Skill run.
 
 **Casing:** `transient Skill` in prose, `TransientSkill` in Rust.
+
+### fork
+
+**Is:** copying one Skill at one source commit into editable local files, with author credit and licence preserved.
+
+**Use for:** a user's request to own and adapt a Skill, followed by a local Skill install.
+
+**Never:** transient Skill, remote install, GitHub repository fork unless explicitly requested.
+
+**Casing:** `fork` in prose. It is an Agent workflow, not a CLI command.
 
 ### skilld CLI
 
