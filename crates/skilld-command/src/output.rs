@@ -5,7 +5,10 @@ use skilld_ui::text::{grouped_number, is_unsafe_terminal, sanitize, width, wrap}
 use skilld_ui::{Role, paint};
 
 use crate::provenance::{RemoteProvenance, source_status_caution};
-use crate::run::{FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill};
+use crate::run::{
+    BEHAVIOR_CAVEAT, FileContent, PulledFile, RunOutcome, SkillOrigin, TransientSkill,
+    describe_behavior,
+};
 use crate::{CommandError, CommandErrorKind};
 
 const JSON_SCHEMA_VERSION: u8 = 1;
@@ -664,6 +667,7 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     out.push_str(source_status_caution(skill.source_status));
     out.push_str(&read_it_first(&skill.origin, color));
     out.push_str(&skill_page_field(&skill.origin, color));
+    out.push_str(&render_behaviors(skill, color));
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
@@ -709,6 +713,25 @@ pub(crate) fn render_external_references(
         }
     }
     out.push_str("Install extra Skills only when the user asks to keep them.\n\n");
+    out
+}
+
+/// Name every behavior the Skill files matched, then say what the match cannot show.
+fn render_behaviors(skill: &TransientSkill, color: bool) -> String {
+    let mut out = String::new();
+    if skill.behaviors.is_empty() {
+        out.push_str(&field("Skill behaviors", "no rule matched", color));
+    } else {
+        out.push_str(&format!(
+            "{}:\n",
+            paint("Skill behaviors", Role::Dim, color)
+        ));
+        for behavior in &skill.behaviors {
+            out.push_str(&format!("  {}\n", sanitize(&describe_behavior(behavior))));
+        }
+    }
+    out.push_str(BEHAVIOR_CAVEAT);
+    out.push('\n');
     out
 }
 
@@ -882,6 +905,21 @@ fn read_argv(origin: &SkillOrigin, revision: Option<&str>, path: &str, json: boo
     if json {
         argv.push("--json".to_owned());
     }
+    argv
+}
+
+/// The run that loads this exact Skill with these behaviors approved.
+pub(crate) fn allow_argv(origin: &SkillOrigin, ids: &[&str]) -> Vec<String> {
+    let mut argv = vec![
+        "skilld".to_owned(),
+        "run".to_owned(),
+        source_argument(origin),
+    ];
+    if matches!(origin, SkillOrigin::Remote { direct: true, .. }) {
+        argv.push("--direct".to_owned());
+    }
+    argv.push("--allow".to_owned());
+    argv.push(ids.join(","));
     argv
 }
 
@@ -1076,6 +1114,8 @@ enum JsonRunData {
         instructions: String,
         external_references: Vec<crate::ExternalReference>,
         files: Vec<JsonSupportingFile>,
+        behaviors: Vec<JsonBehavior>,
+        behavior_caveat: &'static str,
         install_argv: JsonInstallArgv,
     },
     Files {
@@ -1096,6 +1136,22 @@ enum JsonRunData {
         total: usize,
         add_argv: Vec<String>,
     },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonBehavior {
+    id: &'static str,
+    tier: &'static str,
+    label: &'static str,
+    locations: Vec<JsonBehaviorLocation>,
+    total: usize,
+}
+
+#[derive(Serialize)]
+struct JsonBehaviorLocation {
+    path: String,
+    line: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -1139,6 +1195,25 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
                     .then(|| read_argv(&skill.origin, skill.revision.as_deref(), &file.path, true)),
             })
             .collect(),
+        behaviors: skill
+            .behaviors
+            .iter()
+            .map(|behavior| JsonBehavior {
+                id: behavior.id,
+                tier: behavior.tier.as_str(),
+                label: behavior.label,
+                locations: behavior
+                    .locations
+                    .iter()
+                    .map(|location| JsonBehaviorLocation {
+                        path: location.path.clone(),
+                        line: location.line,
+                    })
+                    .collect(),
+                total: behavior.total,
+            })
+            .collect(),
+        behavior_caveat: BEHAVIOR_CAVEAT,
         install_argv: JsonInstallArgv {
             project: (!matches!(skill.origin, SkillOrigin::Bundled))
                 .then(|| install_argv(&skill.origin, false)),

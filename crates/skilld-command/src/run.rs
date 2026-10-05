@@ -11,7 +11,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use skilld_core::{PreparedFile, SkillListing};
+use skilld_core::{Behavior, BehaviorTier, PreparedFile, SkillListing};
 use skilld_ui::text::is_unsafe_terminal;
 
 use crate::CommandError;
@@ -88,7 +88,53 @@ pub struct TransientSkill {
     /// The exact remote Git commit. Local and bundled Skills have no revision.
     pub revision: Option<String>,
     pub files: Vec<SupportingFile>,
+    /// What the Skill files ask an Agent to do, by fixed text patterns.
+    pub behaviors: Vec<Behavior>,
 }
+
+/// What the person said about the behaviors a remote Skill needs approved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BehaviorDecision {
+    Approved,
+    Declined,
+    /// Nobody can answer here: an Agent, a pipe, or CI runs skilld.
+    Unavailable,
+}
+
+/// The behaviors that stop a run until the user approves them.
+///
+/// Only a remote Skill needs approval. A local or bundled Skill already sits
+/// on the user's disk.
+pub fn held_behaviors<'a>(skill: &'a TransientSkill, allowed: &[String]) -> Vec<&'a Behavior> {
+    if !matches!(skill.origin, SkillOrigin::Remote { .. }) {
+        return Vec::new();
+    }
+    skill
+        .behaviors
+        .iter()
+        .filter(|behavior| {
+            behavior.tier == BehaviorTier::Ask && !allowed.iter().any(|id| id == behavior.id)
+        })
+        .collect()
+}
+
+/// One behavior as a line: its label, then where it appears.
+pub fn describe_behavior(behavior: &Behavior) -> String {
+    let mut places = behavior
+        .locations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let hidden = behavior.total.saturating_sub(behavior.locations.len());
+    if hidden > 0 {
+        places.push(format!("{hidden} more"));
+    }
+    format!("{}: {}", behavior.label, places.join(", "))
+}
+
+/// What a behavior list can and cannot show. Every behavior list ends with it.
+pub const BEHAVIOR_CAVEAT: &str =
+    "skilld matched fixed text patterns. Patterns miss obfuscated code.";
 
 /// One supporting file the Agent asked for.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -70,6 +70,29 @@ Use a CLI containing `sync` to read lockfiles with recorded requirements.
 Older CLIs reject those fields.
 Keep legacy v2 stores separate; sync does not migrate their lockfiles.
 
+## Keep the skilld-maintained Skill current
+
+Declare `skilld` alongside the Skills that its CLI installs.
+Use `github:skilld-dev/skilld/skills/skilld#commit:SHA` with the exact repository commit.
+Replace `SHA` with the full commit hash.
+Use the same declaration and store for later refreshes.
+A CLI upgrade does not update installed Skill instructions.
+
+Before migration, inspect existing Agent targets and their source directories.
+If an unmanaged target differs, preserve it in a backup before replacing it.
+Do not use `--adopt` to overwrite different bytes or directories.
+Keep the legacy lockfile and its source files intact.
+
+## Check before Agent startup
+
+Run `skilld sync --check --json` before loading declared Skill instructions.
+Pass the same manifest, scope, and `SKILLD_DATA_DIR` used during installation.
+Only exit code `0` permits startup.
+Exit code `1` means the declaration differs from its installation.
+Other failures also block startup. Report the error instead of loading stale instructions.
+If the declaration differs, run sync explicitly before starting the Agent again.
+The startup check never installs Skills or fetches remote bytes.
+
 ## Account login from an Agent
 
 Run `skilld auth login --no-browser --plain`.

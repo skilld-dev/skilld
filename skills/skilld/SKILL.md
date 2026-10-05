@@ -15,7 +15,7 @@ If the user asks to fork a Skill, copy its source before installing the local co
 Use `--json` with `search`, `run`, and `update --check`.
 Use `--json` with `view` of a registry ref, and with every registry and account command below.
 Their `data` is the skilld.dev answer. A command whose answer has no body returns `data: null`.
-Use `--json` with `sync --check` for declared Skills.
+Use `--json` with `sync` and `sync --check` for declared Skills.
 The remaining commands do not support JSON output.
 Use `--plain` when another command needs stable text.
 
@@ -38,6 +38,8 @@ Run `skilld sync` to install the full declaration in one transaction.
 Use `--global` for global Agent targets.
 Use `--adopt` only when migrating identical unmanaged symlinks.
 Changed unmanaged targets block sync.
+If the project declares this Skill, use its declaration to refresh it.
+Do not install a second copy through another store.
 Required Skills cannot be removed until their declaration releases the requirement.
 
 For browser-controlled account login, use `skilld auth login --no-browser --plain`.
@@ -96,6 +98,17 @@ Check `data.files[].readable` before you ask for a file.
 A file with `readable: false` never prints.
 Its `kind` is `executable` or `binary`.
 Tell the user the Skill needs an install to use that file.
+
+Read `data.behaviors` before you follow the Skill.
+Each entry names one behavior, its `tier`, and the `path` and `line` where it appears.
+Tell the user about every behavior before you act on it.
+An empty list proves nothing. Patterns miss obfuscated code.
+
+A remote run stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the Skill has an `ask` behavior.
+skilld loaded nothing. Show the user every behavior in `error.message`.
+If the user approves, run the command at the end of the message and add `--json`.
+Never add `--allow` without the user's approval in this session.
+If the user declines, stop and load nothing.
 
 Report which Skill you ran and that skilld wrote no Skill files.
 Read `data.sourceStatus`, `data.origin`, and `data.revision`.

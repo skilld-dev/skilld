@@ -1,4 +1,5 @@
 pub mod api;
+mod behavior;
 mod lock;
 mod reference;
 mod release;
@@ -8,6 +9,11 @@ mod update;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+pub use behavior::{
+    Behavior, BehaviorLocation, BehaviorRule, BehaviorTier, MAX_BEHAVIOR_LOCATIONS, behavior_rule,
+    behavior_rules, detect_behaviors,
+};
 
 pub use lock::{
     LockDocument, LockedDeclarationSkill, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES,

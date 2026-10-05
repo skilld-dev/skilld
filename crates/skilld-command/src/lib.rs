@@ -42,7 +42,8 @@ pub use remote::{
     TokenProvider,
 };
 pub use run::{
-    FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin, SupportingFile, TransientSkill,
+    BEHAVIOR_CAVEAT, BehaviorDecision, FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin,
+    SupportingFile, TransientSkill, describe_behavior, held_behaviors,
 };
 use skilld_core::{
     AGENT_TARGETS, AgentTargetId, CommitHistory, CommitSha, DomainError, GlobalTargetPath,
@@ -196,6 +197,13 @@ enum Command {
             long_help = "Fetch a public GitHub Repository without going through skilld.dev.\nGive a github: source or a GitHub tree URL.\nA direct run carries the unverified source status."
         )]
         direct: bool,
+        #[arg(
+            long = "allow",
+            value_name = "BEHAVIORS",
+            value_delimiter = ',',
+            long_help = "Approve Skill behaviors that need the user's approval. Separate ids with commas.\nA remote run stops before it loads a Skill with an unapproved behavior.\nThe stopped run names the behaviors and the exact command to approve them.\nOnly give this flag after the user approves those behaviors."
+        )]
+        allow: Vec<String>,
     },
     /// List installed Skills.
     List {
@@ -573,6 +581,17 @@ pub trait Host {
         Err(CommandError::unsupported_host(
             "Skill listings are unavailable on this host",
         ))
+    }
+
+    /// Ask the person to approve the behaviors a remote run holds.
+    ///
+    /// A host that cannot ask answers `Unavailable`, and the run stops.
+    fn confirm_behaviors(
+        &self,
+        _skill: &str,
+        _behaviors: &[&skilld_core::Behavior],
+    ) -> Result<BehaviorDecision, CommandError> {
+        Ok(BehaviorDecision::Unavailable)
     }
 
     /// Choose which listed Skills to install.
@@ -1437,7 +1456,9 @@ fn dispatch<H: Host>(
             files,
             revision,
             direct,
+            allow,
         } => {
+            let allow = approved_behaviors(allow)?;
             let reference = SkillRef::parse(&source).map_err(CommandError::remote)?;
             let source = match reference {
                 SkillRef::Skill(source) => source,
@@ -1445,9 +1466,9 @@ fn dispatch<H: Host>(
                     if direct {
                         return Err(CommandError::direct_multi_skill_ref(&reference));
                     }
-                    if !files.is_empty() || revision.is_some() {
+                    if !files.is_empty() || revision.is_some() || !allow.is_empty() {
                         return Err(CommandError::input(format!(
-                            "--file and --revision need one Skill source. {reference} names several Skills. Run skilld run {reference} to list them."
+                            "--file, --revision, and --allow need one Skill source. {reference} names several Skills. Run skilld run {reference} to list them."
                         )));
                     }
                     return list_skills(host, &reference)
@@ -1489,11 +1510,11 @@ fn dispatch<H: Host>(
                     "--revision requires a remote Skill source",
                 ));
             }
-            Ok(CommandOutput::Run(host.run_skill(
-                source,
-                &files,
-                revision.as_ref(),
-            )?))
+            let outcome = host.run_skill(source, &files, revision.as_ref())?;
+            if let RunOutcome::Load(skill) = &outcome {
+                gate_behaviors(host, skill, &allow, platform)?;
+            }
+            Ok(CommandOutput::Run(outcome))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
             CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
@@ -1932,6 +1953,71 @@ fn delivery_failed(error: &CommandError) -> bool {
     )
 }
 
+/// Parse the --allow ids. Only a behavior that needs approval is valid, so a
+/// typo never reads as approval.
+fn approved_behaviors(ids: Vec<String>) -> Result<Vec<String>, CommandError> {
+    for id in &ids {
+        if skilld_core::behavior_rule(id)
+            .is_none_or(|rule| rule.tier != skilld_core::BehaviorTier::Ask)
+        {
+            let known = skilld_core::behavior_rules()
+                .iter()
+                .filter(|rule| rule.tier == skilld_core::BehaviorTier::Ask)
+                .map(|rule| rule.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(CommandError::usage(
+                "INVALID_ARGUMENT",
+                format!(
+                    "--allow names no behavior that needs approval: {id}. Use one of: {known}."
+                ),
+            ));
+        }
+    }
+    Ok(ids)
+}
+
+/// Stop a remote run until the user approves every behavior it holds.
+fn gate_behaviors<H: Host>(
+    host: &H,
+    skill: &TransientSkill,
+    allowed: &[String],
+    platform: CommandPlatform,
+) -> Result<(), CommandError> {
+    let held = run::held_behaviors(skill, allowed);
+    if held.is_empty() {
+        return Ok(());
+    }
+    match host.confirm_behaviors(&skill.name, &held)? {
+        BehaviorDecision::Approved => Ok(()),
+        BehaviorDecision::Declined => Err(CommandError::operation(
+            "BEHAVIOR_DECLINED",
+            "You declined the Skill behaviors. skilld loaded nothing.",
+        )),
+        BehaviorDecision::Unavailable => {
+            let ids = allowed
+                .iter()
+                .map(String::as_str)
+                .chain(held.iter().map(|behavior| behavior.id))
+                .collect::<Vec<_>>();
+            let command = output::shell_command(&output::allow_argv(&skill.origin, &ids), platform);
+            let behaviors = held
+                .iter()
+                .map(|behavior| run::describe_behavior(behavior))
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(CommandError::operation(
+                "BEHAVIOR_CONFIRMATION_REQUIRED",
+                format!(
+                    "The Skill {} needs the user's approval before it loads. skilld loaded nothing. Behaviors: {behaviors}. {} Show these behaviors to the user. If the user approves, run: {command}",
+                    skill.name,
+                    run::BEHAVIOR_CAVEAT,
+                ),
+            ))
+        }
+    }
+}
+
 /// List the Skills a multi-skill ref names. An empty listing is a failure:
 /// the caller asked for Skills and got none to act on.
 fn list_skills<H: Host>(host: &H, reference: &MultiSkillRef) -> Result<SkillListing, CommandError> {
@@ -2115,6 +2201,17 @@ pub trait SkillChooser: Send + Sync {
     fn choose(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError>;
 }
 
+/// Ask a person whether a remote Skill may load with the behaviors it holds.
+///
+/// Only a terminal can ask. Every other context stops the run instead.
+pub trait BehaviorConfirmer: Send + Sync {
+    fn confirm(
+        &self,
+        skill: &str,
+        behaviors: &[&skilld_core::Behavior],
+    ) -> Result<BehaviorDecision, CommandError>;
+}
+
 /// The chooser that asks nothing and installs every listed Skill.
 pub struct EveryListedSkill;
 
@@ -2168,6 +2265,7 @@ pub struct LocalHost {
     account: Option<Arc<dyn AccountProvider>>,
     outdated_progress: Arc<dyn outdated::OutdatedProgress>,
     skill_chooser: Arc<dyn SkillChooser>,
+    behavior_confirmer: Option<Arc<dyn BehaviorConfirmer>>,
 }
 
 impl LocalHost {
@@ -2194,7 +2292,15 @@ impl LocalHost {
             account: None,
             outdated_progress: Arc::new(outdated::NoOutdatedProgress),
             skill_chooser: Arc::new(EveryListedSkill),
+            behavior_confirmer: None,
         }
+    }
+
+    /// Ask this confirmer before a remote run loads an unapproved behavior.
+    #[must_use]
+    pub fn with_behavior_confirmer(mut self, confirmer: Arc<dyn BehaviorConfirmer>) -> Self {
+        self.behavior_confirmer = Some(confirmer);
+        self
     }
 
     /// Ask this chooser which listed Skills `skilld add` installs.
@@ -2519,6 +2625,7 @@ impl LocalHost {
         Ok(RunOutcome::Load(Box::new(TransientSkill {
             instructions: run::read_instructions(&files)?,
             files: run::supporting_files(&files),
+            behaviors: skilld_core::detect_behaviors(&files),
             name,
             origin,
             source_status,
@@ -2549,6 +2656,7 @@ impl LocalHost {
         Ok(RunOutcome::Load(Box::new(TransientSkill {
             instructions: run::read_instructions(&files)?,
             files: run::supporting_files(&files),
+            behaviors: skilld_core::detect_behaviors(&files),
             name,
             origin,
             source_status: "local",
@@ -2584,6 +2692,7 @@ impl LocalHost {
         Ok(RunOutcome::Load(Box::new(TransientSkill {
             instructions: run::read_instructions(&files)?,
             files: run::supporting_files(&files),
+            behaviors: skilld_core::detect_behaviors(&files),
             name,
             origin,
             source_status: "local",
@@ -2842,6 +2951,18 @@ impl Host for LocalHost {
 
     fn choose_skills(&self, listing: &SkillListing) -> Result<Vec<ListedSkill>, CommandError> {
         self.skill_chooser.choose(listing)
+    }
+
+    fn confirm_behaviors(
+        &self,
+        skill: &str,
+        behaviors: &[&skilld_core::Behavior],
+    ) -> Result<BehaviorDecision, CommandError> {
+        self.behavior_confirmer
+            .as_ref()
+            .map_or(Ok(BehaviorDecision::Unavailable), |confirmer| {
+                confirmer.confirm(skill, behaviors)
+            })
     }
 
     fn view(&self, name: &str, scope: InstallScope) -> Result<SkillView, CommandError> {
@@ -4449,7 +4570,7 @@ mod tests {
         );
         assert_eq!(exit, 2);
         assert!(
-            stderr.contains("--file and --revision need one Skill source"),
+            stderr.contains("--file, --revision, and --allow need one Skill source"),
             "{stderr}"
         );
 
