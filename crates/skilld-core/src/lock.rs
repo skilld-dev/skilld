@@ -69,6 +69,8 @@ pub struct LockDocument {
     pub version: u8,
     pub transaction_id: String,
     pub skills: BTreeMap<String, LockedSkill>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub requirements: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 impl Default for LockDocument {
@@ -77,6 +79,7 @@ impl Default for LockDocument {
             version: 1,
             transaction_id: "initial".to_owned(),
             skills: BTreeMap::new(),
+            requirements: BTreeMap::new(),
         }
     }
 }

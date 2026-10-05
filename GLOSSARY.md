@@ -55,6 +55,8 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld view` | Skill details |
 | `skilld remove` | Skill removal |
 | `skilld update` | Skill update |
+| `skilld sync` | declared Skill sync |
+| `skilld sync --check --json` | declared Skill check |
 | `skilld update --check --json` | update relation check |
 | `skilld verify` | source verification |
 | `skilld outdated` | outdated Skill report |

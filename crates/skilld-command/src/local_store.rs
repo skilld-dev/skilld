@@ -66,6 +66,20 @@ pub struct PreparedStoreUpdate {
     pub expected_skill: LockedSkill,
 }
 
+#[derive(Clone, Debug)]
+pub struct PreparedStoreInstall {
+    pub source: PathBuf,
+    pub locked_source: LockedSource,
+    pub source_status: Option<SourceStatus>,
+    pub targets: Vec<TargetInstall>,
+}
+
+struct PreparedBatchSkill {
+    install: PreparedStoreInstall,
+    expected_transaction_id: String,
+    expected_skill: Option<LockedSkill>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SkillView {
     pub name: String,
@@ -83,6 +97,7 @@ pub enum StoreError {
     InvalidSource(String),
     InvalidTargetPath(PathBuf),
     NotFound(String),
+    RequiredSkill(String),
     StalePlan(String),
     Unsupported(String),
 }
@@ -97,6 +112,7 @@ impl StoreError {
             Self::InvalidSource(_) => "INVALID_SOURCE",
             Self::InvalidTargetPath(_) => "INVALID_TARGET",
             Self::NotFound(_) => "SKILL_NOT_FOUND",
+            Self::RequiredSkill(_) => "REQUIRED_SKILL",
             Self::StalePlan(_) => "PLAN_STALE",
             Self::Unsupported(_) => "UNSUPPORTED_HOST",
         }
@@ -112,6 +128,7 @@ impl fmt::Display for StoreError {
             | Self::InvalidLockfile(message)
             | Self::InvalidSource(message)
             | Self::NotFound(message)
+            | Self::RequiredSkill(message)
             | Self::StalePlan(message)
             | Self::Unsupported(message) => formatter.write_str(message),
             Self::InvalidTargetPath(path) => {
@@ -202,6 +219,50 @@ impl LocalStore {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn snapshot(&self, known_targets: &[ResolvedTarget]) -> Result<LockDocument, StoreError> {
+        if !self.root.exists() {
+            return Ok(LockDocument::default());
+        }
+        let _lock = self.lock_existing()?;
+        self.recover_locked(known_targets)?;
+        self.read_lock()
+    }
+
+    pub fn source_digest(&self, source: &Path) -> Result<String, StoreError> {
+        validate_skill_source(source)?;
+        hash_skill_tree(source)
+    }
+
+    pub fn apply_sync_batch(
+        &self,
+        installs: Vec<PreparedStoreInstall>,
+        snapshot: &LockDocument,
+        manifest: String,
+        requirements: BTreeMap<String, Vec<String>>,
+        adopt: bool,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<Vec<SkillName>, StoreError> {
+        let updates = installs
+            .into_iter()
+            .map(|install| {
+                let name = SkillName::from_source(&install.source)
+                    .map_err(|error| StoreError::InvalidSource(error.to_string()))?;
+                Ok(PreparedBatchSkill {
+                    install,
+                    expected_transaction_id: snapshot.transaction_id.clone(),
+                    expected_skill: snapshot.skills.get(name.as_str()).cloned(),
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        self.apply_batch(
+            updates,
+            Some((manifest, requirements)),
+            adopt,
+            known_targets,
+            &AllowTransaction,
+        )
     }
 
     pub fn list(&self, known_targets: &[ResolvedTarget]) -> Result<Vec<String>, StoreError> {
@@ -467,6 +528,30 @@ impl LocalStore {
         known_targets: &[ResolvedTarget],
         gate: &G,
     ) -> Result<Vec<SkillName>, StoreError> {
+        let updates = updates
+            .into_iter()
+            .map(|update| PreparedBatchSkill {
+                install: PreparedStoreInstall {
+                    source: update.source,
+                    locked_source: update.locked_source,
+                    source_status: update.source_status,
+                    targets: update.targets,
+                },
+                expected_transaction_id: update.expected_transaction_id,
+                expected_skill: Some(update.expected_skill),
+            })
+            .collect();
+        self.apply_batch(updates, None, false, known_targets, gate)
+    }
+
+    fn apply_batch<G: TransactionGate>(
+        &self,
+        updates: Vec<PreparedBatchSkill>,
+        requirements: Option<(String, BTreeMap<String, Vec<String>>)>,
+        adopt: bool,
+        known_targets: &[ResolvedTarget],
+        gate: &G,
+    ) -> Result<Vec<SkillName>, StoreError> {
         ensure_write_capability()?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -475,7 +560,7 @@ impl LocalStore {
         let mut names = BTreeSet::new();
         let mut validated = Vec::with_capacity(updates.len());
         for update in updates {
-            let source = absolute_normalized(&update.source).map_err(fs_error)?;
+            let source = absolute_normalized(&update.install.source).map_err(fs_error)?;
             validate_skill_source(&source)?;
             let digest = hash_skill_tree(&source)?;
             let source = resolve_path(&source).map_err(fs_error)?;
@@ -487,9 +572,13 @@ impl LocalStore {
                 )));
             }
             self.reject_overlap(&source)?;
-            let source_status = update.source_status.unwrap_or_else(|| SourceStatus::Local {
-                content_sha256: digest.clone(),
-            });
+            let source_status =
+                update
+                    .install
+                    .source_status
+                    .unwrap_or_else(|| SourceStatus::Local {
+                        content_sha256: digest.clone(),
+                    });
             if source_digest(&source_status) != digest {
                 return Err(StoreError::InvalidSource(
                     "the updated Skill does not match its source status".to_owned(),
@@ -499,9 +588,9 @@ impl LocalStore {
                 name,
                 source,
                 digest,
-                locked_source: update.locked_source,
+                locked_source: update.install.locked_source,
                 source_status,
-                targets: update.targets,
+                targets: update.install.targets,
                 expected_transaction_id: update.expected_transaction_id,
                 expected_skill: update.expected_skill,
             });
@@ -523,29 +612,23 @@ impl LocalStore {
         }
         let mut prepared = Vec::with_capacity(validated.len());
         for update in validated {
-            let Some(old_skill) = old_lock.skills.get(update.name.as_str()) else {
-                return Err(stale_update_plan());
-            };
-            if old_skill != &update.expected_skill {
+            let old_skill = old_lock.skills.get(update.name.as_str());
+            if old_skill != update.expected_skill.as_ref() {
                 return Err(stale_update_plan());
             }
-            self.verify_managed_state(&update.name, Some(old_skill), known_targets)?;
+            self.verify_managed_state(&update.name, old_skill, known_targets)?;
             let selected_targets = unique_target_installs(&update.targets);
-            self.validate_target_changes(
+            self.validate_target_changes_with_adoption(
                 &update.name,
-                Some(old_skill),
+                old_skill,
                 &selected_targets,
                 known_targets,
+                if adopt { Some(&update.digest) } else { None },
             )?;
             let canonical = self.root.join(update.name.as_str());
             prepared.push(BatchStoreUpdate {
                 canonical_had_existing: path_exists(&canonical)?,
-                changes: target_changes(
-                    &update.name,
-                    Some(old_skill),
-                    &selected_targets,
-                    known_targets,
-                )?,
+                changes: target_changes(&update.name, old_skill, &selected_targets, known_targets)?,
                 canonical,
                 update,
             });
@@ -623,6 +706,9 @@ impl LocalStore {
             gate.before_lock_commit(&self.lockfile_path())?;
             let mut new_lock = old_lock;
             new_lock.transaction_id.clone_from(&transaction);
+            if let Some((manifest, requirements)) = requirements {
+                new_lock.requirements.insert(manifest, requirements);
+            }
             for prepared in &prepared {
                 new_lock.skills.insert(
                     prepared.update.name.to_string(),
@@ -668,6 +754,18 @@ impl LocalStore {
         let _lock = self.lock_existing()?;
         self.recover_locked(known_targets)?;
         let old_lock = self.read_lock()?;
+        for requirements in old_lock.requirements.values() {
+            for (consumer, dependencies) in requirements {
+                if dependencies
+                    .iter()
+                    .any(|dependency| dependency == name.as_str())
+                {
+                    return Err(StoreError::RequiredSkill(format!(
+                        "{consumer} requires {name}"
+                    )));
+                }
+            }
+        }
         let old_skill = old_lock
             .skills
             .get(name.as_str())
@@ -751,6 +849,17 @@ impl LocalStore {
         targets: &[TargetInstall],
         known_targets: &[ResolvedTarget],
     ) -> Result<(), StoreError> {
+        self.validate_target_changes_with_adoption(name, old_skill, targets, known_targets, None)
+    }
+
+    fn validate_target_changes_with_adoption(
+        &self,
+        name: &SkillName,
+        old_skill: Option<&LockedSkill>,
+        targets: &[TargetInstall],
+        known_targets: &[ResolvedTarget],
+        adopt_digest: Option<&str>,
+    ) -> Result<(), StoreError> {
         let managed = old_skill
             .map(|skill| unique_locked_target_paths(name, &skill.targets, known_targets))
             .transpose()?
@@ -761,6 +870,23 @@ impl LocalStore {
         for install in targets {
             let destination = install.target.destination(name);
             if path_exists(&destination)? && !managed.contains(&destination) {
+                let adoptable = if let Some(digest) = adopt_digest {
+                    let metadata = fs::symlink_metadata(&destination).map_err(fs_error)?;
+                    metadata.file_type().is_symlink()
+                        && hash_skill_tree(&fs::canonicalize(&destination).map_err(fs_error)?)?
+                            == digest
+                } else {
+                    false
+                };
+                if adoptable {
+                    prepare_target_root(&install.target.root)?;
+                    if install.target.root.starts_with(&self.root)
+                        || self.root.starts_with(&install.target.root)
+                    {
+                        return Err(StoreError::InvalidTargetPath(install.target.root.clone()));
+                    }
+                    continue;
+                }
                 return Err(StoreError::Conflict(format!(
                     "Agent target already contains unmanaged Skill {name}: {}",
                     destination.display()
@@ -1083,7 +1209,7 @@ struct ValidatedStoreUpdate {
     source_status: SourceStatus,
     targets: Vec<TargetInstall>,
     expected_transaction_id: String,
-    expected_skill: LockedSkill,
+    expected_skill: Option<LockedSkill>,
 }
 
 #[derive(Clone, Debug)]
@@ -1415,7 +1541,7 @@ fn collect_files(
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), StoreError> {
+pub(crate) fn copy_tree(source: &Path, destination: &Path) -> Result<(), StoreError> {
     fs::create_dir(destination).map_err(fs_error)?;
     for entry in fs::read_dir(source).map_err(fs_error)? {
         let entry = entry.map_err(fs_error)?;

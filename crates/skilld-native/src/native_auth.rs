@@ -84,6 +84,7 @@ impl HttpClient for NativeAuthHttp {
 #[derive(Clone, Debug, Default)]
 struct NativeBrowser {
     origin: ServiceOrigin,
+    manual: bool,
 }
 
 impl BrowserLauncher for NativeBrowser {
@@ -96,6 +97,10 @@ impl BrowserLauncher for NativeBrowser {
                     BoundaryErrorKind::Failed
                 })
             })?;
+        if self.manual {
+            eprintln!("Open this authorization URL in your signed-in browser:\n{url}");
+            return Ok(());
+        }
         Command::new(launch.program)
             .args(launch.arguments)
             .status()
@@ -150,6 +155,7 @@ impl NativeAccount {
     pub fn with_origin(mut self, origin: ServiceOrigin) -> Self {
         self.browser = NativeBrowser {
             origin: origin.clone(),
+            manual: false,
         };
         self.origin = origin;
         self
@@ -240,6 +246,24 @@ impl AccountProvider for NativeAccount {
             ..LoginOptions::new(VERSION)
         };
         login(&self.dependencies(), &options)
+            .map(|_| ())
+            .map_err(command_auth_error)
+    }
+
+    fn login_without_browser(&self) -> Result<(), CommandError> {
+        let browser = NativeBrowser {
+            origin: self.origin.clone(),
+            manual: true,
+        };
+        let dependencies = AuthDependencies {
+            browser: &browser,
+            ..self.dependencies()
+        };
+        let options = LoginOptions {
+            device_label: gethostname::gethostname().into_string().ok(),
+            ..LoginOptions::new(VERSION)
+        };
+        login(&dependencies, &options)
             .map(|_| ())
             .map_err(command_auth_error)
     }
