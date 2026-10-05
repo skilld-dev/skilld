@@ -59,6 +59,26 @@ The `SKILL.md` frontmatter must contain only `name` and `description`.
 Use lowercase letters, numbers, and single hyphens in the name.
 Keep the name at 64 characters or fewer.
 
+## Cross-Agent portability
+
+Keep one source Skill for Claude Code, Codex, Gemini CLI, and other compatible Agents.
+Their discovery paths differ. Keep installation instructions outside the generated Skill.
+The [Agent Skills specification](https://agentskills.io/specification) defines the shared format.
+
+- Describe capabilities, such as reading files or running a command, instead of provider-specific tool names.
+- Ask for inputs explicitly. Do not require `$ARGUMENTS`, dynamic context injection, hooks, or a specific subagent API.
+- State the project root as the working directory for project commands.
+  Resolve bundled references and scripts from the Skill directory instead.
+- Name required runtimes, binaries, network access, and credentials beside the step that needs them.
+- If a required capability is unavailable, report the missing capability and stop that dependent step.
+  Never invent evidence or silently skip a required check.
+
+Check one matching task, one unrelated task, and one missing-input task.
+Use a fresh session for each Agent the user asks to support when those Agents are available.
+Record the Agent version, model, task, observed output, and any required permission.
+Separate format validation, discovery, activation, and task completion in the report.
+If an Agent is unavailable, report that path untested. Valid frontmatter alone does not prove portability.
+
 ## Quality checks
 
 - Describe when the Skill applies.
