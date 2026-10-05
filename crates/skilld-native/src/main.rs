@@ -22,6 +22,7 @@ use skilld_core::{
     InstallScope, InstallSource, ReleasePin, SearchResponse, SearchResult, SourceProvider,
     SourceRequest, SourceSelector, TrustedRootPin, VERSION,
 };
+use skilld_native::behavior_prompt::TtyBehaviorConfirmer;
 use skilld_native::select_ui::TtySkillChooser;
 use skilld_native::update_ui::{
     CommandInteractiveUpdateHost, require_interactive_tty, run_interactive_update,
@@ -143,6 +144,14 @@ fn main() -> ExitCode {
         host.with_skill_chooser(Arc::new(TtySkillChooser::new(!environment_present(
             "NO_COLOR",
         ))))
+    } else {
+        host
+    };
+    // Only a person at a terminal can approve Skill behaviors. An Agent, a
+    // pipe, or CI gets the stopped run and its --allow command instead.
+    let host = if asks_for_behavior_approval(&args) {
+        let spinner = status.stopper();
+        host.with_behavior_confirmer(Arc::new(TtyBehaviorConfirmer::new(move || spinner.stop())))
     } else {
         host
     };
@@ -515,6 +524,16 @@ fn asks_which_skills(args: &[std::ffi::OsString]) -> bool {
             .any(|arg| arg == "--all" || arg == "--json" || arg == "--plain")
         && std::io::stdin().is_terminal()
         && std::io::stdout().is_terminal()
+        && !active_agent_detected()
+        && !environment_enabled("CI")
+}
+
+/// Whether `skilld run` may ask a person to approve Skill behaviors.
+fn asks_for_behavior_approval(args: &[std::ffi::OsString]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "run")
+        && !args.iter().any(|arg| arg == "--json" || arg == "--plain")
+        && std::io::stdin().is_terminal()
+        && std::io::stderr().is_terminal()
         && !active_agent_detected()
         && !environment_enabled("CI")
 }

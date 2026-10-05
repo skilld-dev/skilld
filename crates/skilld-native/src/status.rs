@@ -153,6 +153,33 @@ impl StatusLine {
     }
 
     pub fn stop(&mut self) {
+        self.stopper().stop();
+    }
+
+    /// A handle that stops this spinner from elsewhere, such as a prompt
+    /// that needs the terminal line.
+    pub fn stopper(&self) -> StatusStop {
+        StatusStop {
+            shared: self.shared.clone(),
+        }
+    }
+
+    pub fn finish(mut self) {
+        self.stop();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StatusStop {
+    shared: Option<Arc<Mutex<StatusState>>>,
+}
+
+impl StatusStop {
+    /// Erase the spinner line and stop drawing it. A second call does nothing.
+    pub fn stop(&self) {
         let Some(shared) = &self.shared else {
             return;
         };
@@ -164,13 +191,6 @@ impl StatusLine {
             state.stopped = true;
             let _ = state.out.write_all(ERASE_LINE);
             let _ = state.out.flush();
-        }
-    }
-
-    pub fn finish(mut self) {
-        self.stop();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
         }
     }
 }

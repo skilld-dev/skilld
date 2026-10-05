@@ -155,6 +155,32 @@ Use the revision and file-read command from the initial output.
 skilld never prints executable or binary files.
 A Skill that must run its own script needs an install.
 
+### Skill behaviors
+
+Every run lists what the Skill files ask an Agent to do, with the file and line.
+skilld finds behaviors with the fixed text patterns in `contracts/skill-behaviors.json`.
+Patterns miss obfuscated code, so an empty list proves nothing.
+
+Five behaviors stop a remote run until the user approves them:
+
+| id | Skill behavior |
+| --- | --- |
+| `remote-code` | Runs code downloaded from the network |
+| `privilege` | Runs commands as root |
+| `credentials` | Reads credential files or tokens |
+| `destructive` | Deletes system or home directories |
+| `hidden-text` | Contains invisible characters |
+
+A terminal asks you directly.
+An Agent, a pipe, or CI gets `BEHAVIOR_CONFIRMATION_REQUIRED` and the exact approval command:
+
+```sh
+skilld run 'github:OWNER/REPOSITORY/SKILL#commit:COMMIT' --allow remote-code
+```
+
+The command pins the commit that skilld checked.
+A local or bundled Skill lists its behaviors and never stops.
+
 ## Install without Node.js
 
 macOS and Linux:
