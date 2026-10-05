@@ -1,7 +1,7 @@
 {
   "name": "skilld",
   "description": "The skilld-maintained Skills for Skill generation, review, and skilld CLI use.",
-  "version": "3.4.1",
+  "version": "3.5.0",
   "author": {
     "name": "Harlan Wilton",
     "url": "https://harlanzw.com"

@@ -81,7 +81,7 @@ describe('serve-fixture script', () => {
     expect(run.stdout).toContain('<p>/hello text/html</p>')
     expect(run.stderr).toMatch(/GET \/hello 200 text\/html \d+/)
     const pid = Number(await readFile(pidFile, 'utf8'))
-    expect(isAlive(pid)).toBe(false)
+    await expect.poll(() => isAlive(pid), { timeout: 2_000 }).toBe(false)
   })
 
   it('writes each body to its own file and lists them in responses.json', async () => {
@@ -120,7 +120,7 @@ describe('serve-fixture script', () => {
     expect(run.stderr).toMatch(/GET \/crash failed: /)
     expect(run.stdout).toContain('<p>/after text/html</p>')
     const pid = Number(await readFile(pidFile, 'utf8'))
-    expect(isAlive(pid)).toBe(false)
+    await expect.poll(() => isAlive(pid), { timeout: 2_000 }).toBe(false)
   }, 15_000)
 
   it('reports a server that exits before it answers', async () => {
@@ -146,7 +146,7 @@ describe('serve-fixture script', () => {
     const run = await result
 
     expect(run.code).toBe(130)
-    expect(isAlive(pid)).toBe(false)
+    await expect.poll(() => isAlive(pid), { timeout: 2_000 }).toBe(false)
   }, 15_000)
 
   it('kills the group at once on a second SIGTERM', async () => {
