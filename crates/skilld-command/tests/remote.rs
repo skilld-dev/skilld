@@ -2782,6 +2782,42 @@ fn a_public_grant_on_an_unrelated_origin_is_rejected_before_download() {
 }
 
 #[test]
+fn a_private_grant_refuses_public_access_without_an_account() {
+    let (pin, mut responses) = verified_remote_responses();
+    let grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();
+    responses[2] = response(
+        200,
+        serde_json::to_vec(&json!({
+            "kind": "private",
+            "artifactId": grant["artifactId"],
+            "contentUrl": grant["contentUrl"],
+            "expiresAt": grant["expiresAt"],
+            "downloadToken": "private-grant-token-with-enough-bytes",
+            "attestation": grant["attestation"]
+        }))
+        .unwrap(),
+    );
+    responses.truncate(3);
+    let remote = SkilldRemote::new(
+        Arc::new(FakeHttp::with(responses)),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("https://skilld.dev")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+
+    let error = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "AUTH_REQUIRED");
+}
+
+#[test]
 fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
     let (pin, mut responses) = verified_remote_responses();
     let public_grant: serde_json::Value = serde_json::from_slice(&responses[2].body).unwrap();

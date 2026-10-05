@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use skilld_auth::{
@@ -121,6 +122,7 @@ pub struct NativeAccount {
     credentials: Arc<dyn CredentialStore>,
     /// `SKILLD_TOKEN`. When set, it is the only credential this run sends.
     token_override: Option<SecretValue>,
+    keychain_unavailable: AtomicBool,
 }
 
 impl NativeAccount {
@@ -139,6 +141,7 @@ impl NativeAccount {
             callbacks: NativeLoopbackListener,
             credentials,
             token_override: None,
+            keychain_unavailable: AtomicBool::new(false),
         }
     }
 
@@ -173,14 +176,27 @@ impl NativeAccount {
         }
     }
 
+    /// Report public access after success, so JSON failures remain one document.
+    pub fn public_access_notice(&self) -> Option<&'static str> {
+        self.keychain_unavailable
+            .load(Ordering::Relaxed)
+            .then_some("The account keychain is unavailable. Using public access.")
+    }
+
     fn current_token(&self) -> Result<Option<SecretValue>, RemoteError> {
         if let Some(token) = &self.token_override {
             return Ok(Some(token.clone()));
         }
-        let mut credential = self
-            .credentials
-            .load(self.origin.as_str())
-            .map_err(|_| RemoteError::new("SERVICE_UNAVAILABLE", "the account keychain failed"))?;
+        let mut credential = match self.credentials.load(self.origin.as_str()) {
+            Ok(credential) => credential,
+            Err(_) => {
+                // Public delivery needs no account. Report the unavailable store;
+                // account commands still surface its error, and private delivery
+                // still requires a token. Never hide a failed credential refresh.
+                self.keychain_unavailable.store(true, Ordering::Relaxed);
+                return Ok(None);
+            }
+        };
         if credential
             .as_ref()
             .is_some_and(|credential| credential.expires_at <= self.clock.now_unix_seconds())
@@ -297,4 +313,46 @@ fn remote_auth_error(error: AuthError) -> RemoteError {
 
 const fn boundary(kind: BoundaryErrorKind) -> BoundaryError {
     BoundaryError::new(kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skilld_auth::StoredCredential;
+
+    struct UnavailableStore;
+
+    impl CredentialStore for UnavailableStore {
+        fn load(&self, _: &str) -> Result<Option<StoredCredential>, BoundaryError> {
+            Err(boundary(BoundaryErrorKind::Failed))
+        }
+
+        fn save(&self, _: &StoredCredential) -> Result<(), BoundaryError> {
+            Err(boundary(BoundaryErrorKind::Failed))
+        }
+
+        fn delete(&self, _: &str, _: &str) -> Result<(), BoundaryError> {
+            Err(boundary(BoundaryErrorKind::Failed))
+        }
+    }
+
+    #[test]
+    fn public_access_needs_no_keychain_but_account_status_reports_its_failure() {
+        let account = NativeAccount::with_credentials(Arc::new(UnavailableStore));
+
+        assert!(account.access_token().unwrap().is_none());
+        assert!(account.status().is_err());
+    }
+
+    #[test]
+    fn an_environment_token_does_not_read_an_unavailable_keychain() {
+        let account = NativeAccount::with_credentials(Arc::new(UnavailableStore))
+            .with_token_override(Some(SecretValue::new("explicit-token").unwrap()));
+
+        assert_eq!(
+            account.access_token().unwrap().unwrap().expose(),
+            "explicit-token"
+        );
+        assert!(account.status().unwrap());
+    }
 }

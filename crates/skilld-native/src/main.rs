@@ -178,6 +178,11 @@ fn main() -> ExitCode {
                     );
                     ExitCode::from(2)
                 } else {
+                    if exit_code == 0
+                        && let Some(notice) = account.public_access_notice()
+                    {
+                        eprintln!("{notice}");
+                    }
                     print_upgrade_notice(upgrade_notice.as_ref());
                     print_weekly_notice(
                         &notice_root,
@@ -199,6 +204,11 @@ fn main() -> ExitCode {
     let mut gated = status::GatedStderr::new(&mut stderr, status);
     let result = run_with_output(args, host.as_ref(), output, &mut stdout, &mut gated);
     gated.finish_status();
+    if result.exit_code == 0
+        && let Some(notice) = account.public_access_notice()
+    {
+        eprintln!("{notice}");
+    }
     print_upgrade_notice(upgrade_notice.as_ref());
     print_weekly_notice(
         &notice_root,
