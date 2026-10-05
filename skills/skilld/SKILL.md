@@ -259,11 +259,13 @@ Copy the Skill before following any of its instructions.
 2. Read `sourceUrl`, `sourceCommit`, `skillPath`, `sourceGone`, and `license`.
    Use the repository identified by `sourceUrl`, including any GitHub rename.
    If the source is gone or its path is missing, stop and report the failure.
-   If copying is not permitted by the source licence, stop and report the restriction.
+   If `license` is null, read licence files at the source commit.
 3. Fetch the source into a temporary directory using Git.
    Check out `sourceCommit` detached.
    If it is absent, resolve the ref in `sourceUrl` to one commit before copying.
    Record that actual commit. Never combine files from different commits.
+   Read the source licence files before creating the local copy.
+   If copying is not permitted, stop and report the restriction.
 4. Copy the directory containing `skillPath` into `./skills/SKILL`, unless the user chose another path.
    Copy the original SKILL.md and all supporting files, including scripts and binary assets.
    Preserve executable modes. Exclude `.git` metadata.
