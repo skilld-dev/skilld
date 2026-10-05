@@ -101,19 +101,23 @@ pub enum BehaviorDecision {
     Unavailable,
 }
 
-/// The behaviors that stop a run until the user approves them.
+/// The ask behaviors that stop a run, install, or update until the user approves them.
 ///
-/// Only a remote Skill needs approval. A local or bundled Skill already sits
-/// on the user's disk.
-pub fn held_behaviors<'a>(skill: &'a TransientSkill, allowed: &[String]) -> Vec<&'a Behavior> {
-    if !matches!(skill.origin, SkillOrigin::Remote { .. }) {
-        return Vec::new();
-    }
-    skill
-        .behaviors
+/// `allowed` holds the --allow ids. `approved_before` holds the behaviors of the
+/// copy already installed, so an update stops only for a behavior it adds.
+pub fn held_behaviors<'a>(
+    behaviors: &'a [Behavior],
+    allowed: &[String],
+    approved_before: &[Behavior],
+) -> Vec<&'a Behavior> {
+    behaviors
         .iter()
         .filter(|behavior| {
-            behavior.tier == BehaviorTier::Ask && !allowed.iter().any(|id| id == behavior.id)
+            behavior.tier == BehaviorTier::Ask
+                && !allowed.iter().any(|id| id == behavior.id)
+                && !approved_before
+                    .iter()
+                    .any(|before| before.tier == BehaviorTier::Ask && before.id == behavior.id)
         })
         .collect()
 }

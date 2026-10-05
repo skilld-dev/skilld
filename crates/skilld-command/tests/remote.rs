@@ -3349,6 +3349,8 @@ struct BatchProvider {
     prepared_names: Mutex<Vec<String>>,
     fail_name: Mutex<Option<&'static str>>,
     relation: Mutex<RemoteComparisonRelation>,
+    /// Instructions after the frontmatter of every prepared SKILL.md.
+    body: Mutex<&'static str>,
 }
 
 impl BatchProvider {
@@ -3358,8 +3360,9 @@ impl BatchProvider {
         };
         self.prepared_names.lock().unwrap().push(name.clone());
         let bytes = format!(
-            "---\nname: {name}\ndescription: {}\n---\n",
-            *self.version.lock().unwrap()
+            "---\nname: {name}\ndescription: {}\n---\n{}",
+            *self.version.lock().unwrap(),
+            *self.body.lock().unwrap()
         )
         .into_bytes();
         let file = PreparedFile {
@@ -3502,6 +3505,7 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3513,13 +3517,14 @@ fn multi_skill_update_prepares_then_commits_every_artifact() {
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
             mode: Some(InstallMode::Copy),
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
     }
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
 
-    let lines = host.update(None, InstallScope::Project).unwrap();
+    let lines = host.update(None, InstallScope::Project, &[]).unwrap();
 
     assert_eq!(
         lines
@@ -3552,6 +3557,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3563,6 +3569,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
             mode: Some(InstallMode::Copy),
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
     }
@@ -3570,7 +3577,7 @@ fn multi_skill_update_changes_nothing_when_one_artifact_cannot_prepare() {
     *provider.version.lock().unwrap() = "second";
     *provider.fail_name.lock().unwrap() = Some("beta");
 
-    let error = host.update(None, InstallScope::Project).unwrap_err();
+    let error = host.update(None, InstallScope::Project, &[]).unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
     assert_eq!(*provider.prepared_names.lock().unwrap(), ["alpha", "beta"]);
@@ -3598,6 +3605,7 @@ fn plain_update_rejects_a_source_that_moved_behind() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3608,13 +3616,14 @@ fn plain_update_rejects_a_source_that_moved_behind() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     provider.prepared_names.lock().unwrap().clear();
     *provider.version.lock().unwrap() = "second";
     *provider.relation.lock().unwrap() = RemoteComparisonRelation::Behind;
 
-    let error = host.update(None, InstallScope::Project).unwrap_err();
+    let error = host.update(None, InstallScope::Project, &[]).unwrap_err();
 
     assert_eq!(error.code, "UPDATE_CONFIRMATION_REQUIRED");
     assert!(provider.prepared_names.lock().unwrap().is_empty());
@@ -3649,6 +3658,7 @@ fn selected_skill_update_commits_only_the_exact_subset() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3660,6 +3670,7 @@ fn selected_skill_update_commits_only_the_exact_subset() {
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
             mode: Some(InstallMode::Copy),
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
     }
@@ -3727,6 +3738,7 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3738,6 +3750,7 @@ fn selected_skill_update_changes_nothing_when_one_selected_artifact_fails() {
             scope: InstallScope::Project,
             targets: vec![AgentTargetId::Codex],
             mode: Some(InstallMode::Copy),
+            allowed_behaviors: Vec::new(),
         })
         .unwrap();
     }
@@ -3769,6 +3782,7 @@ fn selected_skill_update_rejects_a_head_that_changed_after_review() {
         prepared_names: Mutex::new(vec![]),
         fail_name: Mutex::new(None),
         relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(""),
     });
     let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider.clone());
@@ -3779,6 +3793,7 @@ fn selected_skill_update_rejects_a_head_that_changed_after_review() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     provider.prepared_names.lock().unwrap().clear();
@@ -3811,6 +3826,7 @@ fn verify_reports_changed_bytes_and_stale_sources() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     *provider.stale.lock().unwrap() = true;
@@ -3843,6 +3859,7 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     };
 
     let installed = host.install_request(request).unwrap();
@@ -3863,7 +3880,7 @@ fn remote_install_verify_and_failed_update_use_the_normal_transaction() {
     *provider.fail_prepare.lock().unwrap() = true;
 
     let error = host
-        .update(Some("example"), InstallScope::Project)
+        .update(Some("example"), InstallScope::Project, &[])
         .unwrap_err();
 
     assert_eq!(error.code, "CHECK_BLOCKED");
@@ -3888,6 +3905,7 @@ fn update_check_carries_the_exact_comparison_and_commit_history() {
         scope: InstallScope::Project,
         targets: vec![AgentTargetId::Codex],
         mode: Some(InstallMode::Copy),
+        allowed_behaviors: Vec::new(),
     })
     .unwrap();
     *provider.stale.lock().unwrap() = true;
@@ -4841,4 +4859,110 @@ fn an_endpoint_override_must_be_one_https_or_loopback_origin() {
         };
         assert_eq!(error.code, "INVALID_ENDPOINT", "{rejected}");
     }
+}
+
+const SUDO_BODY: &str = "\n```sh\nsudo true\n```\n";
+
+fn installed_alpha(
+    body: &'static str,
+    allowed: &[&str],
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Arc<BatchProvider>,
+    LocalHost,
+) {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let provider = Arc::new(BatchProvider {
+        version: Mutex::new("first"),
+        latest_commit: Mutex::new('f'),
+        prepared_names: Mutex::new(vec![]),
+        fail_name: Mutex::new(None),
+        relation: Mutex::new(RemoteComparisonRelation::Ahead),
+        body: Mutex::new(body),
+    });
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    host.install_request(InstallRequest {
+        operation: InstallOperation::Install(InstallSource::Remote(
+            "skilld-dev/skills/alpha".to_owned(),
+        )),
+        scope: InstallScope::Project,
+        targets: vec![AgentTargetId::Codex],
+        mode: Some(InstallMode::Copy),
+        allowed_behaviors: allowed.iter().map(|id| (*id).to_owned()).collect(),
+    })
+    .unwrap();
+    *provider.version.lock().unwrap() = "second";
+    (temporary, project, provider, host)
+}
+
+fn update_cli(host: &LocalHost, args: &[&str]) -> (u8, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = skilld_command::run_with_output(
+        args,
+        host,
+        skilld_command::OutputContext::Plain {
+            platform: skilld_command::CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    (
+        result.exit_code,
+        String::from_utf8(stdout).unwrap() + &String::from_utf8(stderr).unwrap(),
+    )
+}
+
+#[test]
+fn an_update_that_adds_an_ask_behavior_changes_nothing_until_approved() {
+    let (_temporary, project, provider, host) = installed_alpha("", &[]);
+    *provider.body.lock().unwrap() = SUDO_BODY;
+
+    let (exit, output) = update_cli(&host, &["skilld", "update"]);
+
+    assert_eq!(exit, 1, "{output}");
+    assert!(
+        output.starts_with("BEHAVIOR_CONFIRMATION_REQUIRED:"),
+        "{output}"
+    );
+    assert!(
+        output.contains("The update of Skill alpha adds behaviors"),
+        "{output}"
+    );
+    assert!(
+        output.contains("Runs commands as root: SKILL.md:7"),
+        "{output}"
+    );
+    assert!(output.trim_end().ends_with("--allow privilege"), "{output}");
+    assert_eq!(
+        fs::read_to_string(project.join(".skills/alpha/SKILL.md")).unwrap(),
+        "---\nname: alpha\ndescription: first\n---\n"
+    );
+
+    let (exit, output) = update_cli(&host, &["skilld", "update", "--allow", "privilege"]);
+
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        fs::read_to_string(project.join(".skills/alpha/SKILL.md"))
+            .unwrap()
+            .contains("sudo true")
+    );
+}
+
+#[test]
+fn an_update_keeps_an_ask_behavior_the_installed_copy_already_had() {
+    let (_temporary, project, _provider, host) = installed_alpha(SUDO_BODY, &["privilege"]);
+
+    let (exit, output) = update_cli(&host, &["skilld", "update"]);
+
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        fs::read_to_string(project.join(".skills/alpha/SKILL.md"))
+            .unwrap()
+            .contains("description: second")
+    );
 }

@@ -161,7 +161,7 @@ Every run lists what the Skill files ask an Agent to do, with the file and line.
 skilld finds behaviors with the fixed text patterns in `contracts/skill-behaviors.json`.
 Patterns miss obfuscated code, so an empty list proves nothing.
 
-Five behaviors stop a remote run until the user approves them:
+Five behaviors stop a remote `run`, `install`, or `add` until the user approves them:
 
 | id | Skill behavior |
 | --- | --- |
@@ -180,6 +180,12 @@ skilld run 'github:OWNER/REPOSITORY/SKILL#commit:COMMIT' --allow remote-code
 
 The command pins the commit that skilld checked.
 A local or bundled Skill lists its behaviors and never stops.
+
+`install`, `add`, and `update` stop the same way and write nothing.
+Run the same command again with the `--allow` ids the message names.
+`add` installs every other Skill the ref names.
+`update` stops only when the new version adds an ask behavior the installed copy lacks.
+A lockfile restore and `skilld sync` install the commits already recorded, so they never stop.
 
 ## Install without Node.js
 
