@@ -436,6 +436,8 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Select the exact Resolution attestation. If absent, select an existing attestation. */
+                "x-skilld-resolution-id"?: string;
             };
             path: {
                 artifactId: components["parameters"]["ArtifactId"];

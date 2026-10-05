@@ -2585,6 +2585,10 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     assert!(requests[1].url.ends_with("/api/v1/trusted-root"));
     assert!(requests[2].url.contains("/api/v1/artifacts/"));
     assert!(requests[2].url.ends_with("/grants"));
+    assert!(requests[2].headers.iter().any(|header| {
+        header.name == "x-skilld-resolution-id"
+            && header.value.expose() == "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f"
+    }));
     assert!(requests[3].url.ends_with("/content"));
 }
 
