@@ -410,7 +410,7 @@ impl LocalStore {
     ) -> Result<SkillName, StoreError> {
         ensure_write_capability()?;
         let source = absolute_normalized(source).map_err(fs_error)?;
-        validate_skill_source(&source)?;
+        validate_source_for(&source, &locked_source)?;
         let digest = hash_skill_tree(&source)?;
         let source = resolve_path(&source).map_err(fs_error)?;
         let name = SkillName::from_source(&source)
@@ -578,7 +578,7 @@ impl LocalStore {
         let mut validated = Vec::with_capacity(updates.len());
         for update in updates {
             let source = absolute_normalized(&update.install.source).map_err(fs_error)?;
-            validate_skill_source(&source)?;
+            validate_source_for(&source, &update.install.locked_source)?;
             let digest = hash_skill_tree(&source)?;
             let source = resolve_path(&source).map_err(fs_error)?;
             let name = SkillName::from_source(&source)
@@ -1482,6 +1482,24 @@ pub(crate) fn validate_skill_files(root: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Check a Skill directory before the store takes it.
+///
+/// Every Skill takes its name from its folder. A local Skill is the user's own
+/// work, so its SKILL.md must declare that same name. A remote Skill belongs to
+/// its author: its folder name comes from the attested source, and a different
+/// declared name is only shown as a warning.
+fn validate_source_for(root: &Path, locked_source: &LockedSource) -> Result<(), StoreError> {
+    match locked_source {
+        LockedSource::Remote { .. } => {
+            validate_skill_files(root)?;
+            SkillName::from_source(root)
+                .map(drop)
+                .map_err(|error| StoreError::InvalidSource(error.to_string()))
+        }
+        LockedSource::Local { .. } | LockedSource::BundledSkilld => validate_skill_source(root),
+    }
+}
+
 pub(crate) fn validate_skill_source(root: &Path) -> Result<(), StoreError> {
     validate_skill_files(root)?;
     let directory_name = SkillName::from_source(root)
@@ -1503,7 +1521,9 @@ fn read_frontmatter_name(path: &Path) -> Result<String, StoreError> {
     reader.read_line(&mut line).map_err(|error| {
         StoreError::InvalidSource(format!("cannot read SKILL.md frontmatter: {error}"))
     })?;
-    if line.trim_end_matches(['\r', '\n']) != "---" {
+    // Windows editors can write a byte order mark before the frontmatter.
+    let first = line.strip_prefix('\u{feff}').unwrap_or(&line);
+    if first.trim_end_matches(['\r', '\n']) != "---" {
         return Err(StoreError::InvalidSource(
             "SKILL.md must start with frontmatter".to_owned(),
         ));

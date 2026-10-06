@@ -13,9 +13,10 @@ use sha1::{Digest as _, Sha1};
 use skilld_core::{
     ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
     ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
-    RepositoryVisibility, SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector,
-    SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
-    prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
+    RepositoryVisibility, SearchResponse, SkillListing, SkillName, SourceRef, SourceRequest,
+    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot,
+    declared_skill_name, parse_search_response, prepare_unverified_files, verify_artifact,
+    verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -308,6 +309,38 @@ pub struct PreparedRemoteSkill {
     /// when the server named none: the registry does not hold the Skill, the
     /// server is older, or the read was direct.
     pub page_url: Option<String>,
+}
+
+impl PreparedRemoteSkill {
+    /// The Skill name from its source identity: the folder that holds
+    /// SKILL.md, or the Repository name for a root Skill.
+    ///
+    /// The registry admits Skills by the same rule, so the name a person
+    /// typed and the name skilld installs agree. The frontmatter `name` is
+    /// only what the author declared. See [`skilld_core::skill_identity`].
+    pub fn skill_name(&self) -> Result<SkillName, RemoteError> {
+        let LockedSource::Remote {
+            source, skill_path, ..
+        } = &self.locked_source
+        else {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has no remote source",
+            ));
+        };
+        let selector = RemoteSelector::parse(source)?;
+        let declared = self
+            .files
+            .iter()
+            .find(|file| file.path == "SKILL.md")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .and_then(declared_skill_name);
+        skilld_core::skill_identity(
+            &selector.source().repository,
+            skill_path,
+            declared.as_deref(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1668,7 +1701,7 @@ impl SkilldRemote {
             Some(files) => files,
             None => self.direct_blob_files(&snapshot, &plan)?,
         };
-        let (_name, installed_sha256, files) = prepare_unverified_files(files)?;
+        let (installed_sha256, files) = prepare_unverified_files(files)?;
         Ok(PreparedRemoteSkill {
             locked_source: LockedSource::Remote {
                 source: selector.canonical(),

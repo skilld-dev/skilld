@@ -668,6 +668,10 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     out.push_str(&read_it_first(&skill.origin, color));
     out.push_str(&skill_page_field(&skill.origin, color));
     out.push_str(&render_behaviors(skill, color));
+    if let Some(warning) = crate::run::declared_name_warning(&skill.name, &skill.instructions) {
+        out.push_str(&paint(&format!("Warning: {warning}"), Role::Warn, color));
+        out.push('\n');
+    }
 
     out.push('\n');
     out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));

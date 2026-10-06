@@ -192,6 +192,24 @@ pub(crate) fn reject_duplicate_files(wanted: &[String]) -> Result<(), CommandErr
 }
 
 /// Read the SKILL.md text out of a file set.
+/// One warning when SKILL.md declares another name than the Skill name.
+///
+/// The folder names every Skill. An author can still declare another
+/// frontmatter `name`, and an Agent may show that one. The warning names
+/// both values, so the person knows which name each tool uses.
+pub(crate) fn declared_name_warning(name: &str, instructions: &str) -> Option<String> {
+    match skilld_core::declared_skill_name(instructions) {
+        Some(declared) if declared == name => None,
+        Some(declared) => Some(format!(
+            "SKILL.md declares the name {}. skilld uses the folder name {name}.",
+            skilld_ui::text::sanitize(&declared.chars().take(100).collect::<String>())
+        )),
+        None => Some(format!(
+            "SKILL.md declares no name. skilld uses the folder name {name}."
+        )),
+    }
+}
+
 pub fn read_instructions(files: &[PreparedFile]) -> Result<String, CommandError> {
     let file = instructions_file(files)?;
     decode(&file.bytes).ok_or_else(|| {
