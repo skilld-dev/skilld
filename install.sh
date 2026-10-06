@@ -6,6 +6,8 @@
 # Environment:
 #   SKILLD_INSTALL_DIR  Install directory. Default: $HOME/.skilld/bin
 #   SKILLD_VERSION      Exact version to install, for example 3.1.0. Default: latest
+#   SKILLD_NO_MODIFY_PATH=1  Leave shell profiles alone. Default: add the install
+#                            directory to PATH in the profile for $SHELL
 #
 # The installed CLI upgrades itself after it verifies each signed release.
 set -eu
@@ -126,6 +128,33 @@ printf '{"channel":"standalone"}\n' >"$install_dir/skilld-install.json"
 
 printf 'Installed skilld %s to %s/skilld.\n' "$version" "$install_dir"
 case ":$PATH:" in
-  *":$install_dir:"*) ;;
-  *) printf 'Add %s to your PATH, then run skilld --version.\n' "$install_dir" ;;
+  *":$install_dir:"*) exit 0 ;;
 esac
+
+# The profile a new terminal reads for the shell in $SHELL, and the line that
+# puts the install directory on PATH there.
+case "$(basename "${SHELL:-sh}")" in
+  zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+  bash) if [ "$os" = darwin ]; then profile="$HOME/.bash_profile"; else profile="$HOME/.bashrc"; fi ;;
+  fish) profile="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/skilld.fish" ;;
+  *) profile="$HOME/.profile" ;;
+esac
+case "$profile" in
+  *.fish) path_line="fish_add_path \"$install_dir\"" ;;
+  *) path_line="export PATH=\"$install_dir:\$PATH\"" ;;
+esac
+
+if [ "${SKILLD_NO_MODIFY_PATH:-}" = 1 ]; then
+  printf 'Add %s to your PATH, then run skilld --version.\n' "$install_dir"
+  exit 0
+fi
+# A reinstall finds the line from the last run and adds no second one.
+if [ -f "$profile" ] && grep -qF "$path_line" "$profile"; then
+  :
+elif mkdir -p "$(dirname "$profile")" 2>/dev/null && printf '\n# skilld\n%s\n' "$path_line" >>"$profile" 2>/dev/null; then
+  printf 'Added %s to your PATH in %s.\n' "$install_dir" "$profile"
+else
+  printf 'Could not write %s. Add this line to your shell profile:\n  %s\n' "$profile" "$path_line"
+  exit 0
+fi
+printf 'Open a new terminal, then run skilld --version.\n'
