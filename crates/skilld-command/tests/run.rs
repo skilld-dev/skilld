@@ -2123,3 +2123,136 @@ fn a_restore_takes_no_allow_ids() {
     assert_eq!(exit, 2);
     assert!(stderr.contains("--allow needs a Skill source"), "{stderr}");
 }
+
+const TASTE_SKILL: &[u8] =
+    b"---\nname: design-taste-frontend\ndescription: Taste.\n---\n\n# Taste\n";
+
+#[test]
+fn a_remote_run_names_the_skill_by_its_folder_and_warns_about_another_declared_name() {
+    let fixture = remote_fixture_with_skill_path(
+        vec![file("SKILL.md", 0o644, TASTE_SKILL)],
+        "skills/taste-skill",
+    );
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "leonxlnx/taste-skill/taste-skill"]),
+    );
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(
+        stdout.contains("skilld loaded the transient Skill taste-skill for this session."),
+        "{stdout}"
+    );
+    let warnings = stdout
+        .lines()
+        .filter(|line| line.contains("design-taste-frontend"))
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 2, "{stdout}");
+    assert_eq!(
+        warnings[0],
+        "Warning: SKILL.md declares the name design-taste-frontend. skilld uses the folder name taste-skill."
+    );
+    assert_eq!(warnings[1], "name: design-taste-frontend");
+}
+
+#[test]
+fn a_remote_run_whose_declared_name_matches_its_folder_shows_no_name_warning() {
+    let fixture = remote_fixture(skill_files());
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "vuejs/core/vue"]),
+    );
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(!stdout.contains("Warning: SKILL.md declares"), "{stdout}");
+}
+
+#[test]
+fn a_remote_run_reads_a_skill_with_crlf_frontmatter() {
+    let fixture = remote_fixture_with_skill_path(
+        vec![file(
+            "SKILL.md",
+            0o644,
+            b"---\r\nname: design-style\r\ndescription: |\r\n  Style.\r\n---\r\n\r\n# Style\r\n",
+        )],
+        "design-style",
+    );
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&["skilld", "run", "nakanosanku/ohmyskills/design-style"]),
+    );
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(
+        stdout.contains("skilld loaded the transient Skill design-style for this session."),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Warning: SKILL.md declares"), "{stdout}");
+}
+
+#[test]
+fn a_remote_install_uses_the_folder_name_when_the_declared_name_differs() {
+    let fixture = remote_fixture_with_skill_path(
+        vec![file("SKILL.md", 0o644, TASTE_SKILL)],
+        "skills/taste-skill",
+    );
+
+    let (exit, stdout, stderr) = run_cli(
+        &fixture.host,
+        run_args(&[
+            "skilld",
+            "install",
+            "leonxlnx/taste-skill/taste-skill",
+            "--agent",
+            "codex",
+            "--mode",
+            "copy",
+            "--plain",
+        ]),
+    );
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(stdout.contains("Installed Skill taste-skill."), "{stdout}");
+    assert!(
+        stdout.contains(
+            "SKILL.md declares the name design-taste-frontend. skilld uses the folder name taste-skill."
+        ),
+        "{stdout}"
+    );
+    assert_eq!(
+        fs::read(fixture.project.join(".agents/skills/taste-skill/SKILL.md")).unwrap(),
+        TASTE_SKILL
+    );
+    assert!(
+        !fixture
+            .project
+            .join(".agents/skills/design-taste-frontend")
+            .exists()
+    );
+}
+
+#[test]
+fn a_local_run_reads_crlf_frontmatter_after_a_byte_order_mark() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let skill = project.join("design-style");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "\u{feff}---\r\nname: design-style\r\ndescription: Style.\r\n---\r\n\r\n# Style\r\n",
+    )
+    .unwrap();
+    let host = LocalHost::new(project, temporary.path().join("global"));
+
+    let RunOutcome::Load(loaded) = host
+        .run_skill(InstallSource::Local(skill), &[], None)
+        .unwrap()
+    else {
+        panic!("expected a Skill load")
+    };
+
+    assert_eq!(loaded.name, "design-style");
+}

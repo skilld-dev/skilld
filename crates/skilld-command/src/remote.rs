@@ -13,9 +13,10 @@ use sha1::{Digest as _, Sha1};
 use skilld_core::{
     ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
     ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
-    RepositoryVisibility, SearchResponse, SkillListing, SourceRef, SourceRequest, SourceSelector,
-    SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot, parse_search_response,
-    prepare_unverified_files, verify_artifact, verify_attestation, verify_trusted_root,
+    RepositoryVisibility, SearchResponse, SkillListing, SkillName, SourceRef, SourceRequest,
+    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot,
+    declared_skill_name, parse_search_response, prepare_unverified_files, verify_artifact,
+    verify_attestation, verify_trusted_root,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -77,6 +78,8 @@ const TAR_BLOCK: usize = 512;
 const MAX_REDIRECTS: usize = 3;
 const MAX_RETRIES: usize = 2;
 const MAX_POLLS: usize = 120;
+/// New Resolutions after a retryable failure, so four requests at most.
+const MAX_RESOLUTION_RETRIES: u32 = 3;
 const MAX_UPDATE_COMPARISONS: usize = 500;
 const UPDATE_SERVICE_BATCH: usize = 50;
 #[cfg(not(target_os = "wasi"))]
@@ -308,6 +311,38 @@ pub struct PreparedRemoteSkill {
     /// when the server named none: the registry does not hold the Skill, the
     /// server is older, or the read was direct.
     pub page_url: Option<String>,
+}
+
+impl PreparedRemoteSkill {
+    /// The Skill name from its source identity: the folder that holds
+    /// SKILL.md, or the Repository name for a root Skill.
+    ///
+    /// The registry admits Skills by the same rule, so the name a person
+    /// typed and the name skilld installs agree. The frontmatter `name` is
+    /// only what the author declared. See [`skilld_core::skill_identity`].
+    pub fn skill_name(&self) -> Result<SkillName, RemoteError> {
+        let LockedSource::Remote {
+            source, skill_path, ..
+        } = &self.locked_source
+        else {
+            return Err(RemoteError::new(
+                "SOURCE_MISMATCH",
+                "the prepared Skill has no remote source",
+            ));
+        };
+        let selector = RemoteSelector::parse(source)?;
+        let declared = self
+            .files
+            .iter()
+            .find(|file| file.path == "SKILL.md")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .and_then(declared_skill_name);
+        skilld_core::skill_identity(
+            &selector.source().repository,
+            skill_path,
+            declared.as_deref(),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1014,8 +1049,44 @@ impl SkilldRemote {
         verify_trusted_root(root, pin)
     }
 
+    /// Resolve one source, and request a new Resolution when one fails for a
+    /// reason that can pass.
+    ///
+    /// skilld.dev marks a failure retryable when the same request can work
+    /// later: a spent GitHub rate limit, or an unavailable source, service,
+    /// signer, or check. Each retry is a new Resolution with a new
+    /// Idempotency-Key, because a failed one never changes. The waits back off
+    /// with jitter and share the Resolution deadline. A wait that skilld.dev
+    /// names, and that is longer than the time left, fails at once.
     fn resolve(&self, source: &SourceRequest) -> Result<ResolvedArtifact, RemoteError> {
         let mut deadline = ResolutionDeadline::new();
+        let mut retries = 0_u32;
+        loop {
+            match self.resolve_once(source, &mut deadline)? {
+                ResolutionAttempt::Ready(artifact) => return Ok(*artifact),
+                ResolutionAttempt::Retryable { error, wait } => {
+                    if retries == MAX_RESOLUTION_RETRIES {
+                        return Err(error);
+                    }
+                    retries += 1;
+                    let wait = wait.map_or_else(
+                        || resolution_backoff(retries),
+                        |wait| wait + jitter(Duration::from_millis(250)),
+                    );
+                    if !deadline.remaining().is_ok_and(|remaining| wait < remaining) {
+                        return Err(error);
+                    }
+                    self.sleep(wait, Some(&mut deadline))?;
+                }
+            }
+        }
+    }
+
+    fn resolve_once(
+        &self,
+        source: &SourceRequest,
+        deadline: &mut ResolutionDeadline,
+    ) -> Result<ResolutionAttempt, RemoteError> {
         self.progress
             .stage(RemoteProgressStage::RequestingResolution);
         let body = serde_json::to_vec(&json!({ "source": source })).map_err(|_| {
@@ -1034,7 +1105,7 @@ impl SkilldRemote {
         let response = self.execute_with_deadline(
             request,
             AllowedOrigin::Service(self.endpoint.clone()),
-            Some(&mut deadline),
+            Some(&mut *deadline),
         )?;
         let mut page_url = self.page_url_header(&response);
         let mut resolution: Resolution = parse_json(&response.body)?;
@@ -1063,11 +1134,11 @@ impl SkilldRemote {
                         ));
                     }
                     validate_resolved_source(source, &artifact.attestation)?;
-                    return Ok(ResolvedArtifact {
+                    return Ok(ResolutionAttempt::Ready(Box::new(ResolvedArtifact {
                         resolution_id,
                         descriptor: *artifact,
                         page_url,
-                    });
+                    })));
                 }
                 Resolution::Pending {
                     resolution_id,
@@ -1099,7 +1170,7 @@ impl SkilldRemote {
                     let response = self.execute_with_deadline(
                         request,
                         AllowedOrigin::Service(self.endpoint.clone()),
-                        Some(&mut deadline),
+                        Some(&mut *deadline),
                     )?;
                     page_url = self.page_url_header(&response);
                     resolution = parse_json(&response.body)?;
@@ -1116,10 +1187,18 @@ impl SkilldRemote {
                     retry_after_seconds,
                     ..
                 } => {
-                    return Err(RemoteError::new(
+                    let error = RemoteError::new(
                         problem_code(&code),
                         resolution_failure_message(retryable, retry_after_seconds),
-                    ));
+                    );
+                    return if retryable {
+                        Ok(ResolutionAttempt::Retryable {
+                            error,
+                            wait: retry_after_seconds.map(Duration::from_secs),
+                        })
+                    } else {
+                        Err(error)
+                    };
                 }
                 Resolution::Revoked { .. } => {
                     return Err(RemoteError::new(
@@ -1668,7 +1747,7 @@ impl SkilldRemote {
             Some(files) => files,
             None => self.direct_blob_files(&snapshot, &plan)?,
         };
-        let (_name, installed_sha256, files) = prepare_unverified_files(files)?;
+        let (installed_sha256, files) = prepare_unverified_files(files)?;
         Ok(PreparedRemoteSkill {
             locked_source: LockedSource::Remote {
                 source: selector.canonical(),
@@ -3514,6 +3593,34 @@ fn cancelled() -> RemoteError {
     RemoteError::new("CANCELLED", "the remote operation was cancelled")
 }
 
+/// One Resolution request: an Artifact, or a failure that can pass.
+enum ResolutionAttempt {
+    Ready(Box<ResolvedArtifact>),
+    Retryable {
+        error: RemoteError,
+        /// The wait skilld.dev named, when it named one.
+        wait: Option<Duration>,
+    },
+}
+
+/// 1, 2, then 4 seconds, each with up to a quarter more as jitter.
+fn resolution_backoff(retry: u32) -> Duration {
+    let base = Duration::from_secs(1_u64 << retry.saturating_sub(1).min(5));
+    base + jitter(base / 4)
+}
+
+/// A wait from zero up to `maximum`.
+///
+/// Jitter spreads Agents that hit the same rate limit at once. It comes from
+/// the clock, because a retry needs no strong randomness.
+fn jitter(maximum: Duration) -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    maximum.mul_f64(f64::from(nanos % 1_000) / 1_000.0)
+}
+
 fn resolution_timeout() -> RemoteError {
     RemoteError::new(
         "RESOLUTION_TIMEOUT",
@@ -3524,25 +3631,44 @@ fn resolution_timeout() -> RemoteError {
 /// Say which check blocked the Skill, and what it found.
 ///
 /// A blocked Resolution is a decision about the Skill, so the person needs the
-/// check that made it. Without the names, every block reads the same.
+/// check that made it. Without the names, every block reads the same. The
+/// first findings say exactly what failed, such as the file over a size limit.
 fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
+    const SHOWN_FINDINGS: usize = 3;
+    let sentence = |value: String| value.trim_end_matches('.').to_owned();
     let failed = results
         .iter()
         .filter(|result| result.outcome == CheckOutcome::Fail)
-        .map(|result| match &result.summary {
-            Some(summary) => format!(
-                "{}: {}",
-                sanitize_line(&result.name, 100, "check"),
-                sanitize_line(summary, 300, "no summary")
-            ),
-            None => sanitize_line(&result.name, 100, "check"),
+        .map(|result| {
+            let name = sanitize_line(&result.name, 100, "check");
+            let mut text = match &result.summary {
+                Some(summary) => format!(
+                    "{name}: {}",
+                    sentence(sanitize_line(summary, 300, "no summary"))
+                ),
+                None => name,
+            };
+            if !result.findings.is_empty() {
+                let mut findings = result
+                    .findings
+                    .iter()
+                    .take(SHOWN_FINDINGS)
+                    .map(|finding| sentence(sanitize_line(finding, 200, "finding")))
+                    .collect::<Vec<_>>();
+                let hidden = result.findings.len().saturating_sub(SHOWN_FINDINGS);
+                if hidden > 0 {
+                    findings.push(format!("and {hidden} more"));
+                }
+                text.push_str(&format!(". Findings: {}", findings.join("; ")));
+            }
+            text
         })
         .collect::<Vec<_>>();
     if failed.is_empty() {
         return "the Resolution was blocked by check results".to_owned();
     }
     format!(
-        "the Resolution was blocked by check results. {}",
+        "the Resolution was blocked by check results. {}.",
         failed.join(". ")
     )
 }

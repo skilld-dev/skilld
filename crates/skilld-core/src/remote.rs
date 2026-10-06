@@ -594,15 +594,19 @@ pub struct PreparedFile {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedArtifact {
+    /// The Skill name from the attested source identity. See [`skill_identity`].
     pub name: SkillName,
     pub files: Vec<PreparedFile>,
     pub installed_sha256: String,
     pub attestation: ArtifactAttestation,
 }
 
+/// Check a Skill file set and return its installed digest with the files in path order.
+///
+/// It names no Skill. The source identity does: see [`skill_identity`].
 pub fn prepare_unverified_files(
     mut files: Vec<PreparedFile>,
-) -> Result<(SkillName, String, Vec<PreparedFile>), RemoteError> {
+) -> Result<(String, Vec<PreparedFile>), RemoteError> {
     if files.is_empty() || files.len() > MAX_FILES {
         return Err(archive_error("the Skill file count is invalid"));
     }
@@ -623,9 +627,9 @@ pub fn prepare_unverified_files(
         }
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    let name = skill_name_from_files(&files)?;
+    skill_text(&files)?;
     let digest = installed_digest(&files);
-    Ok((name, digest, files))
+    Ok((digest, files))
 }
 
 pub fn verify_artifact(
@@ -650,7 +654,11 @@ pub fn verify_artifact(
         ));
     }
     let files = verify_ustar(archive, &attestation.files)?;
-    let name = skill_name_from_files(&files)?;
+    let name = skill_identity(
+        &attestation.source.repository,
+        &attestation.source.skill_path,
+        declared_skill_name(skill_text(&files)?).as_deref(),
+    )?;
     let installed_sha256 = installed_digest(&files);
     Ok(VerifiedArtifact {
         name,
@@ -1089,26 +1097,90 @@ fn verify_tar_checksum(header: &[u8]) -> Result<(), RemoteError> {
     }
 }
 
-fn skill_name_from_files(files: &[PreparedFile]) -> Result<SkillName, RemoteError> {
+/// The SKILL.md text at the Skill root.
+fn skill_text(files: &[PreparedFile]) -> Result<&str, RemoteError> {
     let skill = files
         .iter()
         .find(|file| file.path == "SKILL.md")
         .ok_or_else(|| archive_error("the Artifact must contain SKILL.md at its root"))?;
-    let text =
-        std::str::from_utf8(&skill.bytes).map_err(|_| archive_error("SKILL.md must use UTF-8"))?;
-    let name = text
-        .strip_prefix("---\n")
-        .and_then(|text| text.split_once("\n---"))
-        .and_then(|(frontmatter, _)| {
-            frontmatter
-                .lines()
-                .filter_map(|line| line.strip_prefix("name:"))
-                .map(str::trim)
-                .next()
+    std::str::from_utf8(&skill.bytes).map_err(|_| archive_error("SKILL.md must use UTF-8"))
+}
+
+/// The `name` that SKILL.md declares in its frontmatter, or `None`.
+///
+/// It reads LF and CRLF line endings and skips a UTF-8 byte order mark.
+/// Windows editors write both, and the Agent Skills specification allows them.
+/// The value is what the author wrote. It never names the Skill: see
+/// [`skill_identity`].
+pub fn declared_skill_name(text: &str) -> Option<String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    let mut name = None;
+    for line in lines {
+        if line.trim_end() == "---" {
+            return name;
+        }
+        if name.is_none()
+            && let Some(value) = line.strip_prefix("name:")
+        {
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .or_else(|| {
+                    value
+                        .strip_prefix('\'')
+                        .and_then(|value| value.strip_suffix('\''))
+                })
+                .unwrap_or(value);
+            name = Some(value.to_owned());
+        }
+    }
+    None
+}
+
+/// The name a Skill takes from its source identity.
+///
+/// The folder that holds SKILL.md names the Skill. A Skill at the Repository
+/// root takes the Repository name, without case. The registry admits Skills
+/// by the same rule, so `OWNER/REPOSITORY/NAME` and the delivered Skill always
+/// agree. The frontmatter `name` never decides it: an author can declare
+/// another name, and the Skill the person asked for must still load.
+///
+/// A folder name that cannot be a Skill name falls back to the declared name,
+/// so a path selector to such a folder keeps working. A named selector never
+/// reaches that branch, because its name is the folder name.
+pub fn skill_identity(
+    repository: &str,
+    skill_path: &str,
+    declared: Option<&str>,
+) -> Result<SkillName, RemoteError> {
+    let folder = if skill_path == "." {
+        repository.to_ascii_lowercase()
+    } else {
+        skill_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(skill_path)
+            .to_owned()
+    };
+    SkillName::parse(folder.clone())
+        .or_else(|_| {
+            declared
+                .ok_or(())
+                .and_then(|declared| SkillName::parse(declared.to_owned()).map_err(|_| ()))
         })
-        .ok_or_else(|| archive_error("SKILL.md must declare its name"))?;
-    SkillName::parse(name.trim_matches(['\'', '"']).to_owned())
-        .map_err(|error| RemoteError::new(error.code(), error.to_string()))
+        .map_err(|()| {
+            RemoteError::new(
+                "INVALID_SOURCE",
+                format!(
+                    "the Skill folder {folder} is not a valid Skill name, and SKILL.md declares no valid name"
+                ),
+            )
+        })
 }
 
 fn installed_digest(files: &[PreparedFile]) -> String {

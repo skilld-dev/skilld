@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 use skilld_core::{
     ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
     PreparedFile, RemoteSelector, RepositoryVisibility, ResolvedSource, SignatureAlgorithm,
-    SourceProvider, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin,
-    prepare_unverified_files, verify_artifact, verify_trusted_root,
+    SourceProvider, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin, declared_skill_name,
+    prepare_unverified_files, skill_identity, verify_artifact, verify_trusted_root,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -274,7 +274,7 @@ fn verifies_exact_statements_root_signatures_and_ustar_files() {
 
 #[test]
 fn verifies_a_skill_at_the_repository_root() {
-    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let skill = b"---\nname: skills\ndescription: fixture\n---\n";
     let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
     let (root, pin, signing_key) = trusted_root();
     let root = verify_trusted_root(root, &pin).unwrap();
@@ -291,9 +291,93 @@ fn verifies_a_skill_at_the_repository_root() {
     )
     .unwrap();
 
-    assert_eq!(verified.name.as_str(), "example");
+    assert_eq!(verified.name.as_str(), "skills");
     assert_eq!(verified.files[0].bytes, skill);
     assert_eq!(verified.attestation.source.skill_path, ".");
+}
+
+#[test]
+fn a_verified_skill_takes_its_name_from_the_attested_folder_not_the_frontmatter() {
+    let skill = b"---\nname: design-taste-frontend\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    let verified = verify_artifact(
+        attestation_at_path(
+            &archive,
+            vec![file("SKILL.md", 0o644, skill)],
+            &signing_key,
+            "skills/taste-skill",
+        ),
+        &root,
+        &archive,
+    )
+    .unwrap();
+
+    assert_eq!(verified.name.as_str(), "taste-skill");
+}
+
+#[test]
+fn a_root_skill_takes_its_name_from_the_repository_without_case() {
+    assert_eq!(
+        skill_identity("Frontend-Slides", ".", None)
+            .unwrap()
+            .as_str(),
+        "frontend-slides"
+    );
+}
+
+#[test]
+fn a_folder_that_cannot_be_a_skill_name_falls_back_to_the_declared_name() {
+    assert_eq!(
+        skill_identity("skills", "skills/My_Skill", Some("my-skill"))
+            .unwrap()
+            .as_str(),
+        "my-skill"
+    );
+    let error = skill_identity("skills", "skills/My_Skill", None).unwrap_err();
+    assert_eq!(error.code, "INVALID_SOURCE");
+    assert!(error.message.contains("My_Skill"), "{}", error.message);
+}
+
+#[test]
+fn a_verified_skill_with_crlf_frontmatter_and_a_bom_verifies() {
+    let skill = "\u{feff}---\r\nname: awwwards-sections\r\ndescription: fixture\r\n---\r\n\r\n# Sections\r\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill.as_bytes(), b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    let verified = verify_artifact(
+        attestation_at_path(
+            &archive,
+            vec![file("SKILL.md", 0o644, skill.as_bytes())],
+            &signing_key,
+            "skills/awwwards-sections",
+        ),
+        &root,
+        &archive,
+    )
+    .unwrap();
+
+    assert_eq!(verified.name.as_str(), "awwwards-sections");
+}
+
+#[test]
+fn the_declared_name_reads_crlf_lines_a_bom_and_quotes() {
+    assert_eq!(
+        declared_skill_name(
+            "\u{feff}---\r\nname: design-style\r\ndescription: |\r\n  x\r\n---\r\n"
+        ),
+        Some("design-style".to_owned())
+    );
+    assert_eq!(
+        declared_skill_name("---\nname: \"quoted-name\"\n---\n"),
+        Some("quoted-name".to_owned())
+    );
+    assert_eq!(declared_skill_name("---\ndescription: x\n---\n"), None);
+    assert_eq!(declared_skill_name("# No frontmatter\nname: body\n"), None);
+    assert_eq!(declared_skill_name("---\nname: unclosed\n"), None);
 }
 
 #[test]

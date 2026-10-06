@@ -554,6 +554,8 @@ pub struct InstalledSkill {
     /// none. The lockfile never records it.
     pub page_url: Option<String>,
     pub external_references: Vec<ExternalReference>,
+    /// Set when SKILL.md declares another name than the installed folder.
+    pub name_warning: Option<String>,
 }
 
 pub trait Host {
@@ -2185,6 +2187,9 @@ fn render_installed(skill: &InstalledSkill) -> Result<Vec<Line>, CommandError> {
     if let Some(page) = &skill.page_url {
         lines.push(Line::linked_field("Skill page", page.clone(), page.clone()));
     }
+    if let Some(warning) = &skill.name_warning {
+        lines.push(Line::warn(warning.clone()));
+    }
     for reference in &skill.external_references {
         lines.push(Line::hint(format!(
             "SKILL.md references {} outside this Skill.",
@@ -2627,7 +2632,7 @@ impl LocalHost {
             &run::read_instructions(&prepared.files)?,
             &prepared.locked_source,
         )?;
-        let staged = materialize_remote(&prepared.files)?;
+        let staged = materialize_remote(&prepared)?;
         let staged_name =
             skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
         gate_new_behaviors(
@@ -2664,7 +2669,9 @@ impl LocalHost {
             .store(scope)
             .view(name, known)
             .map_err(CommandError::store)?;
+        let instructions = run::read_local_instructions(&view.canonical_path)?;
         Ok(InstalledSkill {
+            name_warning: run::declared_name_warning(&view.name, &instructions),
             name: view.name,
             source: view.skill.source,
             source_status: view.skill.source_status.as_str(),
@@ -2743,9 +2750,13 @@ impl LocalHost {
         )?
         .with_page_url(prepared.page_url.clone());
         let source_status = prepared.source_status.as_str();
-        let (name, _, files) =
+        let name = prepared
+            .skill_name()
+            .map_err(CommandError::remote)?
+            .as_str()
+            .to_owned();
+        let (_, files) =
             skilld_core::prepare_unverified_files(prepared.files).map_err(CommandError::remote)?;
-        let name = name.as_str().to_owned();
         let origin = SkillOrigin::Remote {
             source: selector.canonical(),
             exact_source,
@@ -2809,15 +2820,17 @@ impl LocalHost {
                 "the bundled skilld-maintained Skill is unavailable in this build",
             )
         })?;
-        let (name, _, files) = skilld_core::prepare_unverified_files(provider.skilld_run_files()?)
+        let (_, files) = skilld_core::prepare_unverified_files(provider.skilld_run_files()?)
             .map_err(CommandError::remote)?;
-        if name.as_str() != "skilld" {
+        if skilld_core::declared_skill_name(&run::read_instructions(&files)?).as_deref()
+            != Some("skilld")
+        {
             return Err(CommandError::operation(
                 "SOURCE_MISMATCH",
                 "the bundled Skill must declare the name skilld",
             ));
         }
-        let name = name.as_str().to_owned();
+        let name = "skilld".to_owned();
         let origin = SkillOrigin::Bundled;
         if !wanted.is_empty() {
             return Ok(RunOutcome::Files {
@@ -2967,7 +2980,7 @@ impl LocalHost {
                         &run::read_instructions(&prepared.files)?,
                         &prepared.locked_source,
                     )?;
-                    let staged = materialize_remote(&prepared.files)?;
+                    let staged = materialize_remote(&prepared)?;
                     store
                         .install_from_with_status(
                             staged.path(),
@@ -3375,7 +3388,7 @@ impl Host for LocalHost {
             let prepared = provider
                 .prepare_exact(&pending.selector, &pending.expected_commit, false)
                 .map_err(CommandError::remote)?;
-            let staged = materialize_remote(&prepared.files)?;
+            let staged = materialize_remote(&prepared)?;
             let staged_name =
                 skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
             if staged_name != pending.skill_name {
@@ -3941,7 +3954,7 @@ fn apply_update_selection(
         let prepared = provider
             .prepare_exact(&pending.selector, &pending.expected_commit, false)
             .map_err(CommandError::remote)?;
-        let staged = materialize_remote(&prepared.files)?;
+        let staged = materialize_remote(&prepared)?;
         let staged_name =
             skilld_core::SkillName::from_source(staged.path()).map_err(CommandError::domain)?;
         if staged_name != pending.skill_name {
@@ -4280,9 +4293,14 @@ impl StagedRemote {
     }
 }
 
-fn materialize_remote(files: &[skilld_core::PreparedFile]) -> Result<StagedRemote, CommandError> {
-    let (name, _, files) =
-        skilld_core::prepare_unverified_files(files.to_vec()).map_err(CommandError::remote)?;
+/// Stage a remote Skill under its source identity name.
+///
+/// The folder name is the name the store installs. It comes from the
+/// attested source, never from the SKILL.md frontmatter.
+fn materialize_remote(prepared: &PreparedRemoteSkill) -> Result<StagedRemote, CommandError> {
+    let name = prepared.skill_name().map_err(CommandError::remote)?;
+    let (_, files) = skilld_core::prepare_unverified_files(prepared.files.clone())
+        .map_err(CommandError::remote)?;
     let directory = tempfile::Builder::new()
         .prefix("skilld-remote-")
         .tempdir()
@@ -4583,6 +4601,7 @@ mod tests {
             source_status: "local",
             page_url: None,
             external_references: vec![],
+            name_warning: None,
         }
     }
 
@@ -4639,6 +4658,7 @@ mod tests {
                 page_url: (name == "vue")
                     .then(|| "https://skilld.dev/gh/skilld-dev/skills/vue".to_owned()),
                 external_references: vec![],
+                name_warning: None,
             };
             self.installs.lock().unwrap().push(request);
             Ok(vec![installed])
@@ -4927,6 +4947,7 @@ mod tests {
                     source_status: "unverified",
                     page_url: None,
                     external_references: vec![],
+                    name_warning: None,
                 }]),
                 other => panic!("unexpected source: {other:?}"),
             }
@@ -4994,6 +5015,7 @@ mod tests {
                 source_status: "verified",
                 page_url: None,
                 external_references: vec![],
+                name_warning: None,
             }])
         }
 
@@ -5059,6 +5081,7 @@ mod tests {
                 source_status: "verified",
                 page_url: None,
                 external_references: vec![],
+                name_warning: None,
             }])
         }
 
@@ -5194,6 +5217,7 @@ mod tests {
                         source_status: "unverified",
                         page_url: None,
                         external_references: vec![],
+                        name_warning: None,
                     }])
                 }
                 InstallSource::DirectRemote(_) => Err(CommandError::operation(
@@ -5322,6 +5346,7 @@ mod tests {
                         source_status: "unverified",
                         page_url: None,
                         external_references: vec![],
+                        name_warning: None,
                     }])
                 }
                 other => panic!("unexpected source: {other:?}"),

@@ -353,7 +353,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
                             "Skill {name} needs verified delivery at its declared commit"
                         )));
                     }
-                    let stage = materialize_remote(&prepared.files)?;
+                    let stage = materialize_remote(&prepared)?;
                     if SkillName::from_source(stage.path()).map_err(CommandError::domain)? != name {
                         return Err(manifest_error(format!(
                             "the delivered Skill does not match {name}"
