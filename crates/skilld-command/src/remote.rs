@@ -89,6 +89,20 @@ const MAX_UPDATE_COMMITS: usize = 500;
 const GITHUB_API_VERSION: &str = "2026-03-10";
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const RESOLUTION_TIMEOUT_MS: u64 = 60 * 1_000;
+/// The longest one request inside a Resolution deadline may take.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The slowest Artifact download skilld waits for, in bytes a second, on top
+/// of [`REQUEST_TIMEOUT`]. A 10 MiB Artifact gets 190 seconds.
+const DOWNLOAD_FLOOR_BYTES_PER_SECOND: u64 = 64 * 1024;
+/// Downloads of one Artifact. A download that arrives short or changed is
+/// fetched once more before the run fails.
+const ARTIFACT_DOWNLOADS: usize = 2;
+/// How long a Resolution may wait at one stage after its checks passed.
+///
+/// Packaging, signing, and publishing take under a second. A Resolution that
+/// waits longer at one of them is stuck: during a skilld.dev deploy, a build
+/// staged by the old site cannot be signed. A new Resolution can pass.
+const STALLED_STAGE_LIMIT: Duration = Duration::from_secs(15);
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct ResolutionDeadline {
@@ -311,6 +325,8 @@ pub struct PreparedRemoteSkill {
     /// when the server named none: the registry does not hold the Skill, the
     /// server is older, or the read was direct.
     pub page_url: Option<String>,
+    /// Files over a size limit that skilld.dev left out of the Artifact.
+    pub omitted_files: Vec<OmittedFile>,
 }
 
 impl PreparedRemoteSkill {
@@ -576,13 +592,12 @@ impl<'a> From<&'a RemoteUpdateComparison> for HostedComparison<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct HostedComparisonsResponse {
     results: Vec<HostedComparisonResult>,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, tag = "_tag", rename_all = "snake_case")]
+#[serde(tag = "_tag", rename_all = "snake_case")]
 enum HostedComparisonResult {
     Ready {
         id: String,
@@ -696,7 +711,7 @@ impl HostedComparisonResult {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 struct HostedCommit {
     sha: String,
     subject: String,
@@ -705,7 +720,6 @@ struct HostedCommit {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct HostedCommitAuthor {
     name: String,
     login: Option<String>,
@@ -898,14 +912,30 @@ impl SkilldRemote {
 
     /// Send one request and follow its redirects.
     ///
-    /// A 429, a 503, or a transport failure repeats the request up to
-    /// `max_retries` times. A request that must never repeat, such as a
+    /// A 429, a transient 5xx, or a transport failure repeats the request up
+    /// to `max_retries` times. A request that must never repeat, such as a
     /// public API POST or PATCH, passes zero.
     fn execute_with_retries(
+        &self,
+        request: HttpRequest,
+        allowed: AllowedOrigin,
+        deadline: Option<&mut ResolutionDeadline>,
+        max_retries: usize,
+    ) -> Result<HttpResponse, RemoteError> {
+        self.execute_bounded(request, allowed, deadline, None, max_retries)
+    }
+
+    /// [`Self::execute_with_retries`] with a time limit for each attempt.
+    ///
+    /// A request inside a Resolution deadline takes the time left, and never
+    /// more than [`REQUEST_TIMEOUT`]. A transfer passes the time its size
+    /// needs. Without either, the adapter applies its own limit.
+    fn execute_bounded(
         &self,
         mut request: HttpRequest,
         allowed: AllowedOrigin,
         mut deadline: Option<&mut ResolutionDeadline>,
+        transfer_timeout: Option<Duration>,
         max_retries: usize,
     ) -> Result<HttpResponse, RemoteError> {
         let mut redirects = 0_usize;
@@ -916,10 +946,10 @@ impl SkilldRemote {
                 if self.cancellation.is_cancelled() {
                     return Err(cancelled());
                 }
-                let timeout = deadline
-                    .as_deref()
-                    .map(ResolutionDeadline::remaining)
-                    .transpose()?;
+                let timeout = match deadline.as_deref() {
+                    Some(deadline) => Some(deadline.remaining()?.min(REQUEST_TIMEOUT)),
+                    None => transfer_timeout,
+                };
                 let response = self
                     .adapter
                     .send(&request, self.cancellation.as_ref(), timeout);
@@ -937,7 +967,7 @@ impl SkilldRemote {
                                 "a remote response exceeded its limit",
                             ));
                         }
-                        if matches!(response.status, 429 | 503) && retry < max_retries {
+                        if is_transient_status(response.status) && retry < max_retries {
                             retry += 1;
                             self.sleep(retry_delay(&response, retry), deadline.as_deref_mut())?;
                             continue;
@@ -1062,24 +1092,137 @@ impl SkilldRemote {
         let mut deadline = ResolutionDeadline::new();
         let mut retries = 0_u32;
         loop {
-            match self.resolve_once(source, &mut deadline)? {
+            let requests = retries + 1;
+            let attempt = self
+                .resolve_once(source, &mut deadline)
+                .map_err(|error| self.guide(error, source, requests, None))?;
+            match attempt {
                 ResolutionAttempt::Ready(artifact) => return Ok(*artifact),
                 ResolutionAttempt::Retryable { error, wait } => {
                     if retries == MAX_RESOLUTION_RETRIES {
-                        return Err(error);
+                        return Err(self.guide(error, source, requests, wait));
                     }
                     retries += 1;
-                    let wait = wait.map_or_else(
+                    let pause = wait.map_or_else(
                         || resolution_backoff(retries),
                         |wait| wait + jitter(Duration::from_millis(250)),
                     );
-                    if !deadline.remaining().is_ok_and(|remaining| wait < remaining) {
-                        return Err(error);
+                    if !deadline
+                        .remaining()
+                        .is_ok_and(|remaining| pause < remaining)
+                    {
+                        return Err(self.guide(error, source, requests, wait));
                     }
-                    self.sleep(wait, Some(&mut deadline))?;
+                    self.sleep(pause, Some(&mut deadline))
+                        .map_err(|error| self.guide(error, source, requests, None))?;
                 }
             }
         }
+    }
+
+    /// Add the next step for an Agent to a Resolution failure.
+    ///
+    /// `requests` counts the Resolutions skilld requested in this run. `wait`
+    /// is the wait skilld.dev named for a retryable failure.
+    fn guide(
+        &self,
+        error: RemoteError,
+        source: &SourceRequest,
+        requests: u32,
+        wait: Option<Duration>,
+    ) -> RemoteError {
+        if error.next_step.is_some() {
+            return error;
+        }
+        let times = if requests == 1 {
+            "once".to_owned()
+        } else {
+            format!("{requests} times")
+        };
+        let wait_text = wait.map_or_else(
+            || "a minute".to_owned(),
+            |wait| human_wait(wait.as_secs().clamp(1, 86_400)),
+        );
+        // skilld.dev builds a signed-in request on the account's own GitHub
+        // quota. A token that cannot be read counts as signed out: a new
+        // sign-in repairs it.
+        if error.code == "RATE_LIMITED" && !matches!(self.tokens.access_token(), Ok(Some(_))) {
+            return error.with_next_step(format!(
+                "To use your own GitHub quota, run skilld auth login. Then run the same command again. Without a sign-in, run the same command again in {wait_text}. skilld requested the Skill {times}."
+            ));
+        }
+        let next_step = match error.code {
+            "RESOLUTION_TIMEOUT" => format!(
+                "The Skill did not cause this failure. skilld requested the Skill {times}. Run the same command once more."
+            ),
+            "SERVICE_UNAVAILABLE"
+            | "RATE_LIMITED"
+            | "SOURCE_UNAVAILABLE"
+            | "SIGNER_UNAVAILABLE"
+            | "CHECK_UNAVAILABLE" => format!(
+                "skilld requested the Skill {times}. Run the same command again in {wait_text}."
+            ),
+            "CHECK_BLOCKED" => format!(
+                "Do not retry. The checks give the same result each time. Tell the user why skilld.dev blocked the Skill, from the message above. If the user wants to read the Skill, its source is at {}.",
+                github_source_url(source, None)
+            ),
+            "SOURCE_NOT_FOUND" => self.not_found_step(source),
+            _ => return error,
+        };
+        error.with_next_step(next_step)
+    }
+
+    /// "Did you mean" refs for a Skill skilld.dev did not find, then a search.
+    ///
+    /// The registry holds the Skills of a Repository it indexed. Otherwise the
+    /// public search answers. Both are reads.
+    fn not_found_step(&self, source: &SourceRequest) -> String {
+        let SourceSelector::NamedSkill { name } = &source.selector else {
+            return "Do not retry this ref. Check the owner, Repository, and Skill path."
+                .to_owned();
+        };
+        let terms = name.replace(['-', '_'], " ");
+        // A failed read only removes the suggestions. The step still names
+        // the search that finds the Skill.
+        let mut candidates = self
+            .owner_skills_page(&source.owner, 1)
+            .map(|page| page.items)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|row| {
+                row.owner.eq_ignore_ascii_case(&source.owner)
+                    && row.repo.eq_ignore_ascii_case(&source.repository)
+            })
+            .map(|row| format!("{}/{}/{}", row.owner, row.repo, row.name))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            candidates = self
+                .search(&terms, 5)
+                .map(|found| {
+                    found
+                        .items
+                        .iter()
+                        .map(|item| {
+                            format!(
+                                "{}/{}/{}",
+                                item.source.owner, item.source.repository, item.name
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        let suggestions = did_you_mean(name, candidates);
+        let search = format!("To find more Skills, run skilld search {terms}.");
+        if suggestions.is_empty() {
+            return format!(
+                "Do not retry this ref. Check the owner, Repository, and Skill name. {search}"
+            );
+        }
+        format!(
+            "Do not retry this ref. Did you mean one of these? {}. {search}",
+            suggestions.join(", ")
+        )
     }
 
     fn resolve_once(
@@ -1116,6 +1259,8 @@ impl SkilldRemote {
                 "the Resolution identifier is invalid",
             ));
         }
+        // The stage the Resolution waits at, and how long it waited there.
+        let mut waiting: Option<(RemoteProgressStage, Duration)> = None;
         for _ in 0..MAX_POLLS {
             if resolution.resolution_id() != resolution_id {
                 return Err(RemoteError::new(
@@ -1145,8 +1290,26 @@ impl SkilldRemote {
                     stage,
                     poll_after_ms,
                 } => {
-                    if let RemotePendingStage::Known(stage) = stage {
+                    let stage = match stage {
+                        RemotePendingStage::Known(stage) => Some(stage),
+                        RemotePendingStage::Unknown(_) => None,
+                    };
+                    if let Some(stage) = stage {
                         self.progress.stage(stage);
+                    }
+                    let waited = match (stage, waiting) {
+                        (Some(stage), Some((before, waited))) if stage == before => waited,
+                        _ => Duration::ZERO,
+                    };
+                    waiting = stage.map(|stage| (stage, waited));
+                    if let Some(stage) = stage
+                        && is_post_check_stage(stage)
+                        && waited >= STALLED_STAGE_LIMIT
+                    {
+                        return Ok(ResolutionAttempt::Retryable {
+                            error: resolution_timeout(),
+                            wait: Some(Duration::ZERO),
+                        });
                     }
                     if !(250..=60_000).contains(&poll_after_ms) {
                         return Err(RemoteError::new(
@@ -1159,6 +1322,9 @@ impl SkilldRemote {
                         self.sleeper.as_ref(),
                         self.cancellation.as_ref(),
                     )?;
+                    if let Some((_, waited)) = &mut waiting {
+                        *waited += Duration::from_millis(poll_after_ms);
+                    }
                     let path = format!("/api/v1/resolutions/{}", path_segment(&resolution_id));
                     let request = HttpRequest {
                         method: HttpMethod::Get,
@@ -1187,9 +1353,10 @@ impl SkilldRemote {
                     retry_after_seconds,
                     ..
                 } => {
+                    let code = problem_code(&code);
                     let error = RemoteError::new(
-                        problem_code(&code),
-                        resolution_failure_message(retryable, retry_after_seconds),
+                        code,
+                        resolution_failure_message(code, retryable, retry_after_seconds),
                     );
                     return if retryable {
                         Ok(ResolutionAttempt::Retryable {
@@ -1319,8 +1486,14 @@ impl SkilldRemote {
             body: vec![],
             response_limit: limit,
         };
-        self.execute(request, AllowedOrigin::Artifact(self.endpoint.clone()))
-            .map(|response| response.body)
+        self.execute_bounded(
+            request,
+            AllowedOrigin::Artifact(self.endpoint.clone()),
+            None,
+            Some(download_timeout(attestation.content_bytes)),
+            1,
+        )
+        .map(|response| response.body)
     }
 
     fn github_json<T: for<'de> Deserialize<'de>>(
@@ -1760,6 +1933,7 @@ impl SkilldRemote {
             },
             files,
             page_url: None,
+            omitted_files: Vec::new(),
         })
     }
 
@@ -2762,25 +2936,58 @@ impl RemoteProvider for SkilldRemote {
             descriptor,
             page_url,
         } = self.resolve(selector.source())?;
+        let resolved = &descriptor.attestation.source;
+        let source_url = github_source_url(
+            selector.source(),
+            Some((&resolved.commit_sha, &resolved.skill_path)),
+        );
+        let unverifiable = |error: RemoteError| unverifiable_artifact(error, &source_url);
         self.progress
             .stage(RemoteProgressStage::VerifyingAttestation);
-        let root = self.verified_root()?;
-        verify_attestation(&descriptor.attestation, &root)?;
+        let root = self.verified_root().map_err(unverifiable)?;
+        verify_attestation(&descriptor.attestation, &root).map_err(unverifiable)?;
         self.progress.stage(RemoteProgressStage::RequestingDownload);
         let grant = self.grant(&descriptor.artifact_id, &resolution_id)?;
-        self.progress
-            .stage(RemoteProgressStage::DownloadingArtifact);
-        let archive = self.download_grant(&descriptor, grant)?;
-        self.progress.stage(RemoteProgressStage::VerifyingArtifact);
-        let verified = verify_artifact(descriptor.attestation, &root, &archive)?;
+        let mut downloads = 0;
+        let verified = loop {
+            downloads += 1;
+            self.progress
+                .stage(RemoteProgressStage::DownloadingArtifact);
+            let archive = self.download_grant(&descriptor, grant.clone())?;
+            self.progress.stage(RemoteProgressStage::VerifyingArtifact);
+            match verify_artifact(descriptor.attestation.clone(), &root, &archive) {
+                Ok(verified) => break verified,
+                // The signed attestation names the bytes, so bytes that arrive
+                // short or changed failed in transit. The same grant serves
+                // them again.
+                Err(error)
+                    if downloads < ARTIFACT_DOWNLOADS && is_transfer_mismatch(error.code) => {}
+                Err(error) if is_transfer_mismatch(error.code) => {
+                    return Err(RemoteError::new(
+                        error.code,
+                        "the downloaded Artifact does not match its attestation. skilld downloaded it twice and loaded nothing",
+                    )
+                    .with_next_step(
+                        "The Skill did not cause this failure. The download changed on its way. Run the same command once more.",
+                    ));
+                }
+                Err(error) => return Err(unverifiable(error)),
+            }
+        };
         if matches!(
             &selector.source().selector,
             SourceSelector::NamedSkill { name } if name != verified.name.as_str()
         ) {
             return Err(RemoteError::new(
                 "SOURCE_MISMATCH",
-                "the resolved Skill name does not match the selector",
-            ));
+                format!(
+                    "skilld.dev delivered the Skill {}, not the Skill this ref names",
+                    verified.name
+                ),
+            )
+            .with_next_step(format!(
+                "Do not retry. The same ref resolves to the same Skill. Tell the user that skilld.dev delivered another Skill. If the user wants to read it, its source is at {source_url}."
+            )));
         }
         Ok(PreparedRemoteSkill {
             locked_source: LockedSource::Remote {
@@ -2794,6 +3001,7 @@ impl RemoteProvider for SkilldRemote {
                 installed_sha256: verified.installed_sha256,
                 attestation_key_id: verified.attestation.signature.key_id.clone(),
             },
+            omitted_files: omitted_files(&verified.attestation.check_results),
             files: verified.files,
             page_url,
         })
@@ -3429,6 +3637,45 @@ fn idempotency_header() -> HttpHeader {
     }
 }
 
+/// A status that the same request can pass later: a rate limit, or a 5xx
+/// that a deploy or an overloaded edge answers with.
+const fn is_transient_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+/// The time one Artifact download may take, from its attested size.
+fn download_timeout(content_bytes: u64) -> Duration {
+    REQUEST_TIMEOUT + Duration::from_secs(content_bytes / DOWNLOAD_FLOOR_BYTES_PER_SECOND)
+}
+
+/// An Artifact that arrived short or with other bytes than its attestation names.
+/// Add the next step to an Artifact skilld could not verify.
+///
+/// A signing key that skilld.dev has not published yet passes after its
+/// deploy. Every other failure gives the same result each time.
+fn unverifiable_artifact(error: RemoteError, source_url: &str) -> RemoteError {
+    if error.next_step.is_some() {
+        return error;
+    }
+    let next_step = match error.code {
+        "SIGNING_KEY_UNKNOWN" => {
+            "The Skill did not cause this failure. skilld.dev is changing its signing key. Run the same command again in a minute.".to_owned()
+        }
+        "TRUSTED_ROOT_MISMATCH" | "TRUSTED_ROOT_INVALID" | "TRUSTED_ROOT_SIGNATURE_INVALID" => {
+            "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to run skilld upgrade, then run the same command again.".to_owned()
+        }
+        "HTTP_TRANSPORT" | "SERVICE_UNAVAILABLE" | "RATE_LIMITED" | "CANCELLED" => return error,
+        _ => format!(
+            "Do not retry. skilld cannot verify the Artifact for this Skill, and loaded nothing. Tell the user. If the user wants to read the Skill, its source is at {source_url}."
+        ),
+    };
+    error.with_next_step(next_step)
+}
+
+fn is_transfer_mismatch(code: &str) -> bool {
+    matches!(code, "ARTIFACT_SIZE_MISMATCH" | "ARTIFACT_DIGEST_MISMATCH")
+}
+
 fn retry_delay(response: &HttpResponse, attempt: usize) -> Duration {
     response
         .header("retry-after")
@@ -3447,9 +3694,9 @@ fn parse_json<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, RemoteErr
     })
 }
 
-/// RFC 9457 problem details, exactly the six fields skilld.dev sends.
+/// RFC 9457 problem details. skilld reads these fields and ignores new ones,
+/// so skilld.dev can add a field without breaking a released CLI.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Problem {
     code: String,
     detail: Option<String>,
@@ -3624,7 +3871,7 @@ fn jitter(maximum: Duration) -> Duration {
 fn resolution_timeout() -> RemoteError {
     RemoteError::new(
         "RESOLUTION_TIMEOUT",
-        "Artifact creation stayed pending too long. Retry the same command.",
+        "skilld.dev did not finish the Artifact within 60 seconds",
     )
 }
 
@@ -3678,15 +3925,94 @@ fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
 /// skilld.dev knows the wait for a failure such as a rate limit, so the message
 /// carries it. Without a wait, the person is told only that a retry is worth
 /// trying.
-fn resolution_failure_message(retryable: bool, retry_after_seconds: Option<u64>) -> String {
-    match (retryable, retry_after_seconds) {
-        (true, Some(seconds)) => format!(
+fn resolution_failure_message(
+    code: &str,
+    retryable: bool,
+    retry_after_seconds: Option<u64>,
+) -> String {
+    match (retryable, retry_after_seconds, code) {
+        (true, Some(seconds), _) => format!(
             "the Resolution failed. Retry in {}.",
             human_wait(seconds.clamp(1, 86_400))
         ),
-        (true, None) => "the Resolution failed and may be retried".to_owned(),
-        (false, _) => "the Resolution failed".to_owned(),
+        (true, None, _) => "skilld.dev could not create the Artifact this time".to_owned(),
+        (false, _, "SOURCE_NOT_FOUND") => {
+            "skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name."
+                .to_owned()
+        }
+        (false, _, "SOURCE_ACCESS_DENIED" | "AUTH_REQUIRED") => {
+            "skilld.dev cannot read this Repository. If it is private, run skilld auth login."
+                .to_owned()
+        }
+        (false, _, "INVALID_SOURCE") => {
+            "skilld.dev cannot create an Artifact from this source".to_owned()
+        }
+        (false, _, _) => "the Resolution failed".to_owned(),
     }
+}
+
+/// A stage after the checks passed. skilld.dev finishes each one in under a
+/// second, so a long wait at one means the Resolution is stuck.
+const fn is_post_check_stage(stage: RemoteProgressStage) -> bool {
+    matches!(
+        stage,
+        RemoteProgressStage::Packaging
+            | RemoteProgressStage::Encrypting
+            | RemoteProgressStage::Signing
+            | RemoteProgressStage::Publishing
+    )
+}
+
+/// The GitHub page for a source, at its exact commit and folder when known.
+fn github_source_url(source: &SourceRequest, exact: Option<(&str, &str)>) -> String {
+    let base = format!("https://github.com/{}/{}", source.owner, source.repository);
+    match exact {
+        Some((commit, ".")) => format!("{base}/tree/{commit}"),
+        Some((commit, path)) => format!("{base}/tree/{commit}/{path}"),
+        None => match &source.r#ref {
+            Some(SourceRef::Commit { value }) => format!("{base}/tree/{value}"),
+            _ => base,
+        },
+    }
+}
+
+/// Up to five refs, nearest name first, for a name skilld.dev did not find.
+fn did_you_mean(name: &str, candidates: Vec<String>) -> Vec<String> {
+    let mut ranked = candidates
+        .into_iter()
+        .filter(|candidate| !candidate.chars().any(is_unsafe_terminal))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|candidate| {
+            let skill = candidate.rsplit('/').next().unwrap_or_default().to_owned();
+            (edit_distance(name, &skill), candidate)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort();
+    ranked
+        .into_iter()
+        .take(5)
+        .map(|(_, candidate)| candidate)
+        .collect()
+}
+
+/// Levenshtein distance over characters. Skill names are short.
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    for (row, left_char) in left.chars().enumerate() {
+        let mut current = vec![row + 1];
+        for (column, right_char) in right.iter().enumerate() {
+            let substitution = previous[column] + usize::from(left_char != *right_char);
+            current.push(
+                substitution
+                    .min(previous[column + 1] + 1)
+                    .min(current[column] + 1),
+            );
+        }
+        previous = current;
+    }
+    previous[right.len()]
 }
 
 /// A wait a person can act on: seconds under a minute, whole minutes above it.
@@ -3717,7 +4043,7 @@ fn invalid_github() -> RemoteError {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, tag = "state", rename_all = "lowercase")]
+#[serde(tag = "state", rename_all = "lowercase")]
 enum Resolution {
     Pending {
         #[serde(rename = "resolutionId")]
@@ -3776,16 +4102,83 @@ struct ResolvedArtifact {
     page_url: Option<String>,
 }
 
+/// The signed check that names files skilld.dev left out of an Artifact.
+///
+/// It is never required: the Skill loads without the files. Each finding
+/// reads `PATH: N bytes, URL`, where the URL is the file on GitHub at the
+/// Artifact commit.
+const OMITTED_FILES_CHECK: &str = "omitted-files";
+
+/// The most omitted files skilld names for one Skill.
+const MAX_OMITTED_FILES: usize = 100;
+
+/// A file skilld.dev left out of an Artifact, because it is over a size limit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OmittedFile {
+    /// The path inside the Skill, or the whole finding when it has another shape.
+    pub path: String,
+    pub bytes: Option<u64>,
+    /// The file on GitHub. `None` for a URL on another host.
+    pub url: Option<String>,
+}
+
+/// The files the `omitted-files` check names.
+fn omitted_files(results: &[skilld_core::CheckResult]) -> Vec<OmittedFile> {
+    results
+        .iter()
+        .filter(|result| result.name == OMITTED_FILES_CHECK)
+        .flat_map(|result| &result.findings)
+        .take(MAX_OMITTED_FILES)
+        .map(|finding| omitted_file(finding))
+        .collect()
+}
+
+/// Parse `PATH: N bytes, URL`. A finding in another shape stays whole.
+fn omitted_file(finding: &str) -> OmittedFile {
+    let (head, url) = match finding.rsplit_once(", ") {
+        Some((head, url)) if url.starts_with("https://") => (head, Some(url)),
+        _ => (finding, None),
+    };
+    let sized = head.rsplit_once(": ").and_then(|(path, size)| {
+        let digits = size.strip_suffix(" bytes")?.replace(',', "");
+        digits.parse::<u64>().ok().map(|bytes| (path, bytes))
+    });
+    let Some((path, bytes)) = sized else {
+        return OmittedFile {
+            path: finding.to_owned(),
+            bytes: None,
+            url: None,
+        };
+    };
+    let url = url
+        .filter(|value| {
+            !value.chars().any(is_unsafe_terminal)
+                && Url::parse(value).is_ok_and(|url| {
+                    url.scheme() == "https"
+                        && matches!(
+                            url.host_str(),
+                            Some("github.com" | "raw.githubusercontent.com")
+                        )
+                })
+        })
+        .map(str::to_owned);
+    OmittedFile {
+        path: path.to_owned(),
+        bytes: Some(bytes),
+        url,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 struct ArtifactDescriptor {
     artifact_id: String,
     visibility: RepositoryVisibility,
     attestation: ArtifactAttestation,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields, tag = "kind", rename_all = "lowercase")]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 enum ArtifactGrant {
     Public {
         #[serde(rename = "artifactId")]

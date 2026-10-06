@@ -579,7 +579,8 @@ fn a_server_failure_names_the_request_id_to_report() {
             &[("x-request-id", "req-123")],
         )
     };
-    let host = host(FakeHttp::with([failure()]), None);
+    // A 500 repeats twice before it fails, like every transient status.
+    let host = host(FakeHttp::with([failure(), failure(), failure()]), None);
 
     let (exit, _, stderr) = run(&host, &["skilld", "trending"]);
 
@@ -592,12 +593,13 @@ fn a_server_failure_names_the_request_id_to_report() {
 
 #[test]
 fn a_non_problem_failure_falls_back_to_the_http_status() {
+    let bad_gateway = || HttpResponse {
+        status: 502,
+        headers: BTreeMap::new(),
+        body: b"bad gateway".to_vec(),
+    };
     let host = host(
-        FakeHttp::with([HttpResponse {
-            status: 502,
-            headers: BTreeMap::new(),
-            body: b"bad gateway".to_vec(),
-        }]),
+        FakeHttp::with([bad_gateway(), bad_gateway(), bad_gateway()]),
         None,
     );
 

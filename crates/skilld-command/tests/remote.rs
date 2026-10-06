@@ -257,7 +257,28 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn verified_remote_responses() -> (TrustedRootPin, Vec<HttpResponse>) {
-    let skill = b"---\nname: example\ndescription: verified\n---\n";
+    verified_remote_responses_for(b"---\nname: example\ndescription: verified\n---\n")
+}
+
+fn passing_checks() -> Vec<CheckResult> {
+    vec![CheckResult {
+        name: "path-policy".to_owned(),
+        version: "1".to_owned(),
+        outcome: CheckOutcome::Pass,
+        required: true,
+        summary: None,
+        findings: vec![],
+    }]
+}
+
+fn verified_remote_responses_for(skill: &[u8]) -> (TrustedRootPin, Vec<HttpResponse>) {
+    verified_remote_responses_with(skill, passing_checks())
+}
+
+fn verified_remote_responses_with(
+    skill: &[u8],
+    checks: Vec<CheckResult>,
+) -> (TrustedRootPin, Vec<HttpResponse>) {
     let archive = tar_skill(skill);
     let root_key = SigningKey::from_bytes(&[7_u8; 32]);
     let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
@@ -291,14 +312,6 @@ fn verified_remote_responses() -> (TrustedRootPin, Vec<HttpResponse>) {
         size: skill.len() as u64,
         sha256: hex(&Sha256::digest(skill)),
     };
-    let checks = vec![CheckResult {
-        name: "path-policy".to_owned(),
-        version: "1".to_owned(),
-        outcome: CheckOutcome::Pass,
-        required: true,
-        summary: None,
-        findings: vec![],
-    }];
     let content_sha256 = hex(&Sha256::digest(&archive));
     let artifact_id = format!("sha256:{content_sha256}");
     let statement = serde_json::to_vec(&json!({
@@ -1650,7 +1663,14 @@ fn a_retryable_resolution_says_it_may_be_retried_after_three_retries() {
 
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
-    assert_eq!(error.message, "the Resolution failed and may be retried");
+    assert_eq!(
+        error.message,
+        "skilld.dev could not create the Artifact this time"
+    );
+    assert_eq!(
+        error.next_step.as_deref(),
+        Some("skilld requested the Skill 4 times. Run the same command again in a minute.")
+    );
     let keys = idempotency_keys(&http);
     assert_eq!(keys.len(), 4);
     assert_eq!(keys.iter().collect::<BTreeSet<_>>().len(), 4);
@@ -1663,14 +1683,14 @@ fn a_retryable_resolution_says_it_may_be_retried_after_three_retries() {
 fn a_rate_limited_resolution_is_requested_again_with_a_new_key_after_a_backoff() {
     let http = Arc::new(FakeHttp::with([
         failed_resolution("RATE_LIMITED", true, None),
-        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        failed_resolution("INVALID_SOURCE", false, None),
     ]));
     let sleeper = Arc::new(RecordingSleeper::default());
     let remote = resolution_remote(http.clone(), sleeper.clone());
 
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
-    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(error.code, "INVALID_SOURCE");
     let keys = idempotency_keys(&http);
     assert_eq!(keys.len(), 2);
     assert_ne!(keys[0], keys[1]);
@@ -1683,14 +1703,14 @@ fn a_rate_limited_resolution_is_requested_again_with_a_new_key_after_a_backoff()
 fn a_short_retry_after_is_honored_before_the_next_resolution() {
     let http = Arc::new(FakeHttp::with([
         failed_resolution("RATE_LIMITED", true, Some(5)),
-        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        failed_resolution("INVALID_SOURCE", false, None),
     ]));
     let sleeper = Arc::new(RecordingSleeper::default());
     let remote = resolution_remote(http.clone(), sleeper.clone());
 
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
-    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(error.code, "INVALID_SOURCE");
     let waited = *sleeper.elapsed.lock().unwrap();
     assert!(waited >= Duration::from_secs(5), "{waited:?}");
     assert!(waited < Duration::from_millis(5_250), "{waited:?}");
@@ -2527,7 +2547,13 @@ fn a_pending_resolution_times_out_after_at_most_sixty_seconds() {
     assert_eq!(error.code, "RESOLUTION_TIMEOUT");
     assert_eq!(
         error.message,
-        "Artifact creation stayed pending too long. Retry the same command."
+        "skilld.dev did not finish the Artifact within 60 seconds"
+    );
+    assert_eq!(
+        error.next_step.as_deref(),
+        Some(
+            "The Skill did not cause this failure. skilld requested the Skill once. Run the same command once more."
+        )
     );
     assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(60));
     assert_eq!(http.requests.lock().unwrap().len(), 2);
@@ -3289,6 +3315,7 @@ impl FakeProvider {
                     skilld_core::SourceSelector::NamedSkill { name } if name == "example"
                 ))
             .then(|| "https://skilld.dev/gh/skilld-dev/skills/example".to_owned()),
+            omitted_files: Vec::new(),
         }
     }
 }
@@ -3482,6 +3509,7 @@ impl BatchProvider {
                 attestation_key_id: "test-key".to_owned(),
             },
             page_url: None,
+            omitted_files: Vec::new(),
         }
     }
 }
@@ -5104,5 +5132,578 @@ agent-skills-spec: The Skill does not match the Agent Skills specification. \
 Findings: The Skill name must match its directory name. \
 source-policy: A Skill file exceeds 2097152 bytes. \
 Findings: a.webp; b.gif; c [2J.mp4; and 2 more."
+    );
+}
+
+fn pinned_remote(
+    pin: TrustedRootPin,
+    http: Arc<FakeHttp>,
+    sleeper: Arc<RecordingSleeper>,
+) -> SkilldRemote {
+    SkilldRemote::new(
+        http,
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(sleeper)
+}
+
+fn example_selector() -> RemoteSelector {
+    RemoteSelector::parse("skilld-dev/skills/example").unwrap()
+}
+
+fn pending_at(stage: &str, poll_after_ms: u64) -> HttpResponse {
+    response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "pending",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "stage": stage,
+            "pollAfterMs": poll_after_ms
+        }))
+        .unwrap(),
+    )
+}
+
+fn request_urls(http: &FakeHttp) -> Vec<String> {
+    http.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request.url.clone())
+        .collect()
+}
+
+#[test]
+fn a_bad_gateway_during_a_deploy_repeats_the_same_resolution_request() {
+    for status in [500, 502, 504] {
+        let (pin, mut responses) = verified_remote_responses();
+        responses.insert(0, response(status, b"<html>Bad gateway</html>".to_vec()));
+        let http = Arc::new(FakeHttp::with(responses));
+        let remote = pinned_remote(pin, http.clone(), Arc::new(RecordingSleeper::default()));
+
+        let prepared = remote.prepare(&example_selector(), false);
+
+        assert!(prepared.is_ok(), "HTTP {status}: {prepared:?}");
+        let keys = idempotency_keys(&http);
+        assert!(request_urls(&http)[1].ends_with("/api/v1/resolutions"));
+        assert_eq!(
+            keys[0], keys[1],
+            "HTTP {status} must replay the same Resolution"
+        );
+    }
+}
+
+#[test]
+fn a_truncated_artifact_download_is_downloaded_again() {
+    let (pin, mut responses) = verified_remote_responses();
+    let archive = responses[3].body.clone();
+    responses[3] = response(200, archive[..512].to_vec());
+    responses.push(response(200, archive));
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http.clone(), Arc::new(RecordingSleeper::default()));
+
+    let prepared = remote.prepare(&example_selector(), false).unwrap();
+
+    assert_eq!(prepared.files[0].path, "SKILL.md");
+    let urls = request_urls(&http);
+    assert_eq!(urls.len(), 5);
+    assert!(urls[3].ends_with("/content"));
+    assert!(urls[4].ends_with("/content"));
+}
+
+#[test]
+fn a_corrupt_artifact_download_that_repeats_says_what_to_do_next() {
+    let (pin, mut responses) = verified_remote_responses();
+    let mut corrupt = responses[3].body.clone();
+    corrupt[600] ^= 1;
+    responses[3] = response(200, corrupt.clone());
+    responses.push(response(200, corrupt));
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http.clone(), Arc::new(RecordingSleeper::default()));
+
+    let error = remote.prepare(&example_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "ARTIFACT_DIGEST_MISMATCH");
+    assert_eq!(
+        error.message,
+        "the downloaded Artifact does not match its attestation. skilld downloaded it twice and loaded nothing"
+    );
+    assert_eq!(
+        error.next_step.as_deref(),
+        Some(
+            "The Skill did not cause this failure. The download changed on its way. Run the same command once more."
+        )
+    );
+    assert_eq!(http.requests.lock().unwrap().len(), 5);
+}
+
+#[test]
+fn a_resolution_stalled_at_signing_is_requested_again() {
+    let (pin, ready) = verified_remote_responses();
+    let mut responses = vec![
+        pending_at("signing", 5_000),
+        pending_at("signing", 5_000),
+        pending_at("signing", 5_000),
+        pending_at("signing", 5_000),
+    ];
+    responses.extend(ready);
+    let http = Arc::new(FakeHttp::with(responses));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = pinned_remote(pin, http.clone(), sleeper.clone());
+
+    let prepared = remote.prepare(&example_selector(), false);
+
+    assert!(prepared.is_ok(), "{prepared:?}");
+    let urls = request_urls(&http);
+    let posts = urls
+        .iter()
+        .enumerate()
+        .filter(|(_, url)| url.ends_with("/api/v1/resolutions"))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert_eq!(posts, [0, 4]);
+    let keys = idempotency_keys(&http);
+    assert_ne!(keys[0], keys[4]);
+    assert!(*sleeper.elapsed.lock().unwrap() < Duration::from_secs(20));
+}
+
+#[test]
+fn a_slow_github_fetch_keeps_its_resolution() {
+    let (pin, ready) = verified_remote_responses();
+    let mut responses = (0..6)
+        .map(|_| pending_at("fetching", 5_000))
+        .collect::<Vec<_>>();
+    responses.extend(ready);
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http.clone(), Arc::new(RecordingSleeper::default()));
+
+    let prepared = remote.prepare(&example_selector(), false);
+
+    assert!(prepared.is_ok(), "{prepared:?}");
+    let posts = request_urls(&http)
+        .iter()
+        .filter(|url| url.ends_with("/api/v1/resolutions"))
+        .count();
+    assert_eq!(posts, 1);
+}
+
+#[test]
+fn a_missing_source_says_what_to_check() {
+    let http = Arc::new(FakeHttp::with([failed_resolution(
+        "SOURCE_NOT_FOUND",
+        false,
+        None,
+    )]));
+    let remote = resolution_remote(http, Arc::new(RecordingSleeper::default()));
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(
+        error.message,
+        "skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name."
+    );
+}
+
+#[test]
+fn a_large_artifact_download_gets_time_for_its_size() {
+    let mut skill = b"---\nname: example\ndescription: large\n---\n".to_vec();
+    skill.resize(6 * 1024 * 1024, b'a');
+    let (pin, responses) = verified_remote_responses_for(&skill);
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http.clone(), Arc::new(RecordingSleeper::default()));
+
+    let prepared = remote.prepare(&example_selector(), false);
+
+    assert!(prepared.is_ok(), "{prepared:?}");
+    let timeouts = http.timeouts.lock().unwrap();
+    assert!(
+        timeouts[3].is_some_and(|timeout| timeout > Duration::from_secs(60)),
+        "{timeouts:?}"
+    );
+}
+
+/// Run `skilld run` against a remote served by `http`, and return the exit
+/// code, stdout, and stderr.
+fn run_remote_cli(remote: SkilldRemote, args: &[&str]) -> (u8, String, String) {
+    let temporary = tempfile::tempdir().unwrap();
+    let host = LocalHost::new(
+        temporary.path().join("project"),
+        temporary.path().join("data"),
+    )
+    .with_remote_provider(Arc::new(remote));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = skilld_command::run_with_output(
+        args,
+        &host,
+        skilld_command::OutputContext::Plain {
+            platform: skilld_command::CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    (
+        result.exit_code,
+        String::from_utf8(stdout).unwrap(),
+        String::from_utf8(stderr).unwrap(),
+    )
+}
+
+fn unpinned(responses: Vec<HttpResponse>) -> SkilldRemote {
+    resolution_remote(
+        Arc::new(FakeHttp::with(responses)),
+        Arc::new(RecordingSleeper::default()),
+    )
+}
+
+const RUN: [&str; 3] = ["skilld", "run", "skilld-dev/skilld/skilld"];
+
+#[test]
+fn a_retryable_failure_says_how_often_skilld_asked_and_exits_with_75() {
+    let failed = || failed_resolution("SERVICE_UNAVAILABLE", true, None);
+    let remote = unpinned(vec![failed(), failed(), failed(), failed()]);
+
+    let (exit, stdout, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!((exit, stdout.as_str()), (75, ""));
+    assert_eq!(
+        stderr,
+        "SERVICE_UNAVAILABLE: skilld.dev could not create the Artifact this time\n\
+Next step: skilld requested the Skill 4 times. Run the same command again in a minute.\n"
+    );
+}
+
+fn signed_in(responses: Vec<HttpResponse>) -> SkilldRemote {
+    SkilldRemote::new(
+        Arc::new(FakeHttp::with(responses)),
+        Arc::new(FixedToken),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(RecordingSleeper::default()))
+}
+
+#[test]
+fn a_rate_limited_run_without_a_sign_in_offers_the_own_quota_first() {
+    let remote = unpinned(vec![failed_resolution("RATE_LIMITED", true, Some(1_500))]);
+
+    let (exit, _, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!(exit, 75);
+    assert_eq!(
+        stderr,
+        "RATE_LIMITED: the Resolution failed. Retry in 25 minutes.\n\
+Next step: To use your own GitHub quota, run skilld auth login. Then run the same command again. \
+Without a sign-in, run the same command again in 25 minutes. skilld requested the Skill once.\n"
+    );
+}
+
+#[test]
+fn a_rate_limited_run_that_is_signed_in_names_the_wait_skilld_dev_asked_for() {
+    let remote = signed_in(vec![failed_resolution("RATE_LIMITED", true, Some(1_500))]);
+
+    let (exit, _, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!(exit, 75);
+    assert_eq!(
+        stderr,
+        "RATE_LIMITED: the Resolution failed. Retry in 25 minutes.\n\
+Next step: skilld requested the Skill once. Run the same command again in 25 minutes.\n"
+    );
+}
+
+#[test]
+fn a_blocked_skill_says_not_to_retry_and_names_its_source() {
+    let blocked = response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "blocked",
+            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+            "checkResults": [{
+                "name": "credential-material",
+                "version": "1",
+                "outcome": "fail",
+                "required": true,
+                "summary": "The Skill contains private key material.",
+                "findings": ["examples/key.pem"],
+            }],
+        }))
+        .unwrap(),
+    );
+
+    let (exit, _, stderr) = run_remote_cli(unpinned(vec![blocked]), &RUN);
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "CHECK_BLOCKED: the Resolution was blocked by check results. \
+credential-material: The Skill contains private key material. Findings: examples/key.pem.\n\
+Next step: Do not retry. The checks give the same result each time. \
+Tell the user why skilld.dev blocked the Skill, from the message above. \
+If the user wants to read the Skill, its source is at https://github.com/skilld-dev/skilld.\n"
+    );
+}
+
+#[test]
+fn a_missing_skill_lists_the_nearest_names_its_repository_holds() {
+    let remote = unpinned(vec![
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        registry_page(&[
+            ("skilld-dev", "skilld", "skilld-maintainer", None),
+            ("skilld-dev", "skilld", "generate-package-skill", None),
+            ("skilld-dev", "skilld", "skills", None),
+            ("skilld-dev", "other", "skilld", None),
+        ]),
+    ]);
+
+    let (exit, _, stderr) =
+        run_remote_cli(remote, &["skilld", "run", "skilld-dev/skilld/skilld-cli"]);
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "SOURCE_NOT_FOUND: skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name.\n\
+Next step: Do not retry this ref. Did you mean one of these? skilld-dev/skilld/skills, \
+skilld-dev/skilld/skilld-maintainer, skilld-dev/skilld/generate-package-skill. \
+To find more Skills, run skilld search skilld cli.\n"
+    );
+}
+
+#[test]
+fn a_missing_skill_without_a_near_name_suggests_a_search() {
+    let remote = unpinned(vec![
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        registry_page(&[]),
+        response(200, br#"{"items":[],"total":0}"#.to_vec()),
+    ]);
+
+    let (exit, _, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "SOURCE_NOT_FOUND: skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name.\n\
+Next step: Do not retry this ref. Check the owner, Repository, and Skill name. \
+To find more Skills, run skilld search skilld.\n"
+    );
+}
+
+#[test]
+fn a_network_failure_says_the_skill_did_not_cause_it() {
+    let remote = unpinned(vec![]);
+
+    let (exit, _, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!(exit, 75);
+    assert_eq!(
+        stderr,
+        "HTTP_TRANSPORT: the fake response queue is empty\n\
+Next step: The Skill did not cause this failure. Run the same command once more. \
+If it fails again, tell the user to check the network connection.\n"
+    );
+}
+
+#[test]
+fn a_resolution_that_outlasts_sixty_seconds_says_to_run_once_more() {
+    let pending = || pending_at("checking", 30_000);
+    let remote = unpinned(vec![pending(), pending(), pending()]);
+
+    let (exit, _, stderr) = run_remote_cli(remote, &RUN);
+
+    assert_eq!(exit, 75);
+    assert_eq!(
+        stderr,
+        "RESOLUTION_TIMEOUT: skilld.dev did not finish the Artifact within 60 seconds\n\
+Next step: The Skill did not cause this failure. skilld requested the Skill once. Run the same command once more.\n"
+    );
+}
+
+#[test]
+fn a_json_failure_carries_the_next_step_and_marks_a_retryable_one() {
+    let failed = || failed_resolution("SIGNER_UNAVAILABLE", true, None);
+    let remote = unpinned(vec![failed(), failed(), failed(), failed()]);
+
+    let (exit, _, stderr) = run_remote_cli(
+        remote,
+        &["skilld", "run", "skilld-dev/skilld/skilld", "--json"],
+    );
+
+    assert_eq!(exit, 75);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stderr).unwrap(),
+        json!({
+            "schemaVersion": 1,
+            "_tag": "OperationError",
+            "error": {
+                "code": "SIGNER_UNAVAILABLE",
+                "message": "skilld.dev could not create the Artifact this time",
+                "retryable": true,
+                "nextStep": "skilld requested the Skill 4 times. Run the same command again in a minute.",
+            },
+        })
+    );
+}
+
+fn omitted_files_check(findings: &[&str]) -> CheckResult {
+    CheckResult {
+        name: "omitted-files".to_owned(),
+        version: "1".to_owned(),
+        outcome: CheckOutcome::Warn,
+        required: false,
+        summary: Some("skilld.dev left out files over the size limits.".to_owned()),
+        findings: findings
+            .iter()
+            .map(|finding| (*finding).to_owned())
+            .collect(),
+    }
+}
+
+const SKILL_BYTES: &[u8] = b"---\nname: example\ndescription: verified\n---\n";
+
+#[test]
+fn a_skill_without_its_oversized_files_names_each_one() {
+    let mut checks = passing_checks();
+    checks.push(omitted_files_check(&[
+        "assets/demo.mp4: 9,311,232 bytes, https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/assets/demo.mp4",
+        "assets/large.bin: 3000000 bytes, https://example.com/large.bin",
+        "a finding in another shape",
+    ]));
+    let (pin, responses) = verified_remote_responses_with(SKILL_BYTES, checks);
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http, Arc::new(RecordingSleeper::default()));
+
+    let (exit, stdout, stderr) =
+        run_remote_cli(remote, &["skilld", "run", "skilld-dev/skills/example"]);
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(
+        stdout.contains(
+            "The Skill loaded without 3 files over the skilld.dev size limits:\n  \
+assets/demo.mp4 (8.88 MiB) https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/assets/demo.mp4\n  \
+assets/large.bin (2.87 MiB)\n  \
+a finding in another shape\n\
+If the instructions need one of these files, tell the user it is missing.\n"
+        ),
+        "{stdout}"
+    );
+    let skill = stdout
+        .split("--- SKILL.md ---\n")
+        .nth(1)
+        .and_then(|rest| rest.split("--- end of SKILL.md ---").next())
+        .unwrap();
+    assert_eq!(skill.as_bytes(), SKILL_BYTES);
+}
+
+#[test]
+fn a_json_run_lists_the_omitted_files() {
+    let mut checks = passing_checks();
+    checks.push(omitted_files_check(&["assets/demo.mp4: 9311232 bytes"]));
+    let (pin, responses) = verified_remote_responses_with(SKILL_BYTES, checks);
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http, Arc::new(RecordingSleeper::default()));
+
+    let (exit, stdout, _) = run_remote_cli(
+        remote,
+        &["skilld", "run", "skilld-dev/skills/example", "--json"],
+    );
+
+    assert_eq!(exit, 0);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json["data"]["omittedFiles"],
+        json!([{ "path": "assets/demo.mp4", "bytes": 9_311_232, "url": null }])
+    );
+}
+
+#[test]
+fn a_run_without_omitted_files_adds_no_field() {
+    let (pin, responses) = verified_remote_responses();
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http, Arc::new(RecordingSleeper::default()));
+
+    let (exit, stdout, _) = run_remote_cli(
+        remote,
+        &["skilld", "run", "skilld-dev/skills/example", "--json"],
+    );
+
+    assert_eq!(exit, 0);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(json["data"].get("omittedFiles").is_none());
+}
+
+#[test]
+fn answers_with_fields_this_release_does_not_know_still_parse() {
+    let (pin, mut responses) = verified_remote_responses();
+    for index in [0, 1, 2] {
+        let mut body: serde_json::Value = serde_json::from_slice(&responses[index].body).unwrap();
+        body["laterField"] = json!({ "added": "after this release" });
+        if index == 0 {
+            body["artifact"]["laterField"] = json!(true);
+        }
+        responses[index] = response(200, serde_json::to_vec(&body).unwrap());
+    }
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http, Arc::new(RecordingSleeper::default()));
+
+    let prepared = remote.prepare(&example_selector(), false);
+
+    assert!(prepared.is_ok(), "{prepared:?}");
+}
+
+#[test]
+fn a_problem_with_a_later_field_keeps_its_code() {
+    let mut problem = response(
+        404,
+        serde_json::to_vec(&json!({
+            "type": "about:blank",
+            "title": "Not found",
+            "status": 404,
+            "code": "SOURCE_NOT_FOUND",
+            "detail": "No Skill skilld-dev/skilld/skilld.",
+            "laterField": 1,
+        }))
+        .unwrap(),
+    );
+    problem.headers.insert(
+        "content-type".to_owned(),
+        "application/problem+json".to_owned(),
+    );
+    let remote = unpinned(vec![problem]);
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+}
+
+#[test]
+fn a_skill_with_spec_findings_loads_with_a_warning() {
+    let checks = vec![
+        passing_checks().remove(0),
+        CheckResult {
+            name: "agent-skills-spec".to_owned(),
+            version: "2".to_owned(),
+            outcome: CheckOutcome::Warn,
+            required: false,
+            summary: Some("The Skill does not match the Agent Skills specification.".to_owned()),
+            findings: vec!["SKILL.md has no frontmatter.".to_owned()],
+        },
+    ];
+    let (pin, responses) =
+        verified_remote_responses_with(b"# Example\n\nNo frontmatter.\n", checks);
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = pinned_remote(pin, http, Arc::new(RecordingSleeper::default()));
+
+    let (exit, stdout, stderr) =
+        run_remote_cli(remote, &["skilld", "run", "skilld-dev/skills/example"]);
+
+    assert_eq!(exit, 0, "{stderr}");
+    assert!(
+        stdout.contains("Warning: SKILL.md declares no name. skilld uses the folder name example."),
+        "{stdout}"
     );
 }

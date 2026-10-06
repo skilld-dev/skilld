@@ -36,10 +36,10 @@ pub use remote::{ApiAnswer, ApiPage, BrowseQuery, BrowseSort, SkilldApi, Trendin
 pub use remote::{
     Cancellation, HeaderValue, HttpAdapter, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     INDEX_POLL_ATTEMPTS, NativeRemoteConfig, NeverCancelled, NoRemoteProgress, NoTokenProvider,
-    PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome, RemoteComparisonRelation,
-    RemoteLatestCommit, RemoteProgress, RemoteProgressStage, RemoteProvider, RemoteSourceState,
-    RemoteUpdateComparison, RemoteUpdateResult, SecretValue, SkilldRemote, Sleeper, ThreadSleeper,
-    TokenProvider,
+    OmittedFile, PreparedRemoteSkill, RemoteComparisonAccess, RemoteComparisonOutcome,
+    RemoteComparisonRelation, RemoteLatestCommit, RemoteProgress, RemoteProgressStage,
+    RemoteProvider, RemoteSourceState, RemoteUpdateComparison, RemoteUpdateResult, SecretValue,
+    SkilldRemote, Sleeper, ThreadSleeper, TokenProvider,
 };
 pub use run::{
     BEHAVIOR_CAVEAT, BehaviorDecision, FileContent, FileKind, PulledFile, RunOutcome, SkillOrigin,
@@ -732,13 +732,24 @@ pub trait Host {
 pub enum CommandErrorKind {
     Usage,
     Operation,
+    /// The same command can pass later: a network fault, a timeout, or a
+    /// service that is busy or deploying.
+    Retryable,
 }
+
+/// The exit code of a failure that the same command can pass later.
+///
+/// It is `EX_TEMPFAIL` from sysexits.h. A usage error exits with 2, and every
+/// other failure with 1.
+pub const RETRYABLE_EXIT_CODE: u8 = 75;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandError {
     pub kind: CommandErrorKind,
     pub code: &'static str,
     pub message: String,
+    /// What the Agent that reads the failure does next.
+    pub next_step: Option<String>,
 }
 
 impl CommandError {
@@ -747,6 +758,7 @@ impl CommandError {
             kind: CommandErrorKind::Usage,
             code,
             message: message.into(),
+            next_step: None,
         }
     }
 
@@ -755,6 +767,7 @@ impl CommandError {
             kind: CommandErrorKind::Operation,
             code,
             message: message.into(),
+            next_step: None,
         }
     }
 
@@ -846,13 +859,76 @@ impl CommandError {
             kind,
             code: error.code,
             message: error.message,
+            next_step: error.next_step,
         }
+    }
+
+    /// A failed remote run, with the next step for the Agent that reads it.
+    ///
+    /// The remote layer names the step when it knows more than the code, such
+    /// as the retries it made or a source URL. Otherwise the code decides it.
+    /// A failure that the same command can pass later exits with
+    /// [`RETRYABLE_EXIT_CODE`].
+    pub fn remote_run(error: skilld_core::RemoteError) -> Self {
+        let retryable = is_retryable_remote(error.code);
+        let next_step = error
+            .next_step
+            .clone()
+            .unwrap_or_else(|| remote_next_step(error.code).to_owned());
+        let mut command = Self::remote(error);
+        if retryable {
+            command.kind = CommandErrorKind::Retryable;
+        }
+        command.next_step = Some(next_step);
+        command
     }
 
     fn exit_code(&self) -> u8 {
         match self.kind {
             CommandErrorKind::Usage => 2,
             CommandErrorKind::Operation => 1,
+            CommandErrorKind::Retryable => RETRYABLE_EXIT_CODE,
+        }
+    }
+}
+
+/// A remote failure that the same command can pass later.
+fn is_retryable_remote(code: &str) -> bool {
+    matches!(
+        code,
+        "HTTP_TRANSPORT"
+            | "RESOLUTION_TIMEOUT"
+            | "SERVICE_UNAVAILABLE"
+            | "RATE_LIMITED"
+            | "SOURCE_UNAVAILABLE"
+            | "SIGNER_UNAVAILABLE"
+            | "CHECK_UNAVAILABLE"
+            | "ARTIFACT_SIZE_MISMATCH"
+            | "ARTIFACT_DIGEST_MISMATCH"
+            | "ARTIFACT_EXPIRED"
+            | "ATTESTATION_EXPIRED"
+            | "SIGNING_KEY_UNKNOWN"
+    )
+}
+
+/// The next step for a remote failure, from its code alone.
+fn remote_next_step(code: &str) -> &'static str {
+    match code {
+        "HTTP_TRANSPORT" => {
+            "The Skill did not cause this failure. Run the same command once more. If it fails again, tell the user to check the network connection."
+        }
+        "RESOLUTION_TIMEOUT" => {
+            "The Skill did not cause this failure. Run the same command once more."
+        }
+        "SOURCE_NOT_FOUND" => {
+            "Do not retry this ref. Check the owner, Repository, and Skill name. To find the Skill, run skilld search with words from its name."
+        }
+        "CANCELLED" => "The run stopped before it finished. Run it again only if the user asks.",
+        code if is_retryable_remote(code) => {
+            "skilld already repeated the request. Run the same command again in a minute."
+        }
+        _ => {
+            "Do not retry. The same command gives the same result. Tell the user why skilld stopped, from the message above."
         }
     }
 }
@@ -2702,7 +2778,7 @@ impl LocalHost {
             Some(revision) => provider.prepare_exact(&selector, revision, direct),
             None => provider.prepare(&selector, direct),
         }
-        .map_err(CommandError::remote)?;
+        .map_err(CommandError::remote_run)?;
         let LockedSource::Remote {
             source: locked_source,
             commit_sha,
@@ -2780,6 +2856,7 @@ impl LocalHost {
             origin,
             source_status,
             revision: Some(revision.as_str().to_owned()),
+            omitted_files: prepared.omitted_files,
         })))
     }
 
@@ -2811,6 +2888,7 @@ impl LocalHost {
             origin,
             source_status: "local",
             revision: None,
+            omitted_files: Vec::new(),
         })))
     }
 
@@ -2849,6 +2927,7 @@ impl LocalHost {
             origin,
             source_status: "local",
             revision: None,
+            omitted_files: Vec::new(),
         })))
     }
 

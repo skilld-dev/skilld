@@ -73,6 +73,7 @@ impl RemoteProvider for ListingRemote {
                 installed_sha256: digest,
             },
             page_url: None,
+            omitted_files: Vec::new(),
         })
     }
 

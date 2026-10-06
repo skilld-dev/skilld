@@ -90,6 +90,9 @@ pub struct TransientSkill {
     pub files: Vec<SupportingFile>,
     /// What the Skill files ask an Agent to do, by fixed text patterns.
     pub behaviors: Vec<Behavior>,
+    /// Files over a size limit that skilld.dev left out. The Skill loaded
+    /// without them.
+    pub omitted_files: Vec<crate::OmittedFile>,
 }
 
 /// What the person said about the behaviors a remote Skill needs approved.

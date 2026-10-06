@@ -23,6 +23,11 @@ Check the exit code before reading stdout.
 Read JSON success data only when `_tag` is `Success`.
 Read JSON failures from stderr.
 Report the error `code` and `message`.
+A failed `skilld run` ends with a `Next step:` line. In JSON, read `error.nextStep`.
+Follow that step. It says whether to retry, when, and what to tell the user.
+Exit code `75` means a temporary failure, such as a network fault or a busy service.
+Exit code `1` means the same command gives the same result.
+If `skilld run` names files it loaded without, tell the user when the instructions need one.
 
 An update check can exit with code 1 and return valid JSON.
 Read its update relations before treating that exit as a failure.

@@ -153,6 +153,7 @@ impl RemoteProvider for Provider {
                 }
             },
             page_url: None,
+            omitted_files: Vec::new(),
         })
     }
 
