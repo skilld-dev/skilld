@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install the skilld CLI without Node.js.
 #
-#   curl -fsSL https://github.com/skilld-dev/skilld/releases/latest/download/install.sh | sh
+#   curl -fsSL https://skilld.dev/install.sh | sh
 #
 # Environment:
 #   SKILLD_INSTALL_DIR  Install directory. Default: $HOME/.skilld/bin

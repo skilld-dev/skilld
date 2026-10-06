@@ -192,13 +192,13 @@ A lockfile restore and `skilld sync` install the commits already recorded, so th
 macOS and Linux:
 
 ```sh
-curl -fsSL https://github.com/skilld-dev/skilld/releases/latest/download/install.sh | sh
+curl -fsSL https://skilld.dev/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://github.com/skilld-dev/skilld/releases/latest/download/install.ps1 | iex
+irm https://skilld.dev/install.ps1 | iex
 ```
 
 The script installs one native binary to `~/.skilld/bin`.
