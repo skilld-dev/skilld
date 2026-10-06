@@ -1212,6 +1212,10 @@ impl SkilldRemote {
                 })
                 .unwrap_or_default();
         }
+        // The registry can list the ref that skilld.dev just failed to find,
+        // when GitHub no longer serves it. Suggesting it again would loop.
+        let requested = format!("{}/{}/{}", source.owner, source.repository, name);
+        candidates.retain(|candidate| !candidate.eq_ignore_ascii_case(&requested));
         let suggestions = did_you_mean(name, candidates);
         let search = format!("To find more Skills, run skilld search {terms}.");
         if suggestions.is_empty() {

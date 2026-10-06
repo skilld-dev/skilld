@@ -5457,6 +5457,7 @@ fn a_missing_skill_lists_the_nearest_names_its_repository_holds() {
             ("skilld-dev", "skilld", "skilld-maintainer", None),
             ("skilld-dev", "skilld", "generate-package-skill", None),
             ("skilld-dev", "skilld", "skills", None),
+            ("skilld-dev", "skilld", "skilld-cli", None),
             ("skilld-dev", "other", "skilld", None),
         ]),
     ]);
