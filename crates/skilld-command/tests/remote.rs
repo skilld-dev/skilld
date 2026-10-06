@@ -4966,3 +4966,46 @@ fn an_update_keeps_an_ask_behavior_the_installed_copy_already_had() {
             .contains("description: second")
     );
 }
+
+#[test]
+fn a_blocked_resolution_prints_the_first_findings_of_each_failed_check() {
+    let http = Arc::new(FakeHttp::with([response(
+        200,
+        serde_json::to_vec(&json!({
+            "state": "blocked",
+            "resolutionId": "0f9a4a44-27f9-4f6a-9a21-4d24d8ff2f60",
+            "checkResults": [
+                {
+                    "name": "agent-skills-spec",
+                    "version": "2026-08-20",
+                    "outcome": "fail",
+                    "required": true,
+                    "summary": "The Skill does not match the Agent Skills specification.",
+                    "findings": ["The Skill name must match its directory name."],
+                },
+                {
+                    "name": "source-policy",
+                    "version": "1",
+                    "outcome": "fail",
+                    "required": true,
+                    "summary": "A Skill file exceeds 2097152 bytes.",
+                    "findings": ["a.webp", "b.gif", "c\u{1b}[2J.mp4", "d.png", "e.mov"],
+                },
+            ],
+        }))
+        .unwrap(),
+    )]));
+    let remote = search_remote(http);
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "CHECK_BLOCKED");
+    assert_eq!(
+        error.message,
+        "the Resolution was blocked by check results. \
+agent-skills-spec: The Skill does not match the Agent Skills specification. \
+Findings: The Skill name must match its directory name. \
+source-policy: A Skill file exceeds 2097152 bytes. \
+Findings: a.webp; b.gif; c [2J.mp4; and 2 more."
+    );
+}

@@ -3557,25 +3557,44 @@ fn resolution_timeout() -> RemoteError {
 /// Say which check blocked the Skill, and what it found.
 ///
 /// A blocked Resolution is a decision about the Skill, so the person needs the
-/// check that made it. Without the names, every block reads the same.
+/// check that made it. Without the names, every block reads the same. The
+/// first findings say exactly what failed, such as the file over a size limit.
 fn blocked_message(results: &[skilld_core::CheckResult]) -> String {
+    const SHOWN_FINDINGS: usize = 3;
+    let sentence = |value: String| value.trim_end_matches('.').to_owned();
     let failed = results
         .iter()
         .filter(|result| result.outcome == CheckOutcome::Fail)
-        .map(|result| match &result.summary {
-            Some(summary) => format!(
-                "{}: {}",
-                sanitize_line(&result.name, 100, "check"),
-                sanitize_line(summary, 300, "no summary")
-            ),
-            None => sanitize_line(&result.name, 100, "check"),
+        .map(|result| {
+            let name = sanitize_line(&result.name, 100, "check");
+            let mut text = match &result.summary {
+                Some(summary) => format!(
+                    "{name}: {}",
+                    sentence(sanitize_line(summary, 300, "no summary"))
+                ),
+                None => name,
+            };
+            if !result.findings.is_empty() {
+                let mut findings = result
+                    .findings
+                    .iter()
+                    .take(SHOWN_FINDINGS)
+                    .map(|finding| sentence(sanitize_line(finding, 200, "finding")))
+                    .collect::<Vec<_>>();
+                let hidden = result.findings.len().saturating_sub(SHOWN_FINDINGS);
+                if hidden > 0 {
+                    findings.push(format!("and {hidden} more"));
+                }
+                text.push_str(&format!(". Findings: {}", findings.join("; ")));
+            }
+            text
         })
         .collect::<Vec<_>>();
     if failed.is_empty() {
         return "the Resolution was blocked by check results".to_owned();
     }
     format!(
-        "the Resolution was blocked by check results. {}",
+        "the Resolution was blocked by check results. {}.",
         failed.join(". ")
     )
 }
