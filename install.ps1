@@ -1,6 +1,6 @@
 # Install the skilld CLI without Node.js.
 #
-#   irm https://github.com/skilld-dev/skilld/releases/latest/download/install.ps1 | iex
+#   irm https://skilld.dev/install.ps1 | iex
 #
 # Environment:
 #   SKILLD_INSTALL_DIR  Install directory. Default: %LOCALAPPDATA%\skilld\bin
