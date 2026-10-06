@@ -38,6 +38,11 @@ url = "2.5.8"
 zeroize = "1.9.0"
 
 [profile.release]
-lto = "thin"
+# Size over speed. npx and the install script download this binary before
+# the first run, and a run spends its time on the network. Measured on linux
+# x64 on 2026-10-07: the binary fell from 10.1 MB to 6.6 MB, and its npm
+# package from 4.5 MB to 3.1 MB.
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
 strip = true
