@@ -1,7 +1,7 @@
 {
   "name": "skilld-protocol",
   "type": "module",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Wire shapes and constants shared between the skilld CLI and skilld.dev",
   "author": {
     "name": "Harlan Wilton",
@@ -74,6 +74,7 @@
     "@antfu/eslint-config": "catalog:dev-lint",
     "@arethetypeswrong/cli": "catalog:",
     "@redocly/cli": "catalog:",
+    "@rollup/plugin-replace": "catalog:",
     "@types/node": "catalog:dev-build",
     "@typescript/native": "catalog:",
     "eslint": "catalog:dev-lint",
@@ -81,6 +82,7 @@
     "openapi-typescript": "catalog:",
     "publint": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:dev-test"
   }
 }

@@ -18,11 +18,13 @@ catalog:
   '@ai-sdk/provider-utils': ^5.0.36
   '@arethetypeswrong/cli': ^0.18.5
   '@redocly/cli': ^2.51.0
+  '@rollup/plugin-replace': ^6.0.3
   '@typescript/native': npm:typescript@7.0.2
   bumpp: ^12.2.3
   openapi-typescript: ^7.13.0
   publint: ^0.3.24
   typescript: npm:@typescript/typescript6@^6.0.2
+  vite: 7.3.1
   yaml: ^2.9.0
   zod: ^4.5.4
 
