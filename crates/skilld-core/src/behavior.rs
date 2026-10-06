@@ -623,7 +623,7 @@ fn markdown_line<'a>(
                 marker,
                 length: run,
             });
-            *prose = Prose::default();
+            prose.reset();
             return;
         }
     }
@@ -644,6 +644,8 @@ struct Prose {
     lead_in: bool,
     /// The indent of the list items a prohibition lead-in governs.
     list: Option<usize>,
+    /// Buffers every line reuses, so a file allocates them once.
+    buffers: ProseBuffers,
 }
 
 impl Default for Prose {
@@ -653,8 +655,36 @@ impl Default for Prose {
             opening: true,
             lead_in: false,
             list: None,
+            buffers: ProseBuffers::default(),
         }
     }
+}
+
+impl Prose {
+    /// Close the sentence, the lead-in, and the list, as a fenced block does.
+    fn reset(&mut self) {
+        self.negated = false;
+        self.opening = true;
+        self.lead_in = false;
+        self.list = None;
+    }
+}
+
+#[derive(Default)]
+struct ProseBuffers {
+    /// The characters of the line.
+    characters: Vec<char>,
+    /// The inline code spans of the line.
+    spans: Vec<Span>,
+    /// Whether each sentence of the line names an exception or a condition.
+    exceptions: Vec<bool>,
+}
+
+/// One inline code span: its bytes in the line, its sentence, and whether a prohibition governs it.
+struct Span {
+    bytes: std::ops::Range<usize>,
+    sentence: usize,
+    negated: bool,
 }
 
 /// One-word prohibitions.
@@ -680,7 +710,27 @@ const EXCEPTIONS: &[&str] = &[
 const CLOSERS: &[char] = &['*', '_', ')', ']', '"', '\'', '\u{2019}', '\u{201D}'];
 
 fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
-    let characters = line.chars().collect::<Vec<_>>();
+    let mut buffers = std::mem::take(&mut prose.buffers);
+    buffers.characters.clear();
+    buffers.characters.extend(line.chars());
+    buffers.spans.clear();
+    buffers.exceptions.clear();
+    buffers.exceptions.push(false);
+    scan_prose(line, prose, &mut buffers, facts);
+    prose.buffers = buffers;
+}
+
+fn scan_prose<'a>(
+    line: &'a str,
+    prose: &mut Prose,
+    buffers: &mut ProseBuffers,
+    facts: &mut LineFacts<'a>,
+) {
+    let ProseBuffers {
+        characters,
+        spans,
+        exceptions,
+    } = buffers;
     // Blockquote markers belong to the indent, so a quoted list still reads as a list.
     let indent = characters
         .iter()
@@ -692,12 +742,12 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
         prose.opening = true;
         return;
     }
-    let heading = indent <= 3 && heading_marker(&characters, indent);
+    let heading = indent <= 3 && heading_marker(characters, indent);
     let table = characters[indent] == '|';
     let item = if heading || table {
         0
     } else {
-        list_marker(&characters, indent)
+        list_marker(characters, indent)
     };
     if heading || table {
         prose.list = None;
@@ -722,31 +772,38 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
         prose.lead_in = false;
     }
     let governed = prose.list.is_some();
-    let segments = line.split('`').collect::<Vec<_>>();
-    let mut spans = Vec::new();
-    let mut exceptions = vec![false];
-    let mut last_prose = Vec::new();
+    let backticks = line.bytes().filter(|byte| *byte == b'`').count();
+    let mut last_colon = false;
     // The word right before a code span negates it, with nothing but whitespace or emphasis between.
     let mut before_negates = false;
-    for (index, segment) in segments.iter().enumerate() {
+    let (mut byte, mut character_at) = (0, 0);
+    for (index, segment) in line.split('`').enumerate() {
+        let bytes = byte..byte + segment.len();
+        let end = character_at + segment.chars().count();
+        let start = character_at;
+        byte = bytes.end + 1;
+        character_at = end + 1;
         if index % 2 == 1 {
             prose.opening = false;
-            let negated = prose.negated || governed || before_negates;
-            spans.push((*segment, exceptions.len() - 1, negated));
+            spans.push(Span {
+                bytes,
+                sentence: exceptions.len() - 1,
+                negated: prose.negated || governed || before_negates,
+            });
             before_negates = false;
             continue;
         }
         let skip = if index == 0 { indent + item } else { 0 };
-        let text = segment.chars().skip(skip).collect::<Vec<_>>();
-        let last = index == segments.len() - 1;
+        let text = &characters[(start + skip).min(end)..end];
+        let last = index == backticks;
         let mut at = 0;
         while at < text.len() {
             let character = text[at];
             if character.is_ascii_alphanumeric() {
-                let (word, end) = read_word(&text, at);
+                let (word, end) = read_word(text, at);
                 if prose.opening {
                     prose.opening = false;
-                    prose.negated = opens_prohibition(word, &text, end);
+                    prose.negated = opens_prohibition(word, text, end);
                 }
                 if word.is(EXCEPTIONS)
                     && let Some(exception) = exceptions.last_mut()
@@ -760,7 +817,7 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
             if !character.is_whitespace() && !matches!(character, '*' | '_' | '~') {
                 before_negates = false;
             }
-            match boundary(&text, at, last) {
+            match boundary(text, at, last) {
                 Some(Boundary::Sentence) => {
                     prose.negated = false;
                     prose.opening = true;
@@ -775,21 +832,20 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
             at += 1;
         }
         if last {
-            last_prose = text;
+            last_colon = ends_with_colon(text);
         }
     }
-    for (span, sentence, negated) in spans {
-        if !negated || exceptions[sentence] {
-            facts.code.push(span);
+    for span in spans.iter() {
+        if !span.negated || exceptions[span.sentence] {
+            facts.code.push(&line[span.bytes.clone()]);
         }
     }
     if heading {
         prose.negated = false;
         prose.opening = true;
     } else if !table {
-        prose.lead_in = prose.negated
-            && !exceptions.last().copied().unwrap_or_default()
-            && ends_with_colon(&last_prose);
+        prose.lead_in =
+            prose.negated && !exceptions.last().copied().unwrap_or_default() && last_colon;
     }
 }
 
