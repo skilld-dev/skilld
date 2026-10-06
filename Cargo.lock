@@ -1975,6 +1975,7 @@ dependencies = [
 name = "skilld-core"
 version = "3.6.1"
 dependencies = [
+ "aho-corasick",
  "base64",
  "ed25519-dalek",
  "serde",
