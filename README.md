@@ -202,6 +202,8 @@ irm https://skilld.dev/install.ps1 | iex
 ```
 
 The script installs one native binary to `~/.skilld/bin`.
+It adds that directory to PATH: in your shell profile on macOS and Linux, in your user PATH on Windows.
+On macOS and Linux, set `SKILLD_NO_MODIFY_PATH=1` to leave your shell profile alone.
 That install upgrades itself in the background after it verifies the signed release manifest.
 Restart skilld to use the new version.
 An npm install prints the upgrade command instead.
