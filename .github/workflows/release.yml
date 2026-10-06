@@ -106,12 +106,6 @@ jobs:
           node-version: lts/*
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - id: protocol_release
-        name: Check independent protocol version
-        shell: bash
-        run: |
-          decision="$(node scripts/release/native-packages.mjs protocol-publish)"
-          echo "publish=$decision" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8
         with:
           path: native-artifacts
@@ -198,14 +192,42 @@ jobs:
           if test "$(node scripts/release/native-packages.mjs package-publish packages/harness)" = true; then
             pnpm --dir packages/harness publish --access public --no-git-checks --tag "${{ steps.npm_tag.outputs.value }}"
           fi
-      - name: Publish independent protocol
-        if: steps.protocol_release.outputs.publish == 'true'
-        run: pnpm --dir packages/protocol publish --access public --no-git-checks
       - name: Publish GitHub release
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  publish-protocol:
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: publish-skilld-protocol
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - id: protocol_release
+        name: Check independent protocol version
+        shell: bash
+        run: |
+          decision="$(node scripts/release/native-packages.mjs package-publish packages/protocol)"
+          echo "publish=$decision" >> "$GITHUB_OUTPUT"
+      - run: pnpm install --frozen-lockfile
+      - name: Check protocol
+        run: |
+          pnpm --filter skilld-protocol lint
+          pnpm --filter skilld-protocol typecheck
+          pnpm --filter skilld-protocol test:run
+          pnpm --filter skilld-protocol build
+          pnpm --filter skilld-protocol publint
+      - name: Publish independent protocol
+        if: steps.protocol_release.outputs.publish == 'true'
+        run: pnpm --dir packages/protocol publish --access public --no-git-checks --provenance
 
   publish-sdk:
     runs-on: ubuntu-24.04
