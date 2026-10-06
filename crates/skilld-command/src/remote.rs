@@ -14,9 +14,10 @@ use skilld_core::{
     ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
     ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
     RepositoryVisibility, SearchResponse, SkillListing, SkillName, SourceRef, SourceRequest,
-    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedTrustedRoot,
-    declared_skill_name, parse_search_response, prepare_unverified_files, verify_artifact,
-    verify_attestation, verify_trusted_root,
+    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedArtifact,
+    VerifiedTrustedRoot, declared_skill_name, parse_search_response, prepare_unverified_files,
+    verify_artifact, verify_attestation, verify_linked_file, verify_trusted_root,
+    with_linked_files,
 };
 use skilld_ui::text::is_unsafe_terminal;
 use url::Url;
@@ -1021,7 +1022,9 @@ impl SkilldRemote {
             }
             if !(200..300).contains(&response.status) {
                 return Err(match allowed {
-                    AllowedOrigin::Github | AllowedOrigin::GithubTarball => github_error(&response),
+                    AllowedOrigin::Github
+                    | AllowedOrigin::GithubTarball
+                    | AllowedOrigin::GithubFile => github_error(&response),
                     AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => {
                         problem_error(&response)
                     }
@@ -1242,6 +1245,7 @@ impl SkilldRemote {
         let mut headers = self.authenticated_headers()?;
         headers.extend(json_headers());
         headers.push(idempotency_header());
+        headers.push(capabilities_header());
         let request = HttpRequest {
             method: HttpMethod::Post,
             url: self.service_url("/api/v1/resolutions")?.into(),
@@ -1498,6 +1502,55 @@ impl SkilldRemote {
             1,
         )
         .map(|response| response.body)
+    }
+
+    /// Read each linked file the attestation lists from GitHub at the attested
+    /// commit, and add it once its size and Git blob SHA match. A file that
+    /// does not match stops the whole Skill: nothing is installed.
+    fn read_linked_files(
+        &self,
+        verified: VerifiedArtifact,
+    ) -> Result<VerifiedArtifact, RemoteError> {
+        if verified.attestation.linked_files.is_empty() {
+            return Ok(verified);
+        }
+        self.progress
+            .stage(RemoteProgressStage::DownloadingArtifact);
+        let source = &verified.attestation.source;
+        let mut read = Vec::with_capacity(verified.attestation.linked_files.len());
+        for declaration in &verified.attestation.linked_files {
+            let limit = usize::try_from(declaration.size)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| {
+                    RemoteError::new("RESPONSE_TOO_LARGE", "a linked file exceeds the size limit")
+                })?;
+            let request = HttpRequest {
+                method: HttpMethod::Get,
+                url: linked_file_url(
+                    &source.owner,
+                    &source.repository,
+                    &source.commit_sha,
+                    &source.skill_path,
+                    &declaration.path,
+                )?,
+                headers: vec![HttpHeader {
+                    name: "user-agent".to_owned(),
+                    value: HeaderValue::Public("skilld".to_owned()),
+                }],
+                body: vec![],
+                response_limit: limit,
+            };
+            let response = self.execute_bounded(
+                request,
+                AllowedOrigin::GithubFile,
+                None,
+                Some(download_timeout(declaration.size)),
+                MAX_RETRIES,
+            )?;
+            read.push(verify_linked_file(declaration, response.body)?);
+        }
+        with_linked_files(verified, read)
     }
 
     fn github_json<T: for<'de> Deserialize<'de>>(
@@ -2978,6 +3031,7 @@ impl RemoteProvider for SkilldRemote {
                 Err(error) => return Err(unverifiable(error)),
             }
         };
+        let verified = self.read_linked_files(verified)?;
         if matches!(
             &selector.source().selector,
             SourceSelector::NamedSkill { name } if name != verified.name.as_str()
@@ -3557,6 +3611,9 @@ enum AllowedOrigin {
     /// follows one redirect. Every other GitHub request keeps
     /// `AllowedOrigin::Github`, which accepts `api.github.com` alone.
     GithubTarball,
+    /// One file of a Repository at one commit, from `raw.githubusercontent.com`
+    /// and nowhere else. A linked file comes from here.
+    GithubFile,
 }
 
 fn same_origin(url: &Url, base: &Url) -> bool {
@@ -3605,6 +3662,11 @@ fn validate_url(url: &Url, allowed: &AllowedOrigin) -> Result<(), RemoteError> {
                 )
                 && url.port().is_none()
         }
+        AllowedOrigin::GithubFile => {
+            url.scheme() == "https"
+                && url.host_str() == Some("raw.githubusercontent.com")
+                && url.port().is_none()
+        }
     };
     if allowed {
         Ok(())
@@ -3627,6 +3689,39 @@ fn json_headers() -> Vec<HttpHeader> {
             value: HeaderValue::Public("application/json".to_owned()),
         },
     ]
+}
+
+/// Names the Artifact features this CLI reads. skilld.dev lists a Skill file
+/// as a linked file only for a client that names `linked-files`.
+fn capabilities_header() -> HttpHeader {
+    HttpHeader {
+        name: "skilld-capabilities".to_owned(),
+        value: HeaderValue::Public("linked-files".to_owned()),
+    }
+}
+
+/// The URL of one Skill file at one commit, each path segment percent-encoded.
+fn linked_file_url(
+    owner: &str,
+    repository: &str,
+    commit_sha: &str,
+    skill_path: &str,
+    path: &str,
+) -> Result<String, RemoteError> {
+    let mut url = Url::parse("https://raw.githubusercontent.com/")
+        .expect("the GitHub file host is a valid URL");
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| RemoteError::new("INVALID_REMOTE_URL", "a linked file URL is invalid"))?;
+        segments.clear();
+        segments.push(owner).push(repository).push(commit_sha);
+        if skill_path != "." {
+            segments.extend(skill_path.split('/'));
+        }
+        segments.extend(path.split('/'));
+    }
+    Ok(url.into())
 }
 
 fn idempotency_header() -> HttpHeader {

@@ -3,10 +3,11 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use skilld_core::{
-    ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
+    ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult, LinkedFile,
     PreparedFile, RemoteSelector, RepositoryVisibility, ResolvedSource, SignatureAlgorithm,
     SourceProvider, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin, declared_skill_name,
-    prepare_unverified_files, skill_identity, verify_artifact, verify_trusted_root,
+    prepare_unverified_files, skill_identity, verify_artifact, verify_linked_file,
+    verify_trusted_root, with_linked_files,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -77,6 +78,8 @@ struct ArtifactStatement<'a> {
     policy_version: &'a str,
     files: &'a [ArtifactFile],
     check_results: &'a [CheckResult],
+    #[serde(skip_serializing_if = "<[LinkedFile]>::is_empty")]
+    linked_files: &'a [LinkedFile],
 }
 
 fn signed_message(domain: &[u8], statement: &[u8]) -> Vec<u8> {
@@ -185,6 +188,16 @@ fn attestation_at_path(
     signing_key: &SigningKey,
     skill_path: &str,
 ) -> ArtifactAttestation {
+    attestation_with_linked(archive, files, signing_key, skill_path, vec![])
+}
+
+fn attestation_with_linked(
+    archive: &[u8],
+    files: Vec<ArtifactFile>,
+    signing_key: &SigningKey,
+    skill_path: &str,
+    linked_files: Vec<LinkedFile>,
+) -> ArtifactAttestation {
     let content_sha256 = hex(&Sha256::digest(archive));
     let artifact_id = format!("sha256:{content_sha256}");
     let source = ResolvedSource {
@@ -217,6 +230,7 @@ fn attestation_at_path(
         policy_version: "2026-08-20",
         files: &files,
         check_results: &checks,
+        linked_files: &linked_files,
     })
     .unwrap();
     let signature = signing_key.sign(&signed_message(ATTESTATION_DOMAIN, &statement));
@@ -232,6 +246,7 @@ fn attestation_at_path(
         policy_version: "2026-08-20".to_owned(),
         files,
         check_results: checks,
+        linked_files,
         statement: URL_SAFE_NO_PAD.encode(statement),
         signature: AttestationSignature {
             algorithm: SignatureAlgorithm::Ed25519,
@@ -629,4 +644,138 @@ fn rejects_a_root_that_differs_from_the_compile_time_pin() {
     let error = verify_trusted_root(root, &pin).unwrap_err();
 
     assert_eq!(error.code, "TRUSTED_ROOT_MISMATCH");
+}
+
+fn linked(path: &str, bytes: &[u8]) -> LinkedFile {
+    LinkedFile {
+        path: path.to_owned(),
+        mode: 0o644,
+        size: bytes.len() as u64,
+        git_blob_sha: git_blob_sha(bytes),
+    }
+}
+
+fn git_blob_sha(bytes: &[u8]) -> String {
+    use sha1::{Digest as _, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hex(&hasher.finalize())
+}
+
+#[test]
+fn installs_a_linked_file_beside_the_archive_files_once_its_git_blob_matches() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let binary = b"\x7fELF a binary too large to pack";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+    let attestation = attestation_with_linked(
+        &archive,
+        vec![file("SKILL.md", 0o644, skill)],
+        &signing_key,
+        "skills/example",
+        vec![linked("scripts/tool", binary)],
+    );
+
+    let verified = verify_artifact(attestation, &root, &archive).unwrap();
+    let declaration = verified.attestation.linked_files[0].clone();
+    let packed_only = verified.installed_sha256.clone();
+    let tool = verify_linked_file(&declaration, binary.to_vec()).unwrap();
+    let installed = with_linked_files(verified, vec![tool]).unwrap();
+
+    assert_eq!(
+        installed
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["SKILL.md", "scripts/tool"]
+    );
+    assert_ne!(installed.installed_sha256, packed_only);
+}
+
+#[test]
+fn refuses_a_linked_file_whose_bytes_fail_its_git_blob_sha() {
+    let declaration = linked("scripts/tool", b"the attested bytes");
+
+    let other = verify_linked_file(&declaration, b"the attested bytez".to_vec()).unwrap_err();
+    let short = verify_linked_file(&declaration, b"short".to_vec()).unwrap_err();
+
+    assert_eq!(other.code, "LINKED_FILE_DIGEST_MISMATCH");
+    assert_eq!(short.code, "LINKED_FILE_SIZE_MISMATCH");
+}
+
+#[test]
+fn refuses_to_install_until_every_linked_file_is_read() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+    let attestation = attestation_with_linked(
+        &archive,
+        vec![file("SKILL.md", 0o644, skill)],
+        &signing_key,
+        "skills/example",
+        vec![linked("assets/a.mp3", b"a"), linked("assets/b.mp3", b"b")],
+    );
+    let verified = verify_artifact(attestation, &root, &archive).unwrap();
+    let first = verify_linked_file(&verified.attestation.linked_files[0], b"a".to_vec()).unwrap();
+
+    let error = with_linked_files(verified, vec![first]).unwrap_err();
+
+    assert_eq!(error.code, "LINKED_FILES_MISMATCH");
+}
+
+#[test]
+fn rejects_a_linked_file_that_shares_a_path_with_a_packed_file() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+
+    for path in ["SKILL.md", "skill.md", "SKILL.md/inner"] {
+        let attestation = attestation_with_linked(
+            &archive,
+            vec![file("SKILL.md", 0o644, skill)],
+            &signing_key,
+            "skills/example",
+            vec![linked(path, b"x")],
+        );
+        let error = verify_artifact(attestation, &root, &archive).unwrap_err();
+        assert_eq!(error.code, "ATTESTATION_INVALID", "{path}");
+    }
+}
+
+#[test]
+fn rejects_linked_files_past_the_byte_limit() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (root, pin, signing_key) = trusted_root();
+    let root = verify_trusted_root(root, &pin).unwrap();
+    let mut huge = linked("assets/film.mp4", b"x");
+    huge.size = 256 * 1024 * 1024 + 1;
+    let attestation = attestation_with_linked(
+        &archive,
+        vec![file("SKILL.md", 0o644, skill)],
+        &signing_key,
+        "skills/example",
+        vec![huge],
+    );
+
+    let error = verify_artifact(attestation, &root, &archive).unwrap_err();
+
+    assert_eq!(error.code, "ATTESTATION_INVALID");
+}
+
+#[test]
+fn an_attestation_without_linked_files_serializes_without_the_field() {
+    let skill = b"---\nname: example\ndescription: fixture\n---\n";
+    let archive = archive(&[("SKILL.md", 0o644, skill, b'0')]);
+    let (_, _, signing_key) = trusted_root();
+    let attestation = attestation(&archive, vec![file("SKILL.md", 0o644, skill)], &signing_key);
+
+    let value = serde_json::to_value(&attestation).unwrap();
+
+    assert!(value.get("linkedFiles").is_none());
 }

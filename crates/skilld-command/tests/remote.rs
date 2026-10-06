@@ -21,10 +21,10 @@ use skilld_command::{
 use skilld_core::{
     AgentTargetId, ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome,
     CheckResult, CommitAuthor, CommitSha, CommitSummary, InstallMode, InstallOperation,
-    InstallRequest, InstallScope, InstallSource, ListedOrigin, ListedSkill, LockedSource,
-    MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
-    SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus, TrustedRootPin,
-    UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    InstallRequest, InstallScope, InstallSource, LinkedFile, ListedOrigin, ListedSkill,
+    LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
+    ResolvedSource, SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus,
+    TrustedRootPin, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -279,7 +279,26 @@ fn verified_remote_responses_with(
     skill: &[u8],
     checks: Vec<CheckResult>,
 ) -> (TrustedRootPin, Vec<HttpResponse>) {
+    verified_remote_responses_linking(skill, checks, &[])
+}
+
+/// A ready Resolution whose attestation lists these linked files. A response
+/// for each one follows the Artifact, in order.
+fn verified_remote_responses_linking(
+    skill: &[u8],
+    checks: Vec<CheckResult>,
+    linked: &[(&str, &[u8])],
+) -> (TrustedRootPin, Vec<HttpResponse>) {
     let archive = tar_skill(skill);
+    let linked_files = linked
+        .iter()
+        .map(|(path, bytes)| LinkedFile {
+            path: (*path).to_owned(),
+            mode: 0o755,
+            size: bytes.len() as u64,
+            git_blob_sha: git_blob_sha(bytes),
+        })
+        .collect::<Vec<_>>();
     let root_key = SigningKey::from_bytes(&[7_u8; 32]);
     let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
     let root_public_key = URL_SAFE_NO_PAD.encode(root_key.verifying_key().to_bytes());
@@ -314,7 +333,7 @@ fn verified_remote_responses_with(
     };
     let content_sha256 = hex(&Sha256::digest(&archive));
     let artifact_id = format!("sha256:{content_sha256}");
-    let statement = serde_json::to_vec(&json!({
+    let mut statement = json!({
         "version": 1,
         "artifactId": artifact_id,
         "createdAt": "2026-08-20T00:00:00.000Z",
@@ -326,8 +345,11 @@ fn verified_remote_responses_with(
         "policyVersion": "2026-08-20",
         "files": [file.clone()],
         "checkResults": checks
-    }))
-    .unwrap();
+    });
+    if !linked_files.is_empty() {
+        statement["linkedFiles"] = json!(linked_files);
+    }
+    let statement = serde_json::to_vec(&statement).unwrap();
     let signature = signing_key.sign(&signed_message(ATTESTATION_DOMAIN, &statement));
     let attestation = ArtifactAttestation {
         version: 1,
@@ -341,6 +363,7 @@ fn verified_remote_responses_with(
         policy_version: "2026-08-20".to_owned(),
         files: vec![file],
         check_results: checks,
+        linked_files,
         statement: URL_SAFE_NO_PAD.encode(statement),
         signature: AttestationSignature {
             algorithm: SignatureAlgorithm::Ed25519,
@@ -390,7 +413,14 @@ fn verified_remote_responses_with(
             response(200, serde_json::to_vec(&root).unwrap()),
             response(200, serde_json::to_vec(&grant).unwrap()),
             response(200, archive),
-        ],
+        ]
+        .into_iter()
+        .chain(
+            linked
+                .iter()
+                .map(|(_, bytes)| response(200, bytes.to_vec())),
+        )
+        .collect(),
     )
 }
 
@@ -2713,6 +2743,91 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
             && header.value.expose() == "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f"
     }));
     assert!(requests[3].url.ends_with("/content"));
+}
+
+fn linking_remote(
+    responses: Vec<HttpResponse>,
+    pin: TrustedRootPin,
+) -> (Arc<FakeHttp>, SkilldRemote) {
+    let http = Arc::new(FakeHttp::with(responses));
+    let remote = SkilldRemote::new(
+        http.clone(),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(pin),
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(Arc::new(NoSleep));
+    (http, remote)
+}
+
+#[test]
+fn a_resolution_request_says_this_cli_reads_linked_files() {
+    let (pin, responses) = verified_remote_responses();
+    let (http, remote) = linking_remote(responses, pin);
+
+    remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap();
+
+    let requests = http.requests.lock().unwrap();
+    assert!(requests[0].headers.iter().any(|header| {
+        header.name == "skilld-capabilities" && header.value.expose() == "linked-files"
+    }));
+}
+
+#[test]
+fn a_linked_file_is_read_from_github_at_the_attested_commit_and_installed() {
+    let tool = b"\x7fELF a binary too large to pack".as_slice();
+    let (pin, responses) = verified_remote_responses_linking(
+        b"---\nname: example\ndescription: verified\n---\n",
+        passing_checks(),
+        &[("scripts/my tool#1", tool)],
+    );
+    let (http, remote) = linking_remote(responses, pin);
+
+    let prepared = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap();
+
+    let installed = prepared
+        .files
+        .iter()
+        .find(|file| file.path == "scripts/my tool#1")
+        .unwrap();
+    assert_eq!(installed.bytes, tool);
+    assert_eq!(installed.mode, 0o755);
+    let requests = http.requests.lock().unwrap();
+    assert_eq!(
+        requests[4].url,
+        "https://raw.githubusercontent.com/skilld-dev/skills/0123456789abcdef0123456789abcdef01234567/skills/example/scripts/my%20tool%231"
+    );
+}
+
+#[test]
+fn a_linked_file_with_other_bytes_installs_nothing() {
+    let (pin, mut responses) = verified_remote_responses_linking(
+        b"---\nname: example\ndescription: verified\n---\n",
+        passing_checks(),
+        &[("assets/track.mp3", b"the attested bytes")],
+    );
+    *responses.last_mut().unwrap() = response(200, b"the attested bytez".to_vec());
+    let (_, remote) = linking_remote(responses, pin);
+
+    let error = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "LINKED_FILE_DIGEST_MISMATCH");
 }
 
 fn prepared_with_page_header(header: Option<&str>) -> Option<String> {

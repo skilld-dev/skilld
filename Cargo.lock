@@ -1980,6 +1980,7 @@ dependencies = [
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "time",
 ]

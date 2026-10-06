@@ -21,6 +21,7 @@ Every public export, command, error, route, and document uses these terms.
 | Artifact | `skilld.dev/api/v1` | published protocol | skilld CLI | Artifact |
 | Artifact attestation | `skilld.dev/api/v1` | published protocol | skilld CLI | attestation |
 | Check result | `skilld.dev/api/v1` | published protocol | skilld CLI, developer | check result |
+| Linked file | `skilld.dev/api/v1` | published protocol | skilld CLI | linked file |
 | behavior | `packages/protocol/rules/skill-behaviors.json`, `skilld run` | published value | Agent, developer | behavior |
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
 | Skill page | `skilld.dev` and skilld CLI output | published value | Agent, developer | Skill page |
@@ -276,6 +277,16 @@ The digest reports changes in watched Repositories.
 **Never:** safety certificate, secure badge, guarantee.
 
 **Casing:** `Check result` in headings, `check result` in sentences.
+
+### Linked file
+
+**Is:** a Skill file an Artifact attestation lists by path, mode, size, and Git blob SHA without packing its bytes. The skilld CLI reads it from `raw.githubusercontent.com` at the attested commit and installs the Skill only when every linked file matches.
+
+**Use for:** Skill files that would push an Artifact past its size limit. The skilld CLI sends `skilld-capabilities: linked-files` on each Resolution request, and skilld.dev lists linked files only for a client that does.
+
+**Never:** remote asset, external file, download, attachment.
+
+**Casing:** `Linked file` in headings, `linked file` in sentences, `linkedFiles` in JSON.
 
 ### behavior
 
