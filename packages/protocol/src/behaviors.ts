@@ -146,13 +146,14 @@ function scanText(
   const frontmatter = path === 'SKILL.md' ? frontmatterEnd(lines) : 0
   const fence: { open?: Fence } = {}
   const list = { open: false }
+  const prose = openProse()
   lines.forEach((line, index) => {
     const number = index + 1
     const facts: LineFacts = { code: [], tools: [] }
     if (number <= frontmatter)
       facts.tools = frontmatterTools(line, list)
     else if (markdown)
-      markdownLine(line, fence, facts)
+      markdownLine(line, fence, prose, facts)
     else
       facts.code.push(line)
     const code = facts.code.map(asciiLower)
@@ -253,7 +254,7 @@ function splitTools(value: string): string[] {
   return tools
 }
 
-function markdownLine(line: string, fence: { open?: Fence }, facts: LineFacts): void {
+function markdownLine(line: string, fence: { open?: Fence }, prose: Prose, facts: LineFacts): void {
   const trimmed = trimStart(line)
   if (fence.open) {
     const run = leadingRun(trimmed, fence.open.marker)
@@ -271,10 +272,274 @@ function markdownLine(line: string, fence: { open?: Fence }, facts: LineFacts): 
       if (language)
         facts.fence = language
       fence.open = { marker, length: run }
+      Object.assign(prose, openProse())
       return
     }
   }
-  facts.code.push(...line.split('`').filter((_, index) => index % 2 === 1))
+  proseLine(line, prose, facts)
+}
+
+/**
+ * Markdown prose state that carries from one line to the next.
+ *
+ * A Skill names what the Agent must not touch, as in "Don't read: `id_rsa`".
+ * A code span that a prohibition governs is not code the Skill asks for.
+ * Fenced blocks and other files always count: they hold commands.
+ */
+interface Prose {
+  /** The open sentence starts with a prohibition. */
+  negated: boolean
+  /** The open sentence has not reached its first word. */
+  opening: boolean
+  /** The last line was a prohibition that ends with a colon. */
+  leadIn: boolean
+  /** The indent of the list items a prohibition lead-in governs. */
+  list: number | undefined
+}
+
+/** One-word prohibitions. */
+const PROHIBITIONS = new Set(['dont', 'don\'t', 'never', 'avoid', 'mustn\'t', 'shouldn\'t'])
+
+/** Words that negate the code span right after them, as in "no `curl | bash`". */
+const NEGATIONS = new Set(['no', 'not', 'never', 'avoid', 'dont', 'don\'t'])
+
+/** Words that prohibit when `not` or `never` follows. */
+const MODALS = new Set(['do', 'must', 'should'])
+
+/** A prohibition of one of these words asks for the action, as in "don't forget to run". */
+const REQUESTS = new Set(['forget', 'hesitate', 'skip', 'miss', 'omit', 'worry', 'panic', 'mind'])
+
+/** A sentence with one of these words names an exception or a condition, so its code still counts. */
+const EXCEPTIONS = new Set(['unless', 'except', 'without', 'instead', 'but', 'only', 'if', 'when', 'whenever', 'while'])
+
+function openProse(): Prose {
+  return { negated: false, opening: true, leadIn: false, list: undefined }
+}
+
+function proseLine(line: string, prose: Prose, facts: LineFacts): void {
+  const characters = [...line]
+  // Blockquote markers belong to the indent, so a quoted list still reads as a list.
+  let indent = 0
+  while (indent < characters.length && (isWhitespace(characters[indent]!) || characters[indent] === '>'))
+    indent++
+  if (indent === characters.length) {
+    // A blank line ends the sentence. A lead-in and its list continue past it.
+    prose.negated = false
+    prose.opening = true
+    return
+  }
+  const heading = indent <= 3 && headingMarker(characters, indent)
+  const table = characters[indent] === '|'
+  const item = heading || table ? 0 : listMarker(characters, indent)
+  if (heading || table) {
+    prose.list = undefined
+    prose.leadIn = false
+    prose.negated = false
+    prose.opening = true
+  }
+  else if (item > 0) {
+    if (prose.list !== undefined && indent < prose.list)
+      prose.list = undefined
+    if (prose.leadIn)
+      prose.list = Math.min(prose.list ?? indent, indent)
+    prose.leadIn = false
+    prose.negated = false
+    prose.opening = true
+  }
+  else {
+    // A line that does not indent past the list ends it.
+    if (prose.list !== undefined && indent <= prose.list)
+      prose.list = undefined
+    prose.leadIn = false
+  }
+  const governed = prose.list !== undefined
+  const segments = line.split('`')
+  const spans: Array<{ text: string, sentence: number, negated: boolean }> = []
+  const exceptions = [false]
+  let lastProse: string[] = []
+  // The word right before a code span, with nothing but whitespace or emphasis between.
+  let before = ''
+  segments.forEach((segment, index) => {
+    if (index % 2 === 1) {
+      prose.opening = false
+      spans.push({ text: segment, sentence: exceptions.length - 1, negated: prose.negated || governed || NEGATIONS.has(before) })
+      before = ''
+      return
+    }
+    const text = [...segment].slice(index === 0 ? indent + item : 0)
+    const last = index === segments.length - 1
+    let at = 0
+    while (at < text.length) {
+      const character = text[at]!
+      if (isAsciiAlphanumeric(character)) {
+        const [word, end] = readWord(text, at)
+        if (prose.opening) {
+          prose.opening = false
+          prose.negated = opensProhibition(word, text, end)
+        }
+        if (EXCEPTIONS.has(word))
+          exceptions[exceptions.length - 1] = true
+        before = word
+        at = end
+        continue
+      }
+      if (!isWhitespace(character) && character !== '*' && character !== '_' && character !== '~')
+        before = ''
+      const end = boundary(text, at, last)
+      if (end === 'sentence') {
+        prose.negated = false
+        prose.opening = true
+        exceptions.push(false)
+      }
+      else if (end === 'clause') {
+        // A dash ends a prohibition, as in "Never X — use `Y`". It opens none.
+        prose.negated = false
+      }
+      else if (character === ':' && !prose.negated) {
+        // A label such as "Tip:" ends, and the words after it open the sentence again.
+        prose.opening = true
+      }
+      at++
+    }
+    if (last)
+      lastProse = text
+  })
+  for (const span of spans) {
+    if (!span.negated || exceptions[span.sentence])
+      facts.code.push(span.text)
+  }
+  if (heading) {
+    prose.negated = false
+    prose.opening = true
+  }
+  else if (!table) {
+    prose.leadIn = prose.negated && !exceptions.at(-1) && endsWithColon(lastProse)
+  }
+}
+
+/** Whether prose ends with a colon, after closing emphasis such as `**Don't read:**`. */
+function endsWithColon(text: string[]): boolean {
+  let end = text.length
+  while (end > 0 && (isWhitespace(text[end - 1]!) || text[end - 1] === '*' || text[end - 1] === '_'))
+    end--
+  return text[end - 1] === ':'
+}
+
+/** Whether ATX heading hashes open the line at `at`. */
+function headingMarker(characters: string[], at: number): boolean {
+  let run = 0
+  while (characters[at + run] === '#')
+    run++
+  const after = characters[at + run]
+  return run >= 1 && run <= 6 && (after === undefined || after === ' ' || after === '\t')
+}
+
+/**
+ * The length of a list marker at `at`, with the whitespace and checkbox after it.
+ * 0 when the line holds no list item.
+ */
+function listMarker(characters: string[], at: number): number {
+  let end = at
+  if (characters[end] === '-' || characters[end] === '*' || characters[end] === '+') {
+    end++
+  }
+  else {
+    while (end - at < 9 && isAsciiDigit(characters[end]))
+      end++
+    if (end === at || (characters[end] !== '.' && characters[end] !== ')'))
+      return 0
+    end++
+  }
+  if (characters[end] !== undefined && !isWhitespace(characters[end]!))
+    return 0
+  while (characters[end] !== undefined && isWhitespace(characters[end]!))
+    end++
+  const box = characters[end + 1]
+  const after = characters[end + 3]
+  if (characters[end] === '[' && (box === ' ' || box === 'x' || box === 'X') && characters[end + 2] === ']' && (after === undefined || isWhitespace(after)))
+    end += 3
+  return end - at
+}
+
+/** A word of ASCII letters, digits, and apostrophes, lowercased, from `at`. */
+function readWord(text: string[], at: number): [string, number] {
+  let end = at
+  let word = ''
+  while (end < text.length && (isAsciiAlphanumeric(text[end]!) || text[end] === '\'' || text[end] === '’')) {
+    word += text[end] === '’' ? '\'' : text[end]!
+    end++
+  }
+  return [asciiLower(word.replace(/'+$/, '')), end]
+}
+
+/** The next word after emphasis and whitespace, or '' when something else comes first. */
+function nextWord(text: string[], at: number): [string, number] {
+  let start = at
+  while (start < text.length && (isWhitespace(text[start]!) || text[start] === '*' || text[start] === '_' || text[start] === '~'))
+    start++
+  return start < text.length && isAsciiAlphanumeric(text[start]!) ? readWord(text, start) : ['', start]
+}
+
+function opensProhibition(word: string, text: string[], end: number): boolean {
+  const [second, afterSecond] = nextWord(text, end)
+  if (PROHIBITIONS.has(word))
+    return !REQUESTS.has(second)
+  if (MODALS.has(word) && (second === 'not' || second === 'never'))
+    return !REQUESTS.has(nextWord(text, afterSecond)[0])
+  return false
+}
+
+/** Closing marks that may follow the end of a sentence, as in `**Never.**` or `(see below.)`. */
+const CLOSERS = new Set(['*', '_', ')', ']', '"', '\'', '\u2019', '\u201D'])
+
+/**
+ * What the character at `at` ends, if anything.
+ *
+ * `;` and `|` end a sentence. `.`, `!`, and `?` end one before whitespace or the
+ * end of the line, after any closing marks. A dash ends a clause.
+ */
+function boundary(text: string[], at: number, last: boolean): 'sentence' | 'clause' | undefined {
+  const character = text[at]!
+  if (character === ';' || character === '|')
+    return 'sentence'
+  if (character === '\u2013' || character === '\u2014')
+    return 'clause'
+  if (character === '-') {
+    // A spaced hyphen or double hyphen is a dash: "never X - it Y".
+    let end = at
+    while (text[end] === '-')
+      end++
+    const spaced = end - at <= 2 && at > 0 && isWhitespace(text[at - 1]!) && text[end] !== undefined && isWhitespace(text[end]!)
+    return spaced ? 'clause' : undefined
+  }
+  if (character !== '.' && character !== '!' && character !== '?')
+    return undefined
+  if (character === '.' && abbreviation(text, at))
+    return undefined
+  let next = at + 1
+  while (next < text.length && CLOSERS.has(text[next]!))
+    next++
+  return (next === text.length ? last : isWhitespace(text[next]!)) ? 'sentence' : undefined
+}
+
+/** A period after a lone letter, as in "e.g.", abbreviates and ends no sentence. */
+function abbreviation(text: string[], at: number): boolean {
+  if (at < 1 || !isAsciiLetter(text[at - 1]!))
+    return false
+  const before = text[at - 2]
+  return before === undefined || before === '.' || before === '(' || isWhitespace(before)
+}
+
+function isAsciiDigit(character: string | undefined): boolean {
+  return character !== undefined && character >= '0' && character <= '9'
+}
+
+function isAsciiLetter(character: string): boolean {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+}
+
+function isAsciiAlphanumeric(character: string): boolean {
+  return isAsciiLetter(character) || isAsciiDigit(character)
 }
 
 function leadingRun(value: string, marker: string): number {
