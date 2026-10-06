@@ -3,7 +3,7 @@
   "type": "module",
   "version": "3.6.1",
   "packageManager": "pnpm@11.25.0",
-  "description": "Open source, privacy friendly Agent Skills. Search, run, install, and keep them current.",
+  "description": "Search, run, install, and keep Agent Skills current. The open-source CLI behind skilld.dev.",
   "author": {
     "name": "Harlan Wilton",
     "email": "harlan@harlanzw.com",
