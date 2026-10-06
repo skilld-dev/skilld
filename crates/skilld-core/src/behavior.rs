@@ -726,14 +726,14 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
     let mut spans = Vec::new();
     let mut exceptions = vec![false];
     let mut last_prose = Vec::new();
-    // The word right before a code span, with nothing but whitespace or emphasis between.
-    let mut before = String::new();
+    // The word right before a code span negates it, with nothing but whitespace or emphasis between.
+    let mut before_negates = false;
     for (index, segment) in segments.iter().enumerate() {
         if index % 2 == 1 {
             prose.opening = false;
-            let negated = prose.negated || governed || NEGATIONS.contains(&before.as_str());
+            let negated = prose.negated || governed || before_negates;
             spans.push((*segment, exceptions.len() - 1, negated));
-            before.clear();
+            before_negates = false;
             continue;
         }
         let skip = if index == 0 { indent + item } else { 0 };
@@ -746,19 +746,19 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
                 let (word, end) = read_word(&text, at);
                 if prose.opening {
                     prose.opening = false;
-                    prose.negated = opens_prohibition(&word, &text, end);
+                    prose.negated = opens_prohibition(word, &text, end);
                 }
-                if EXCEPTIONS.contains(&word.as_str())
+                if word.is(EXCEPTIONS)
                     && let Some(exception) = exceptions.last_mut()
                 {
                     *exception = true;
                 }
-                before = word;
+                before_negates = word.is(NEGATIONS);
                 at = end;
                 continue;
             }
             if !character.is_whitespace() && !matches!(character, '*' | '_' | '~') {
-                before.clear();
+                before_negates = false;
             }
             match boundary(&text, at, last) {
                 Some(Boundary::Sentence) => {
@@ -852,26 +852,46 @@ fn list_marker(characters: &[char], at: usize) -> usize {
     end - at
 }
 
-/// A word of ASCII letters, digits, and apostrophes, lowercased, from `at`.
-fn read_word(text: &[char], at: usize) -> (String, usize) {
-    let mut end = at;
-    let mut word = String::new();
-    while let Some(&character) = text.get(end) {
-        if !(character.is_ascii_alphanumeric() || character == '\'' || character == '\u{2019}') {
-            break;
+/// A word of ASCII letters, digits, and apostrophes in prose.
+#[derive(Clone, Copy)]
+struct Word<'t>(&'t [char]);
+
+impl Word<'_> {
+    /// Whether the word is one of `words`, ignoring ASCII case and trailing apostrophes.
+    /// A typographic apostrophe counts as `'`.
+    fn is(self, words: &[&str]) -> bool {
+        let mut word = self.0;
+        while let [rest @ .., '\'' | '\u{2019}'] = word {
+            word = rest;
         }
-        word.push(if character == '\u{2019}' {
-            '\''
-        } else {
-            character.to_ascii_lowercase()
-        });
-        end += 1;
+        words.iter().any(|candidate| {
+            candidate.len() == word.len()
+                && candidate.chars().zip(word).all(|(expected, actual)| {
+                    let actual = if *actual == '\u{2019}' {
+                        '\''
+                    } else {
+                        actual.to_ascii_lowercase()
+                    };
+                    expected == actual
+                })
+        })
     }
-    (word.trim_end_matches('\'').to_owned(), end)
 }
 
-/// The next word after emphasis and whitespace, or "" when something else comes first.
-fn next_word(text: &[char], at: usize) -> (String, usize) {
+/// The word that starts at `at`, and the index after it.
+fn read_word(text: &[char], at: usize) -> (Word<'_>, usize) {
+    let end = at
+        + text[at..]
+            .iter()
+            .take_while(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '\'' | '\u{2019}')
+            })
+            .count();
+    (Word(&text[at..end]), end)
+}
+
+/// The next word after emphasis and whitespace, unless something else comes first.
+fn next_word(text: &[char], at: usize) -> Option<(Word<'_>, usize)> {
     let start = at
         + text[at..]
             .iter()
@@ -879,22 +899,23 @@ fn next_word(text: &[char], at: usize) -> (String, usize) {
                 character.is_whitespace() || matches!(character, '*' | '_' | '~')
             })
             .count();
-    if text.get(start).is_some_and(char::is_ascii_alphanumeric) {
-        read_word(text, start)
-    } else {
-        (String::new(), start)
-    }
+    text.get(start)
+        .is_some_and(char::is_ascii_alphanumeric)
+        .then(|| read_word(text, start))
 }
 
-fn opens_prohibition(word: &str, text: &[char], end: usize) -> bool {
-    let (second, after_second) = next_word(text, end);
-    if PROHIBITIONS.contains(&word) {
-        return !REQUESTS.contains(&second.as_str());
+fn opens_prohibition(word: Word<'_>, text: &[char], end: usize) -> bool {
+    let second = next_word(text, end);
+    let asks = |next: Option<(Word<'_>, usize)>| next.is_some_and(|(word, _)| word.is(REQUESTS));
+    if word.is(PROHIBITIONS) {
+        return !asks(second);
     }
-    if MODALS.contains(&word) && (second == "not" || second == "never") {
-        return !REQUESTS.contains(&next_word(text, after_second).0.as_str());
+    match second {
+        Some((negation, after)) if word.is(MODALS) && negation.is(&["not", "never"]) => {
+            !asks(next_word(text, after))
+        }
+        _ => false,
     }
-    false
 }
 
 /// What one character of prose ends.
