@@ -1069,7 +1069,10 @@ impl SkilldRemote {
                         return Err(error);
                     }
                     retries += 1;
-                    let wait = wait.unwrap_or_else(|| resolution_backoff(retries));
+                    let wait = wait.map_or_else(
+                        || resolution_backoff(retries),
+                        |wait| wait + jitter(Duration::from_millis(250)),
+                    );
                     if !deadline.remaining().is_ok_and(|remaining| wait < remaining) {
                         return Err(error);
                     }
@@ -3601,16 +3604,21 @@ enum ResolutionAttempt {
 }
 
 /// 1, 2, then 4 seconds, each with up to a quarter more as jitter.
-///
-/// The jitter spreads Agents that hit the same rate limit at once. It comes
-/// from the clock, because a retry needs no strong randomness.
 fn resolution_backoff(retry: u32) -> Duration {
     let base = Duration::from_secs(1_u64 << retry.saturating_sub(1).min(5));
+    base + jitter(base / 4)
+}
+
+/// A wait from zero up to `maximum`.
+///
+/// Jitter spreads Agents that hit the same rate limit at once. It comes from
+/// the clock, because a retry needs no strong randomness.
+fn jitter(maximum: Duration) -> Duration {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    base + base.mul_f64(f64::from(nanos % 1_000) / 4_000.0)
+    maximum.mul_f64(f64::from(nanos % 1_000) / 1_000.0)
 }
 
 fn resolution_timeout() -> RemoteError {

@@ -1691,7 +1691,9 @@ fn a_short_retry_after_is_honored_before_the_next_resolution() {
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
     assert_eq!(error.code, "SOURCE_NOT_FOUND");
-    assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(5));
+    let waited = *sleeper.elapsed.lock().unwrap();
+    assert!(waited >= Duration::from_secs(5), "{waited:?}");
+    assert!(waited < Duration::from_millis(5_250), "{waited:?}");
 }
 
 #[test]
