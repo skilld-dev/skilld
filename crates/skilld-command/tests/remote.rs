@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1597,23 +1597,118 @@ fn a_rate_limited_resolution_says_how_long_to_wait() {
     assert_eq!(error.message, "the Resolution failed. Retry in 25 minutes.");
 }
 
+fn failed_resolution(code: &str, retryable: bool, retry_after: Option<u64>) -> HttpResponse {
+    let mut body = json!({
+        "state": "failed",
+        "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
+        "code": code,
+        "retryable": retryable,
+    });
+    if let Some(seconds) = retry_after {
+        body["retryAfterSeconds"] = json!(seconds);
+    }
+    response(200, serde_json::to_vec(&body).unwrap())
+}
+
+fn idempotency_keys(http: &FakeHttp) -> Vec<String> {
+    http.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| {
+            request
+                .headers
+                .iter()
+                .find(|header| header.name == "idempotency-key")
+                .map(|header| header.value.expose().to_owned())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn resolution_remote(http: Arc<FakeHttp>, sleeper: Arc<RecordingSleeper>) -> SkilldRemote {
+    SkilldRemote::new(
+        http,
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Unconfigured,
+    )
+    .with_endpoint("http://127.0.0.1:8787")
+    .unwrap()
+    .with_sleeper(sleeper)
+}
+
 #[test]
-fn a_retryable_resolution_without_a_wait_says_only_that_it_may_be_retried() {
-    let http = Arc::new(FakeHttp::with([response(
-        200,
-        serde_json::to_vec(&json!({
-            "state": "failed",
-            "resolutionId": "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f",
-            "code": "SERVICE_UNAVAILABLE",
-            "retryable": true,
-        }))
-        .unwrap(),
-    )]));
-    let remote = search_remote(http);
+fn a_retryable_resolution_says_it_may_be_retried_after_three_retries() {
+    let http = Arc::new(FakeHttp::with([
+        failed_resolution("SERVICE_UNAVAILABLE", true, None),
+        failed_resolution("SERVICE_UNAVAILABLE", true, None),
+        failed_resolution("SERVICE_UNAVAILABLE", true, None),
+        failed_resolution("SERVICE_UNAVAILABLE", true, None),
+    ]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = resolution_remote(http.clone(), sleeper.clone());
 
     let error = remote.prepare(&skilld_selector(), false).unwrap_err();
 
     assert_eq!(error.message, "the Resolution failed and may be retried");
+    let keys = idempotency_keys(&http);
+    assert_eq!(keys.len(), 4);
+    assert_eq!(keys.iter().collect::<BTreeSet<_>>().len(), 4);
+    let waited = *sleeper.elapsed.lock().unwrap();
+    assert!(waited >= Duration::from_secs(7), "{waited:?}");
+    assert!(waited < Duration::from_secs(11), "{waited:?}");
+}
+
+#[test]
+fn a_rate_limited_resolution_is_requested_again_with_a_new_key_after_a_backoff() {
+    let http = Arc::new(FakeHttp::with([
+        failed_resolution("RATE_LIMITED", true, None),
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+    ]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = resolution_remote(http.clone(), sleeper.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    let keys = idempotency_keys(&http);
+    assert_eq!(keys.len(), 2);
+    assert_ne!(keys[0], keys[1]);
+    let waited = *sleeper.elapsed.lock().unwrap();
+    assert!(waited >= Duration::from_secs(1), "{waited:?}");
+    assert!(waited < Duration::from_millis(1_500), "{waited:?}");
+}
+
+#[test]
+fn a_short_retry_after_is_honored_before_the_next_resolution() {
+    let http = Arc::new(FakeHttp::with([
+        failed_resolution("RATE_LIMITED", true, Some(5)),
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+    ]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = resolution_remote(http.clone(), sleeper.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "SOURCE_NOT_FOUND");
+    assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::from_secs(5));
+}
+
+#[test]
+fn a_failure_that_is_not_retryable_is_not_requested_again() {
+    let http = Arc::new(FakeHttp::with([failed_resolution(
+        "INVALID_SOURCE",
+        false,
+        None,
+    )]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let remote = resolution_remote(http.clone(), sleeper.clone());
+
+    let error = remote.prepare(&skilld_selector(), false).unwrap_err();
+
+    assert_eq!(error.code, "INVALID_SOURCE");
+    assert_eq!(http.requests.lock().unwrap().len(), 1);
+    assert_eq!(*sleeper.elapsed.lock().unwrap(), Duration::ZERO);
 }
 
 fn skilld_selector() -> RemoteSelector {

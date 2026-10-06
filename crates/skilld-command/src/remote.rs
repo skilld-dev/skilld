@@ -78,6 +78,8 @@ const TAR_BLOCK: usize = 512;
 const MAX_REDIRECTS: usize = 3;
 const MAX_RETRIES: usize = 2;
 const MAX_POLLS: usize = 120;
+/// New Resolutions after a retryable failure, so four requests at most.
+const MAX_RESOLUTION_RETRIES: u32 = 3;
 const MAX_UPDATE_COMPARISONS: usize = 500;
 const UPDATE_SERVICE_BATCH: usize = 50;
 #[cfg(not(target_os = "wasi"))]
@@ -1047,8 +1049,41 @@ impl SkilldRemote {
         verify_trusted_root(root, pin)
     }
 
+    /// Resolve one source, and request a new Resolution when one fails for a
+    /// reason that can pass.
+    ///
+    /// skilld.dev marks a failure retryable when the same request can work
+    /// later: a spent GitHub rate limit, or an unavailable source, service,
+    /// signer, or check. Each retry is a new Resolution with a new
+    /// Idempotency-Key, because a failed one never changes. The waits back off
+    /// with jitter and share the Resolution deadline. A wait that skilld.dev
+    /// names, and that is longer than the time left, fails at once.
     fn resolve(&self, source: &SourceRequest) -> Result<ResolvedArtifact, RemoteError> {
         let mut deadline = ResolutionDeadline::new();
+        let mut retries = 0_u32;
+        loop {
+            match self.resolve_once(source, &mut deadline)? {
+                ResolutionAttempt::Ready(artifact) => return Ok(*artifact),
+                ResolutionAttempt::Retryable { error, wait } => {
+                    if retries == MAX_RESOLUTION_RETRIES {
+                        return Err(error);
+                    }
+                    retries += 1;
+                    let wait = wait.unwrap_or_else(|| resolution_backoff(retries));
+                    if !deadline.remaining().is_ok_and(|remaining| wait < remaining) {
+                        return Err(error);
+                    }
+                    self.sleep(wait, Some(&mut deadline))?;
+                }
+            }
+        }
+    }
+
+    fn resolve_once(
+        &self,
+        source: &SourceRequest,
+        deadline: &mut ResolutionDeadline,
+    ) -> Result<ResolutionAttempt, RemoteError> {
         self.progress
             .stage(RemoteProgressStage::RequestingResolution);
         let body = serde_json::to_vec(&json!({ "source": source })).map_err(|_| {
@@ -1067,7 +1102,7 @@ impl SkilldRemote {
         let response = self.execute_with_deadline(
             request,
             AllowedOrigin::Service(self.endpoint.clone()),
-            Some(&mut deadline),
+            Some(&mut *deadline),
         )?;
         let mut page_url = self.page_url_header(&response);
         let mut resolution: Resolution = parse_json(&response.body)?;
@@ -1096,11 +1131,11 @@ impl SkilldRemote {
                         ));
                     }
                     validate_resolved_source(source, &artifact.attestation)?;
-                    return Ok(ResolvedArtifact {
+                    return Ok(ResolutionAttempt::Ready(Box::new(ResolvedArtifact {
                         resolution_id,
                         descriptor: *artifact,
                         page_url,
-                    });
+                    })));
                 }
                 Resolution::Pending {
                     resolution_id,
@@ -1132,7 +1167,7 @@ impl SkilldRemote {
                     let response = self.execute_with_deadline(
                         request,
                         AllowedOrigin::Service(self.endpoint.clone()),
-                        Some(&mut deadline),
+                        Some(&mut *deadline),
                     )?;
                     page_url = self.page_url_header(&response);
                     resolution = parse_json(&response.body)?;
@@ -1149,10 +1184,18 @@ impl SkilldRemote {
                     retry_after_seconds,
                     ..
                 } => {
-                    return Err(RemoteError::new(
+                    let error = RemoteError::new(
                         problem_code(&code),
                         resolution_failure_message(retryable, retry_after_seconds),
-                    ));
+                    );
+                    return if retryable {
+                        Ok(ResolutionAttempt::Retryable {
+                            error,
+                            wait: retry_after_seconds.map(Duration::from_secs),
+                        })
+                    } else {
+                        Err(error)
+                    };
                 }
                 Resolution::Revoked { .. } => {
                     return Err(RemoteError::new(
@@ -3545,6 +3588,29 @@ fn valid_resolution_id(value: &str) -> bool {
 
 fn cancelled() -> RemoteError {
     RemoteError::new("CANCELLED", "the remote operation was cancelled")
+}
+
+/// One Resolution request: an Artifact, or a failure that can pass.
+enum ResolutionAttempt {
+    Ready(Box<ResolvedArtifact>),
+    Retryable {
+        error: RemoteError,
+        /// The wait skilld.dev named, when it named one.
+        wait: Option<Duration>,
+    },
+}
+
+/// 1, 2, then 4 seconds, each with up to a quarter more as jitter.
+///
+/// The jitter spreads Agents that hit the same rate limit at once. It comes
+/// from the clock, because a retry needs no strong randomness.
+fn resolution_backoff(retry: u32) -> Duration {
+    let base = Duration::from_secs(1_u64 << retry.saturating_sub(1).min(5));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    base + base.mul_f64(f64::from(nanos % 1_000) / 4_000.0)
 }
 
 fn resolution_timeout() -> RemoteError {
