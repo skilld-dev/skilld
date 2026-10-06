@@ -1,18 +1,23 @@
 <h1 align="center">
 <a href="https://skilld.dev"><picture>
 <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo.svg">
-<img alt="skilld" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-light.svg" width="220">
+<img alt="skilld" src="https://raw.githubusercontent.com/skilld-dev/skilld/main/.github/logos/logo-light.svg" width="260">
 </picture></a>
 </h1>
 
 <p align="center">
-Open source, privacy friendly Agent Skills, curated by humans.<br>Search, run, install, and keep them current.
+Find, preview, run, and watch Agent Skills.<br>The open-source CLI behind <a href="https://skilld.dev">skilld.dev</a>.
 </p>
 
 <p align="center">
 <a href="https://npmjs.com/package/skilld"><img alt="npm version" src="https://img.shields.io/npm/v/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
 <a href="https://npm.chart.dev/skilld"><img alt="npm downloads" src="https://img.shields.io/npm/dm/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
 <a href="https://github.com/skilld-dev/skilld/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/github/license/skilld-dev/skilld?style=flat&labelColor=1c1917&color=e11d48"></a>
+<a href="https://skilld.dev/gh/skilld-dev/skilld/skilld"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://skilld.dev/b/skilld-dev/skilld/skilld?theme=dark">
+<source media="(prefers-color-scheme: light)" srcset="https://skilld.dev/b/skilld-dev/skilld/skilld?theme=light">
+<img alt="Agent skill on skilld.dev" src="https://skilld.dev/b/skilld-dev/skilld/skilld?theme=light">
+</picture></a>
 </p>
 
 <div align="center">
@@ -27,19 +32,18 @@ Open source, privacy friendly Agent Skills, curated by humans.<br>Search, run, i
 </table>
 </div>
 
-## Features
-
-- 📖 **Try a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
-- 🎯 **One install, 19 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each. Claude Code, Codex, Cursor, Gemini CLI, Zed, and 14 more.
-- 🦀 **One native binary, no runtime to install.** Startup is under a millisecond. Install it with `curl` and you need no Node.js at all.
-- 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
-- 🔍 **No telemetry.** skilld sends no analytics. Account credentials go to your operating system keychain, never a plain text file.
-
 ## What is skilld?
 
-skilld is a curated registry of agent Skills.
-Real maintainers write them in their own GitHub repositories.
-One command loads one into any Agent.
+[skilld.dev](https://skilld.dev) is a curated registry of Agent Skills.
+Real maintainers write them in their own GitHub Repositories.
+skilld.dev and the open-source `skilld` CLI cover four steps:
+
+| Step | What you do | Where |
+| --- | --- | --- |
+| 🔥 **Find** | See the Skills devs talk about this week. | [Trending Skills](https://skilld.dev/skills/trending), `skilld trending`, `skilld search` |
+| 🧑‍🎨 **Preview** | See what a Skill makes before you run it. | [Skill demos](https://skilld.dev/skills/demos) |
+| 🏃‍♂️ **Run** | Run a Skill once, fork it, or install it. | `skilld run`, `skilld install` |
+| 👀 **Watch** | Get a digest when the Skills you use change. | `skilld watch`, `skilld changes` |
 
 A Skill is a directory with a `SKILL.md` file in the [Agent Skills](https://agentskills.io) format.
 Most Skill directories rank by install count, or ship a generated doc dump.
@@ -50,38 +54,132 @@ The `skilld` CLI searches, runs, installs, updates, verifies, and removes Skills
 It contains no Skill generation logic and no Agent runtime.
 Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and the optional [Harness](#harness).
 
-## Get Started
+## Features
+
+- 📖 **Run a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
+- 🎯 **One install, 19 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each: Claude Code, Codex, Cursor, Gemini CLI, Zed, and 14 more.
+- 🦀 **One native binary, no runtime.** It starts in under a millisecond. The `curl` install needs no Node.js.
+- 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
+- 🛡️ **No telemetry.** The CLI sends no analytics. Account credentials go to your operating system keychain, never to a plain text file.
+
+## Get started
+
+Every command below works through `npx` with no install.
+To install the CLI, see [Install the CLI](#install-the-cli).
+
+### Find a Skill
+
+[Trending Skills](https://skilld.dev/skills/trending) ranks Skills by how many separate devs talked about each one this week.
+Search the registry from a terminal:
+
+```sh
+npx skilld search vue
+npx skilld trending
+```
+
+Every Skill page credits its author and links the source file on GitHub.
+[Curators](https://skilld.dev/community) publish collections of the Skills they use.
+
+### Preview it
+
+Some Skills have demos.
+Each demo is one recorded run: the prompt, and what the Agent built with the Skill.
+Browse [every demo](https://skilld.dev/skills/demos), or open the Demo panel on a Skill page.
+
+### Run it
 
 Give your Agent a Skill URL. There is nothing to install:
 
 > Use this Skill: https://skilld.dev/gh/antfu/skills/vue
 
 Your Agent reads the page and follows it for that session.
-Nothing is written to your project. Add `.md` to any Skill URL for the raw `SKILL.md`.
+Nothing is written to your project.
+Add `.md` to any Skill URL for the raw `SKILL.md`.
 
-Find one on [skilld.dev](https://skilld.dev/skills).
-[Trending Skills](https://skilld.dev/skills/trending) shows what is moving this month.
-Every Skill page credits its author and links the source file on GitHub.
-[Curators](https://skilld.dev/community) publish named collections.
-
-### Run it from your terminal
-
-Same transient run, from a shell. You need no install and no project files:
+From a terminal, `skilld run` does the same:
 
 ```sh
-npx skilld search vue
 npx skilld run antfu/skills/vue
 ```
 
-`skilld run` prints `SKILL.md` to stdout and writes no file.
+It prints `SKILL.md` to stdout and writes no file.
 Pass the output to your Agent.
 
-### Set it up properly
+To change a Skill, ask your Agent to fork it:
 
-Once a Skill earns its place, install the CLI and teach your Agent to drive it:
+> Fork this Skill: https://skilld.dev/gh/antfu/skills/vue
+
+A fork creates an editable local Skill with its original author and license.
+
+To keep a Skill in every session of one project, install it:
+
+```sh
+npx skilld install antfu/skills/vue
+```
+
+An install writes files. If an Agent runs the install, it asks you first.
+
+| | `skilld run` | `skilld install` |
+| --- | --- | --- |
+| Use it for | The task in front of you | Every session in this project |
+| Files written | None | `.skills`, the lockfile, and Agent targets |
+| Cleanup | None | `skilld remove` |
+| Updates | Loads the source each time | `skilld update` |
+| Skill scripts | Never printed or executed | On disk for the Skill to use |
+
+Start with `skilld run`. Install when you reach for the same Skill again.
+
+### Watch for changes
+
+Sign in, then watch the Repositories and collections you use:
+
+```sh
+npx skilld auth login
+npx skilld watch antfu/skills
+```
+
+Each month, the digest email lists what changed. If nothing changed, skilld.dev sends nothing.
+`skilld changes` prints the same changes from the last 30 days.
+`skilld outdated` and `skilld update` keep your installed Skills current.
+
+## Install the CLI
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://skilld.dev/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://skilld.dev/install.ps1 | iex
+```
+
+npm, which needs Node.js:
 
 ```sh
 npm install --global skilld
+```
+
+The script installs one native binary to `~/.skilld/bin`.
+It adds that directory to PATH: in your shell profile on macOS and Linux, in your user PATH on Windows.
+On macOS and Linux, set `SKILLD_NO_MODIFY_PATH=1` to leave your shell profile alone.
+
+The script install upgrades itself in the background after it verifies the signed release manifest.
+Restart skilld to use the new version.
+An npm install prints the upgrade command instead.
+Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
+See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
+
+The npm package selects the same native executable for your system.
+It carries no JavaScript engine and no fallback.
+
+### Teach your Agent skilld
+
+Install the [`skilld` Skill](https://skilld.dev/gh/skilld-dev/skilld/skilld) once for every project:
+
+```sh
 skilld install skilld --global
 ```
 
@@ -90,13 +188,9 @@ Ask for what you need, in your own words:
 
 > Find a skilld Skill for Vue and use it
 
-Keep a Skill in every session of one project:
+No terminal? Paste this into your Agent:
 
-```sh
-skilld install antfu/skills/vue
-```
-
-An install writes files. If an Agent runs the install, it asks you first.
+> Read https://skilld.dev/agent.md and follow it to set up skilld for me.
 
 ### Claude Code plugin
 
@@ -111,18 +205,6 @@ Run these in Claude Code:
 The MCP server searches the registry and returns run and install commands. It never runs a Skill.
 For ChatGPT, Claude, Codex, Cursor, and VS Code, see [skilld.dev/developers](https://skilld.dev/developers).
 
-### Run or install?
-
-| | `skilld run` | `skilld install` |
-| --- | --- | --- |
-| Use it for | The task in front of you | Every session in this project |
-| Files written | None | `.skills`, the lockfile, and Agent targets |
-| Cleanup | None | `skilld remove` |
-| Updates | Loads the source each time | `skilld update` |
-| Skill scripts | Never printed or executed | On disk for the Skill to use |
-
-Start with `skilld run`. Install when you reach for the same Skill again.
-
 ### Agent targets
 
 Use `--agent` to name a target. Repeat it for several, or use `--agent all`.
@@ -134,13 +216,29 @@ skilld install skilld -g --agent kiro --agent zed
 skilld install skilld -g --agent all
 ```
 
+Run `skilld install --help` for every Agent target value.
+
+## How runs and installs work
+
 ### Selectors
 
 `OWNER/REPOSITORY/SKILL` names one Skill in the registry.
 `OWNER/REPOSITORY` names every Skill in one Repository.
 `skilld search` prints the selector for each result.
+In `skilld-dev/skills/find-skill`, `skilld-dev/skills` is the Repository and `find-skill` is the Skill directory inside it.
 skilld 3.0 printed `skilld:OWNER/REPOSITORY/SKILL` and `gh:OWNER/REPOSITORY`. The CLI still accepts both.
-`skilld-dev/skills` is the Repository; `find-skill` is the Skill directory inside it.
+
+### Repositories, curators, and collections
+
+`skilld run` with a Repository, curator, or collection ref prints an index.
+The index has one line per Skill with its run command. It loads no Skill.
+
+`skilld add` installs the Skills the same ref names. It accepts the `skilld install` flags.
+A terminal asks which Skills to install. `--all` installs every one without asking.
+Any other context, such as an Agent, a pipe, or CI, installs every one.
+
+A Repository that skilld.dev does not list yet falls back to its public GitHub tree.
+Those Skills install through direct mode and record the `unverified` source status.
 
 ### Supporting files
 
@@ -161,7 +259,7 @@ Every run lists what the Skill files ask an Agent to do, with the file and line.
 skilld finds behaviors with the fixed text patterns in `packages/protocol/rules/skill-behaviors.json`.
 Patterns miss obfuscated code, so an empty list proves nothing.
 
-Five behaviors stop a remote `run`, `install`, or `add` until the user approves them:
+Five behaviors stop a remote `run`, `install`, or `add` until you approve them:
 
 | id | Skill behavior |
 | --- | --- |
@@ -186,32 +284,6 @@ Run the same command again with the `--allow` ids the message names.
 `add` installs every other Skill the ref names.
 `update` stops only when the new version adds an ask behavior the installed copy lacks.
 A lockfile restore and `skilld sync` install the commits already recorded, so they never stop.
-
-## Install without Node.js
-
-macOS and Linux:
-
-```sh
-curl -fsSL https://skilld.dev/install.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://skilld.dev/install.ps1 | iex
-```
-
-The script installs one native binary to `~/.skilld/bin`.
-It adds that directory to PATH: in your shell profile on macOS and Linux, in your user PATH on Windows.
-On macOS and Linux, set `SKILLD_NO_MODIFY_PATH=1` to leave your shell profile alone.
-That install upgrades itself in the background after it verifies the signed release manifest.
-Restart skilld to use the new version.
-An npm install prints the upgrade command instead.
-Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
-See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
-
-The npm package selects the same native executable for your system.
-It carries no JavaScript engine and no fallback.
 
 ## Commands
 
@@ -252,8 +324,7 @@ skilld remove <skill>
 ```
 
 Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
-Use `--global` (or `-g`) for account level Agent targets.
-Use `--agent <agent>` to name a target; repeat it for several, or use `--agent all`.
+Use `--global` (or `-g`) for account-level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
 
 ### Read the registry
@@ -362,16 +433,7 @@ The skilld-maintained Skills:
 - [`generate-project-skill`](./skills/generate-project-skill): draft a Skill from a project you maintain
 - [`review-skill`](./skills/review-skill): review a Skill before you publish it
 
-Direct Skill runs stay user reviewed.
-The instructions and changes stay visible to you.
-
-`skilld run` with a Repository, curator, or collection ref prints an index.
-The index has one line per Skill with its run command. It loads no Skill.
-`skilld add` installs the Skills the same ref names. It accepts the `skilld install` flags.
-A terminal asks which Skills to install. `--all` installs every one without asking.
-Any other context, such as an Agent, a pipe, or CI, installs every one.
-A Repository that skilld.dev does not list yet falls back to its public GitHub tree.
-Those Skills install through direct mode and record the `unverified` source status.
+When you run these Skills directly, you see every instruction and review every change.
 
 ## Artifact delivery
 
@@ -387,7 +449,7 @@ Private Repository delivery requires both:
 - `skilld auth login` for a skilld.dev account
 - Access through the skilld GitHub App installation
 
-Private Artifact responses use short lived, one time grants.
+Private Artifact responses use short-lived, one-time grants.
 The API does not expose private storage addresses.
 
 ### Direct mode
@@ -471,7 +533,7 @@ It makes network requests only for these reasons:
 The upgrade check never runs in CI or inside an Agent.
 Set `SKILLD_NO_UPGRADE=1` to turn it off.
 
-At a terminal, a signed-out person sees a short note about the weekly email.
+If you are signed out, a terminal shows a short note about the weekly email.
 It prints to stderr at most three times, a week apart, and sends nothing.
 It never prints in CI, inside an Agent, or when output is piped.
 Set `SKILLD_NO_WEEKLY=1` to turn it off.

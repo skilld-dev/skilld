@@ -1,5 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="64" fill="#1c1917"/>
-  <path d="M256 108 L432 332 L388 332 L256 168 L124 332 L80 332 Z" fill="#fb7185"/>
-  <rect x="344" y="344" width="48" height="48" rx="4" fill="#78716c"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="5 0 100 100" width="160" height="160"><style>@media (prefers-color-scheme:dark){.ink{fill:#f5f5f4}.dot{fill:#fb7185}}</style><path class="ink" d="M58 50 L18 82 L18 62 L33 50 L18 38 L18 18 Z" fill="#1c1917"/><circle class="dot" cx="80" cy="50" r="12" fill="#f43f5e"/></svg>
