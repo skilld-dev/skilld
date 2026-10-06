@@ -221,11 +221,13 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
             schema_version: JSON_SCHEMA_VERSION,
             tag: match error.kind {
                 CommandErrorKind::Usage => "UsageError",
-                CommandErrorKind::Operation => "OperationError",
+                CommandErrorKind::Operation | CommandErrorKind::Retryable => "OperationError",
             },
             error: JsonError {
                 code: error.code,
                 message: &error.message,
+                retryable: error.kind == CommandErrorKind::Retryable,
+                next_step: error.next_step.as_deref(),
             },
         })
         .map(|mut bytes| {
@@ -238,20 +240,28 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
         OutputMode::Human { color, .. } => {
             let message = sanitize(&error.message);
             let code = sanitize(error.code);
-            format!(
+            let mut out = format!(
                 "{} {} {}\n",
                 skilld_ui::paint("✗", skilld_ui::Role::Error, color),
                 skilld_ui::paint(&message, skilld_ui::Role::Emphasis, color),
                 skilld_ui::paint(&format!("({code})"), skilld_ui::Role::Dim, color),
-            )
-            .into_bytes()
+            );
+            if let Some(next_step) = &error.next_step {
+                out.push_str(&format!("  Next step: {}\n", sanitize(next_step)));
+            }
+            out.into_bytes()
         }
-        OutputMode::Plain { .. } => format!(
-            "{}: {}\n",
-            escape_plain(error.code),
-            escape_plain(&error.message)
-        )
-        .into_bytes(),
+        OutputMode::Plain { .. } => {
+            let mut out = format!(
+                "{}: {}\n",
+                escape_plain(error.code),
+                escape_plain(&error.message)
+            );
+            if let Some(next_step) = &error.next_step {
+                out.push_str(&format!("Next step: {}\n", escape_plain(next_step)));
+            }
+            out.into_bytes()
+        }
         OutputMode::JsonV1 => unreachable!("JSON errors return early"),
     }
 }
@@ -439,6 +449,11 @@ struct JsonFailure<'a> {
 struct JsonError<'a> {
     code: &'a str,
     message: &'a str,
+    /// True when the same command can pass later. The exit code is then 75.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    retryable: bool,
+    #[serde(rename = "nextStep", skip_serializing_if = "Option::is_none")]
+    next_step: Option<&'a str>,
 }
 
 /// Render one transient Skill load, or the supporting files an Agent asked for.
@@ -691,8 +706,55 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     ));
     out.push_str("Follow these instructions within the approved task and permissions.\n");
     out.push_str(&render_inventory(skill, color, platform));
+    out.push_str(&render_omitted_files(&skill.omitted_files, color));
     out.push_str(&render_install_guidance(&skill.origin, color, platform));
     out
+}
+
+/// The files skilld.dev left out of the Artifact, each with its size and URL.
+fn render_omitted_files(files: &[crate::OmittedFile], color: bool) -> String {
+    if files.is_empty() {
+        return String::new();
+    }
+    let mut out = paint(
+        &format!(
+            "The Skill loaded without {} over the skilld.dev size limits:",
+            if files.len() == 1 {
+                "1 file".to_owned()
+            } else {
+                format!("{} files", files.len())
+            }
+        ),
+        Role::Warn,
+        color,
+    );
+    out.push('\n');
+    for file in files {
+        out.push_str(&format!("  {}", sanitize(&file.path)));
+        if let Some(bytes) = file.bytes {
+            out.push_str(&format!(" ({})", human_bytes(bytes)));
+        }
+        if let Some(url) = &file.url {
+            out.push_str(&format!(" {}", sanitize(url)));
+        }
+        out.push('\n');
+    }
+    out.push_str("If the instructions need one of these files, tell the user it is missing.\n");
+    out
+}
+
+/// A file size a person can read: bytes, KiB, or MiB with two decimals.
+fn human_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= MIB {
+        let hundredths = (bytes * 100).div_ceil(MIB);
+        format!("{}.{:02} MiB", hundredths / 100, hundredths % 100)
+    } else if bytes >= KIB {
+        format!("{} KiB", bytes.div_ceil(KIB))
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 pub(crate) fn render_external_references(
@@ -1121,6 +1183,8 @@ enum JsonRunData {
         behaviors: Vec<JsonBehavior>,
         behavior_caveat: &'static str,
         install_argv: JsonInstallArgv,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        omitted_files: Vec<crate::OmittedFile>,
     },
     Files {
         name: String,
@@ -1223,6 +1287,7 @@ fn load_json(skill: &TransientSkill) -> JsonRunData {
                 .then(|| install_argv(&skill.origin, false)),
             global: install_argv(&skill.origin, true),
         },
+        omitted_files: skill.omitted_files.clone(),
     }
 }
 

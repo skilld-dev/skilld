@@ -329,6 +329,21 @@ fn a_root_skill_takes_its_name_from_the_repository_without_case() {
 }
 
 #[test]
+fn a_mixed_case_folder_takes_its_lowercase_name_like_the_registry() {
+    // better-auth/skills admits better-auth/emailAndPassword as emailandpassword.
+    assert_eq!(
+        skill_identity(
+            "skills",
+            "better-auth/emailAndPassword",
+            Some("email-and-password")
+        )
+        .unwrap()
+        .as_str(),
+        "emailandpassword"
+    );
+}
+
+#[test]
 fn a_folder_that_cannot_be_a_skill_name_falls_back_to_the_declared_name() {
     assert_eq!(
         skill_identity("skills", "skills/My_Skill", Some("my-skill"))

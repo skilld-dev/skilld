@@ -514,6 +514,7 @@ impl RemoteProvider for Hosted {
                 attestation_key_id: "key".into(),
             },
             page_url: None,
+            omitted_files: Vec::new(),
         })
     }
 }

@@ -135,10 +135,7 @@ impl NativeHttpAdapter {
             builder = builder.header(&header.name, header.value.expose());
         }
         if let Some(timeout) = timeout {
-            builder = builder
-                .config()
-                .timeout_global(Some(timeout.min(Duration::from_secs(30))))
-                .build();
+            builder = builder.config().timeout_global(Some(timeout)).build();
         }
         builder
     }

@@ -17,7 +17,7 @@ const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FILES: usize = 2_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct SourceRequest {
     pub provider: SourceProvider,
     pub owner: String,
@@ -34,14 +34,14 @@ pub enum SourceProvider {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, tag = "type", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum SourceSelector {
     Path { path: String },
     NamedSkill { name: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum SourceRef {
     Branch { value: String },
     Tag { value: String },
@@ -337,14 +337,14 @@ fn is_commit_sha(value: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResponse {
     pub items: Vec<SearchResult>,
     pub total: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub name: String,
     pub description: Option<String>,
@@ -416,6 +416,7 @@ pub enum RepositoryVisibility {
     Private,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedSource {
@@ -438,6 +439,7 @@ pub enum CheckOutcome {
     Error,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CheckResult {
@@ -451,6 +453,7 @@ pub struct CheckResult {
     pub findings: Vec<String>,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ArtifactFile {
@@ -460,6 +463,7 @@ pub struct ArtifactFile {
     pub sha256: String,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AttestationSignature {
@@ -473,6 +477,7 @@ pub enum SignatureAlgorithm {
     Ed25519,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ArtifactAttestation {
@@ -491,6 +496,7 @@ pub struct ArtifactAttestation {
     pub signature: AttestationSignature,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct SignedStatement {
@@ -526,7 +532,7 @@ impl ArtifactAttestation {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct TrustedRoot {
     pub version: u8,
     pub root_key_id: String,
@@ -535,6 +541,7 @@ pub struct TrustedRoot {
     pub fetched_at: String,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrustedKey {
@@ -557,6 +564,7 @@ pub enum TrustedKeyStatus {
     Revoked,
 }
 
+// Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct TrustedKeyStatement {
@@ -1144,11 +1152,12 @@ pub fn declared_skill_name(text: &str) -> Option<String> {
 
 /// The name a Skill takes from its source identity.
 ///
-/// The folder that holds SKILL.md names the Skill. A Skill at the Repository
-/// root takes the Repository name, without case. The registry admits Skills
-/// by the same rule, so `OWNER/REPOSITORY/NAME` and the delivered Skill always
-/// agree. The frontmatter `name` never decides it: an author can declare
-/// another name, and the Skill the person asked for must still load.
+/// The folder that holds SKILL.md names the Skill, without case. A Skill at
+/// the Repository root takes the Repository name, without case. The registry
+/// admits Skills by the same rule, so `OWNER/REPOSITORY/NAME` and the
+/// delivered Skill always agree. The frontmatter `name` never decides it: an
+/// author can declare another name, and the Skill the person asked for must
+/// still load.
 ///
 /// A folder name that cannot be a Skill name falls back to the declared name,
 /// so a path selector to such a folder keeps working. A named selector never
@@ -1159,15 +1168,11 @@ pub fn skill_identity(
     declared: Option<&str>,
 ) -> Result<SkillName, RemoteError> {
     let folder = if skill_path == "." {
-        repository.to_ascii_lowercase()
+        repository
     } else {
-        skill_path
-            .rsplit('/')
-            .next()
-            .unwrap_or(skill_path)
-            .to_owned()
+        skill_path.rsplit('/').next().unwrap_or(skill_path)
     };
-    SkillName::parse(folder.clone())
+    SkillName::parse(folder.to_ascii_lowercase())
         .or_else(|_| {
             declared
                 .ok_or(())
@@ -1294,6 +1299,10 @@ fn archive_error(message: &'static str) -> RemoteError {
 pub struct RemoteError {
     pub code: &'static str,
     pub message: String,
+    /// What the Agent that reads the failure does next, when the remote layer
+    /// knows more than the code: the retries it made, a wait, a source URL,
+    /// or Skills with a similar name.
+    pub next_step: Option<String>,
 }
 
 impl RemoteError {
@@ -1301,7 +1310,14 @@ impl RemoteError {
         Self {
             code,
             message: message.into(),
+            next_step: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_next_step(mut self, next_step: impl Into<String>) -> Self {
+        self.next_step = Some(next_step.into());
+        self
     }
 }
 
