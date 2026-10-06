@@ -773,6 +773,14 @@ fn scan_prose<'a>(
     }
     let governed = prose.list.is_some();
     let backticks = line.bytes().filter(|byte| *byte == b'`').count();
+    // Exceptions and negations decide only code spans and a lead-in. A line
+    // with neither skips them.
+    let classify = backticks > 0
+        || line
+            .trim_end_matches(|character: char| {
+                character.is_whitespace() || matches!(character, '*' | '_')
+            })
+            .ends_with(':');
     let mut last_colon = false;
     // The word right before a code span negates it, with nothing but whitespace or emphasis between.
     let mut before_negates = false;
@@ -805,12 +813,14 @@ fn scan_prose<'a>(
                     prose.opening = false;
                     prose.negated = opens_prohibition(word, text, end);
                 }
-                if word.is(EXCEPTIONS)
-                    && let Some(exception) = exceptions.last_mut()
-                {
-                    *exception = true;
+                if classify {
+                    if word.is(EXCEPTIONS)
+                        && let Some(exception) = exceptions.last_mut()
+                    {
+                        *exception = true;
+                    }
+                    before_negates = word.is(NEGATIONS);
                 }
-                before_negates = word.is(NEGATIONS);
                 at = end;
                 continue;
             }
