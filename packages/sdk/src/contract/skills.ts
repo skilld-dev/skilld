@@ -77,6 +77,19 @@ export const skillDetailSchema = defineResponseObject({
   generatedSummary: z.string().nullable(),
   /** The SKILL.md text the registry last read, frontmatter included. */
   markdown: z.string().nullable(),
+  /**
+   * What the SKILL.md and the file names ask an Agent to do, matched by the
+   * fixed rules in `skilld-protocol/behaviors`. `skilld run` checks every file,
+   * so it can find more. A behavior with tier `ask` stops `skilld run` until the
+   * user approves it. An empty list never means the Skill does nothing.
+   */
+  behaviors: z.array(z.strictObject({
+    id: z.string(),
+    tier: z.enum(['ask', 'show']),
+    label: z.string(),
+    locations: z.array(z.strictObject({ path: z.string(), line: z.number().int().positive().nullable() })).max(5),
+    total: countSchema,
+  })),
 })
 
 /**
@@ -144,7 +157,7 @@ export const skillsV1 = defineRegistry({
       lifecycle: { introduced: '1.0.0' },
       docs: {
         summary: 'Get a Skill',
-        description: 'One Skill with its provenance: the Owner, the exact SKILL.md, the commit the registry read, and the run and install commands.',
+        description: 'One Skill with its provenance: the Owner, the exact SKILL.md, the commit the registry read, and the run and install commands. `behaviors` lists what the SKILL.md and the file names ask an Agent to do. `skilld run` checks every file, so it can find more. A behavior with tier `ask` stops `skilld run` until the user approves it.',
         tag: 'Skills',
         examples: [{
           request: { params: { owner: 'vercel-labs', repository: 'agent-skills', name: 'web-design-guidelines' } },
@@ -162,6 +175,7 @@ export const skillsV1 = defineRegistry({
             files: [{ path: 'references/checklist.md', size: 4_210 }],
             generatedSummary: 'Checks interface code against a published list of web design rules.',
             markdown: '---\nname: web-design-guidelines\ndescription: Review UI code for compliance with web interface guidelines.\n---\n\n# Web Design Guidelines\n',
+            behaviors: [{ id: 'shell', tier: 'show', label: 'Runs shell commands', locations: [{ path: 'SKILL.md', line: 12 }], total: 1 }],
           },
         }],
       },

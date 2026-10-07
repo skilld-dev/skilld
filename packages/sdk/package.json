@@ -1,7 +1,7 @@
 {
   "name": "skilld-sdk",
   "type": "module",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Typed client and OpenAPI contract for the skilld API.",
   "license": "MIT",
   "homepage": "https://skilld.dev/developers?setup=api",

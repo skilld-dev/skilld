@@ -2185,6 +2185,69 @@
               "null"
             ]
           },
+          "behaviors": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "locations": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "line": {
+                        "anyOf": [
+                          {
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "line"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 5,
+                  "type": "array"
+                },
+                "tier": {
+                  "enum": [
+                    "ask",
+                    "show"
+                  ],
+                  "type": "string"
+                },
+                "total": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "tier",
+                "label",
+                "locations",
+                "total"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "description": {
             "type": [
               "string",
@@ -2356,7 +2419,8 @@
           "allowedTools",
           "files",
           "generatedSummary",
-          "markdown"
+          "markdown",
+          "behaviors"
         ],
         "type": "object"
       },
@@ -10211,7 +10275,7 @@
     },
     "/api/v1/skills/{owner}/{repository}/{name}": {
       "get": {
-        "description": "One Skill with its provenance: the Owner, the exact SKILL.md, the commit the registry read, and the run and install commands.",
+        "description": "One Skill with its provenance: the Owner, the exact SKILL.md, the commit the registry read, and the run and install commands. `behaviors` lists what the SKILL.md and the file names ask an Agent to do. `skilld run` checks every file, so it can find more. A behavior with tier `ask` stops `skilld run` until the user approves it.",
         "operationId": "skills.get",
         "parameters": [
           {
@@ -10258,6 +10322,20 @@
                 "example": {
                   "allowedTools": [],
                   "authorName": "Vercel Labs",
+                  "behaviors": [
+                    {
+                      "id": "shell",
+                      "label": "Runs shell commands",
+                      "locations": [
+                        {
+                          "line": 12,
+                          "path": "SKILL.md"
+                        }
+                      ],
+                      "tier": "show",
+                      "total": 1
+                    }
+                  ],
                   "description": "Review UI code for compliance with web interface guidelines.",
                   "displayName": "Web Design Guidelines",
                   "files": [
