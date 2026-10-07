@@ -509,7 +509,6 @@ function standsAlone(text: string[], end: number, last: boolean): boolean {
   return at === text.length ? last : VERDICT_ENDS.has(text[at]!)
 }
 
-
 /** Whether a heading that opens with this word rejects its section: "Never", "Do not", "What not to do", "Anti-patterns". */
 function rejectsSection(word: string, text: string[], end: number): boolean {
   if (SECTION_REJECTIONS.has(word))
