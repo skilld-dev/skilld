@@ -272,7 +272,7 @@ function markdownLine(line: string, fence: { open?: Fence }, prose: Prose, facts
       if (language)
         facts.fence = language
       fence.open = { marker, length: run }
-      Object.assign(prose, openProse())
+      closeProse(prose)
       return
     }
   }
@@ -295,6 +295,8 @@ interface Prose {
   leadIn: boolean
   /** The indent of the list items a prohibition lead-in governs. */
   list: number | undefined
+  /** The level of a heading that rejects its section, as in `## Anti-patterns`. */
+  rejecting: number | undefined
 }
 
 /** One-word prohibitions. */
@@ -309,11 +311,25 @@ const MODALS = new Set(['do', 'must', 'should'])
 /** A prohibition of one of these words asks for the action, as in "don't forget to run". */
 const REQUESTS = new Set(['forget', 'hesitate', 'skip', 'miss', 'omit', 'worry', 'panic', 'mind'])
 
+/** A table cell that opens with one of these words rejects the code in the other cells of its row. */
+const ROW_REJECTIONS = new Set(['rejected', 'blocked', 'block', 'deny', 'denied', 'forbidden', 'never', 'disallowed'])
+
+/** A heading that opens with one of these words rejects the code in its section. */
+const SECTION_REJECTIONS = new Set(['forbidden', 'never', 'rejected', 'blocked', 'antipattern', 'antipatterns'])
+
 /** A sentence with one of these words names an exception or a condition, so its code still counts. */
 const EXCEPTIONS = new Set(['unless', 'except', 'without', 'instead', 'but', 'only', 'if', 'when', 'whenever', 'while'])
 
 function openProse(): Prose {
-  return { negated: false, opening: true, leadIn: false, list: undefined }
+  return { negated: false, opening: true, leadIn: false, list: undefined, rejecting: undefined }
+}
+
+/** A fenced block closes the sentence, the lead-in, and the list. The section goes on. */
+function closeProse(prose: Prose): void {
+  prose.negated = false
+  prose.opening = true
+  prose.leadIn = false
+  prose.list = undefined
 }
 
 function proseLine(line: string, prose: Prose, facts: LineFacts): void {
@@ -328,8 +344,12 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
     prose.opening = true
     return
   }
-  const heading = indent <= 3 && headingMarker(characters, indent)
+  const level = indent <= 3 ? headingLevel(characters, indent) : 0
+  const heading = level > 0
   const table = characters[indent] === '|'
+  // A heading at the same level or above ends the section a rejecting heading opened.
+  if (heading && prose.rejecting !== undefined && level <= prose.rejecting)
+    prose.rejecting = undefined
   const item = heading || table ? 0 : listMarker(characters, indent)
   if (heading || table) {
     prose.list = undefined
@@ -353,16 +373,27 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
     prose.leadIn = false
   }
   const governed = prose.list !== undefined
+  // A rejecting heading governs the paragraphs and list items of its section. A line
+  // with a check mark gives the good example, as in `✅ \`npx wrangler secret put\``.
+  const section = prose.rejecting !== undefined && !table && !characters.some(character => character === '\u2705' || character === '\u2714')
   const segments = line.split('`')
-  const spans: Array<{ text: string, sentence: number, negated: boolean }> = []
+  const spans: Array<{ text: string, sentence: number, cell: number, negated: boolean }> = []
   const exceptions = [false]
+  // Per table cell: whether it opens with a rejection, and whether it names an exception.
+  const cells = [{ rejects: false, excepts: false }]
+  let cellOpening = table
+  // A dash ends the section's rejection for the rest of its sentence: "❌ X — use `Y`".
+  let dashed = false
+  let headingRejects = false
+  let headingExcepts = false
   let lastProse: string[] = []
   // The word right before a code span, with nothing but whitespace or emphasis between.
   let before = ''
   segments.forEach((segment, index) => {
     if (index % 2 === 1) {
       prose.opening = false
-      spans.push({ text: segment, sentence: exceptions.length - 1, negated: prose.negated || governed || NEGATIONS.has(before) })
+      cellOpening = false
+      spans.push({ text: segment, sentence: exceptions.length - 1, cell: cells.length - 1, negated: prose.negated || governed || NEGATIONS.has(before) || (section && !dashed) })
       before = ''
       return
     }
@@ -376,24 +407,39 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
         if (prose.opening) {
           prose.opening = false
           prose.negated = opensProhibition(word, text, end)
+          if (heading)
+            headingRejects ||= rejectsSection(word, text, end)
         }
-        if (EXCEPTIONS.has(word))
+        if (cellOpening) {
+          cellOpening = false
+          cells[cells.length - 1]!.rejects = rejectsRow(word, text, end, last)
+        }
+        if (EXCEPTIONS.has(word)) {
           exceptions[exceptions.length - 1] = true
+          cells[cells.length - 1]!.excepts = true
+          headingExcepts = true
+        }
         before = word
         at = end
         continue
       }
       if (!isWhitespace(character) && character !== '*' && character !== '_' && character !== '~')
         before = ''
+      if (table && character === '|') {
+        cells.push({ rejects: false, excepts: false })
+        cellOpening = true
+      }
       const end = boundary(text, at, last)
       if (end === 'sentence') {
         prose.negated = false
         prose.opening = true
+        dashed = false
         exceptions.push(false)
       }
       else if (end === 'clause') {
         // A dash ends a prohibition, as in "Never X — use `Y`". It opens none.
         prose.negated = false
+        dashed = true
       }
       else if (character === ':' && !prose.negated) {
         // A label such as "Tip:" ends, and the words after it open the sentence again.
@@ -404,13 +450,17 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
     if (last)
       lastProse = text
   })
+  const rejected = heading && headingRejects && !headingExcepts
   for (const span of spans) {
-    if (!span.negated || exceptions[span.sentence])
+    const row = cells.some((cell, index) => index !== span.cell && cell.rejects && !cell.excepts)
+    if (!(span.negated || row || rejected) || exceptions[span.sentence])
       facts.code.push(span.text)
   }
   if (heading) {
     prose.negated = false
     prose.opening = true
+    if (rejected && prose.rejecting === undefined)
+      prose.rejecting = level
   }
   else if (!table) {
     prose.leadIn = prose.negated && !exceptions.at(-1) && endsWithColon(lastProse)
@@ -425,13 +475,54 @@ function endsWithColon(text: string[]): boolean {
   return text[end - 1] === ':'
 }
 
-/** Whether ATX heading hashes open the line at `at`. */
-function headingMarker(characters: string[], at: number): boolean {
+/** The level of the ATX heading that opens the line at `at`, or 0 for none. */
+function headingLevel(characters: string[], at: number): number {
   let run = 0
   while (characters[at + run] === '#')
     run++
   const after = characters[at + run]
-  return run >= 1 && run <= 6 && (after === undefined || after === ' ' || after === '\t')
+  return run >= 1 && run <= 6 && (after === undefined || after === ' ' || after === '\t') ? run : 0
+}
+
+/**
+ * Whether the first word of a table cell is a verdict that rejects the row:
+ * "**rejected**", "block; require approval", "Not allowed". The verdict stands
+ * alone, so "Denied by the firewall" describes a symptom and rejects nothing.
+ */
+function rejectsRow(word: string, text: string[], end: number, last: boolean): boolean {
+  if (ROW_REJECTIONS.has(word))
+    return standsAlone(text, end, last)
+  if (word !== 'not')
+    return false
+  const [next, after] = nextWord(text, end)
+  return next === 'allowed' && standsAlone(text, after, last)
+}
+
+/** Whether a word ends its cell or clause: only emphasis comes before a cell edge, punctuation, or the line end. */
+function standsAlone(text: string[], end: number, last: boolean): boolean {
+  let at = end
+  while (at < text.length && (isWhitespace(text[at]!) || text[at] === '*' || text[at] === '_' || text[at] === '~'))
+    at++
+  return at === text.length ? last : VERDICT_ENDS.has(text[at]!)
+}
+
+/** Characters that end a verdict: a cell edge, punctuation, or a dash. */
+const VERDICT_ENDS = new Set(['|', ';', ',', '.', ':', '!', '(', '-', '\u2013', '\u2014'])
+
+/** Whether a heading that opens with this word rejects its section: "Never", "Do not", "What not to do", "Anti-patterns". */
+function rejectsSection(word: string, text: string[], end: number): boolean {
+  if (SECTION_REJECTIONS.has(word))
+    return true
+  if (word === 'anti' && text[end] === '-')
+    return ['pattern', 'patterns'].includes(nextWord(text, end + 1)[0])
+  const [next, afterNext] = nextWord(text, end)
+  // A label colon still asks: "DON'T: Forget to set the delegate".
+  const asks = (at: number): boolean => REQUESTS.has(nextWord(text, text[at] === ':' ? at + 1 : at)[0])
+  if (word === 'dont' || word === 'don\'t')
+    return !asks(end)
+  if (word === 'do' && next === 'not')
+    return !asks(afterNext)
+  return word === 'what' && next === 'not'
 }
 
 /**
