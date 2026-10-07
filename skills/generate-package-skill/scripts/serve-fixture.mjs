@@ -1,25 +1,27 @@
 #!/usr/bin/env node
 // Start a fixture server on a free port, fetch paths, then stop its whole process group.
 //
-// Usage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...
+// Usage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--header 'NAME: VALUE']... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...
 //
 // The script replaces `{port}` in each argument and sets PORT, NITRO_PORT, and NUXT_PORT.
 // It prints `ready http://localhost:PORT` on stderr when the server answers.
 // `--fetch` asks for HTML. `--fetch-raw` asks for any type, such as an image, and needs `--out`.
+// `--header` sends a request header with every fetch, such as `Host` or `User-Agent`. Node `fetch` drops `Host`; this script does not.
 // Each fetch prints `GET PATH STATUS CONTENT-TYPE BYTES` on stderr. The body goes to stdout, or to DIR when `--out` is set.
-// With `--out`, DIR/responses.json lists each path with its file, status, content type, and byte count.
+// With `--out`, DIR/responses.json lists each path with its file, status, content type, byte count, and response headers.
 // Without `--fetch`, or with `--hold`, the server stays up until the hold time ends, the script gets SIGTERM, or its parent exits.
 // The script never kills by port or by name. It stops only the process group it started. POSIX only.
 
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 
 function usage(message) {
-  process.stderr.write(`${message}\nUsage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...\n`)
+  process.stderr.write(`${message}\nUsage: node serve-fixture.mjs [--fetch PATH]... [--fetch-raw PATH]... [--header 'NAME: VALUE']... [--out DIR] [--hold SECONDS] [--timeout SECONDS] -- COMMAND [ARG]...\n`)
   process.exit(2)
 }
 
@@ -31,7 +33,7 @@ function parseSeconds(flag, value) {
 }
 
 function parseArgs(argv) {
-  const options = { fetch: [], out: undefined, hold: undefined, timeout: 120, command: [] }
+  const options = { fetch: [], headers: {}, out: undefined, hold: undefined, timeout: 120, command: [] }
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]
     if (flag === '--') {
@@ -41,16 +43,28 @@ function parseArgs(argv) {
     const value = argv[++index]
     if (value === undefined)
       usage(`${flag} needs a value.`)
-    if (flag === '--fetch' || flag === '--fetch-raw')
+    if (flag === '--fetch' || flag === '--fetch-raw') {
       options.fetch.push({ path: value.startsWith('/') ? value : `/${value}`, raw: flag === '--fetch-raw' })
-    else if (flag === '--out')
+    }
+    else if (flag === '--header') {
+      const split = value.indexOf(':')
+      const name = split > 0 ? value.slice(0, split).trim().toLowerCase() : ''
+      if (!name || !value.slice(split + 1).trim())
+        usage('--header needs NAME: VALUE, such as \'User-Agent: Googlebot/2.1\'.')
+      options.headers[name] = value.slice(split + 1).trim()
+    }
+    else if (flag === '--out') {
       options.out = value
-    else if (flag === '--hold')
+    }
+    else if (flag === '--hold') {
       options.hold = parseSeconds(flag, value)
-    else if (flag === '--timeout')
+    }
+    else if (flag === '--timeout') {
       options.timeout = parseSeconds(flag, value)
-    else
+    }
+    else {
       usage(`Unknown option: ${flag}`)
+    }
   }
   if (options.command.length === 0)
     usage('Give the server command after --.')
@@ -168,13 +182,10 @@ async function waitUntilReady({ path, raw }) {
   while (Date.now() < deadline) {
     if (exited)
       return { _tag: 'Exited' }
-    const response = await fetch(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html' }, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) })
+    const response = await get(path, raw, Math.max(deadline - Date.now(), 1))
       .catch(() => undefined) // Connection refused while the server starts. Retry until the deadline.
-    if (response && ![502, 503, 504].includes(response.status)) {
-      await response.body?.cancel()
+    if (response && ![502, 503, 504].includes(response.status))
       return { _tag: 'Ready' }
-    }
-    await response?.body?.cancel()
     await delay(500)
   }
   return { _tag: 'TimedOut' }
@@ -182,16 +193,29 @@ async function waitUntilReady({ path, raw }) {
 
 const responses = []
 
+// node:http, because `fetch` silently replaces a `Host` header with the origin's host.
+function get(path, raw, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html', ...options.headers }, signal: AbortSignal.timeout(timeoutMs) }, (response) => {
+      const chunks = []
+      response.on('data', chunk => chunks.push(chunk))
+      response.once('error', reject)
+      response.once('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }))
+    })
+    req.once('error', reject)
+    req.end()
+  })
+}
+
 async function fetchPath({ path, raw }) {
-  const response = await fetch(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html' }, signal: AbortSignal.timeout(options.timeout * 1000) })
-  const body = Buffer.from(await response.arrayBuffer())
-  const contentType = response.headers.get('content-type')
-  process.stderr.write(`GET ${path} ${response.status} ${contentType ?? '-'} ${body.byteLength}\n`)
+  const { status, headers, body } = await get(path, raw, options.timeout * 1000)
+  const contentType = headers['content-type'] ?? null
+  process.stderr.write(`GET ${path} ${status} ${contentType ?? '-'} ${body.byteLength}\n`)
   if (options.out) {
     const file = fileName(path, contentType)
     await mkdir(options.out, { recursive: true })
     await writeFile(join(options.out, file), body)
-    responses.push({ path, file, status: response.status, contentType, bytes: body.byteLength })
+    responses.push({ path, file, status, contentType, bytes: body.byteLength, headers })
     await writeFile(join(options.out, 'responses.json'), `${JSON.stringify(responses, null, 2)}\n`)
   }
   else {
