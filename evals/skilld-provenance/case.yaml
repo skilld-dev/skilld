@@ -1,0 +1,12 @@
+schema_version: '1.0'
+name: skilld-provenance
+description: A provenance question reads one registry entry and names the author and the exact SKILL.md source.
+tags: [skilld, registry, provenance]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    Before I run the Agent Skill `vercel-labs/agent-skills/web-design-guidelines`
+    from skilld, tell me who wrote it and where its SKILL.md lives. Give the
+    author and the exact source URL.

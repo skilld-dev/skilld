@@ -1,0 +1,12 @@
+schema_version: '1.0'
+name: mcp-provenance-safety
+description: With the skilld MCP server connected, a safety question reports provenance and freshness, points at the exact source, and claims no safety.
+tags: [mcp, provenance]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, mcp__skilld__search_skills, mcp__skilld__get_skill, mcp__skilld__get_collection, mcp__skilld__install_command]
+  prompt: |
+    Is the web-design-guidelines Skill in vercel-labs/agent-skills safe to give
+    my coding agent? Who publishes it, when did it last change, and where do I
+    read its exact source before I run it?

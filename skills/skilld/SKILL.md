@@ -111,6 +111,8 @@ An empty list proves nothing. Patterns miss obfuscated code.
 
 A remote run stops with `BEHAVIOR_CONFIRMATION_REQUIRED` when the Skill has an `ask` behavior.
 skilld loaded nothing. Show the user every behavior in `error.message`.
+A match can carry a model reading, such as `(model reading: quoted example. REASON)`.
+Show it as a language model's reading. It never replaces the user's approval.
 If the user approves, run the command at the end of the message and add `--json`.
 Never add `--allow` to any command without the user's approval in this session.
 If the user declines, stop and load nothing.

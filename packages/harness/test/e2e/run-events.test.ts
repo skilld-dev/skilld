@@ -159,7 +159,7 @@ describe('failed skill run report', () => {
     })
   })
 
-  it('reports usage and steps when the output check fails', async () => {
+  it('sums usage and steps across repair turns when the output check still fails', async () => {
     const { harness } = createFakeHarness({
       async onPrompt({ sandbox, workDir }) {
         await sandbox.writeTextFile({
@@ -179,7 +179,14 @@ describe('failed skill run report', () => {
     expect(result).toMatchObject({
       _tag: 'Err',
       error: { _tag: 'InvalidSkill' },
-      report: { steps: 1, usage: { outputTokens: 30 }, warnings: [] },
+      report: {
+        steps: 3,
+        usage: { outputTokens: 90 },
+        warnings: [
+          'Output checks failed; repair turn 1 of 2: Frontmatter name must match the Skill directory name.',
+          'Output checks failed; repair turn 2 of 2: Frontmatter name must match the Skill directory name.',
+        ],
+      },
     })
   })
 

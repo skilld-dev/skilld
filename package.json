@@ -51,11 +51,12 @@
     "lint:fix": "eslint . --fix && cargo fmt --all",
     "typecheck": "pnpm --filter skilld-sdk typecheck && pnpm --filter skilld-protocol typecheck && pnpm --filter skilld-harness typecheck",
     "test": "vitest",
-    "test:js": "pnpm --filter skilld-sdk test:run && vitest run tests/loader && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run",
+    "test:js": "pnpm --filter skilld-sdk test:run && vitest run tests/loader tests/evals && pnpm --filter skilld-protocol test:run && pnpm --filter skilld-harness test:run",
     "test:run": "pnpm test:js && cargo test --workspace",
     "release": "pnpm build && bumpp",
     "prepack": "pnpm test:loader",
-    "test:loader": "vitest run --config vitest.config.mjs"
+    "test:loader": "vitest run --config vitest.config.mjs",
+    "eval:opencode": "node scripts/eval-opencode.ts"
   },
   "optionalDependencies": {
     "skilld-cli-darwin-arm64": "workspace:*",
@@ -71,6 +72,7 @@
     "@antfu/eslint-config": "catalog:dev-lint",
     "bumpp": "catalog:",
     "eslint": "catalog:dev-lint",
-    "vitest": "catalog:dev-test"
+    "vitest": "catalog:dev-test",
+    "yaml": "catalog:"
   }
 }

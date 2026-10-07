@@ -1,5 +1,5 @@
 import type { HarnessV1NetworkSandboxSession, HarnessV1Skill } from '@ai-sdk/harness'
-import type { SandboxSession } from './internal/output/collect.ts'
+import type { CollectedFile, SandboxSession } from './internal/output/collect.ts'
 import type { Result } from './internal/result.ts'
 import type { PreparedSource } from './internal/source/host.ts'
 import type { FetchClient } from './internal/source/npm.ts'
@@ -125,8 +125,23 @@ function toUsage(usage: AgentUsage): SkillRunUsage {
   }
 }
 
-function cancelled(): RunOutcome {
-  return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
+/** An unknown count in any turn keeps the total unknown. */
+function sumUsage(a: SkillRunUsage, b: SkillRunUsage): SkillRunUsage {
+  const sum = (x: number | undefined, y: number | undefined) => x === undefined || y === undefined ? undefined : x + y
+  return { inputTokens: sum(a.inputTokens, b.inputTokens), cachedInputTokens: sum(a.cachedInputTokens, b.cachedInputTokens), outputTokens: sum(a.outputTokens, b.outputTokens) }
+}
+
+/** Turns the Agent gets to fix output that failed the deterministic checks, in the same session. */
+const OUTPUT_REPAIR_TURNS = 2
+
+function repairRequest(outputPath: string, issues: ReadonlyArray<string>): string {
+  return [
+    `The Harness checked the output at \`${outputPath}\` and found these problems:`,
+    '',
+    ...issues.map(issue => `- ${issue}`),
+    '',
+    `Fix each problem in place. Write no files outside \`${outputPath}\`. Finish when the output passes these checks.`,
+  ].join('\n')
 }
 
 async function prepareCurrentSkill(destination: SkillDestination, policy: SkillOutputPolicy, signal?: AbortSignal): Promise<Result<PreparedSource | undefined, SkillRunError>> {
@@ -263,10 +278,14 @@ async function writePreparedSource(active: ActiveSandbox, prepared: PreparedRun,
   })
 }
 
-function toAgentError(cause: unknown, signal?: AbortSignal): RunOutcome {
+function agentError(cause: unknown, signal?: AbortSignal): SkillRunError {
   return signal?.aborted
-    ? cancelled()
-    : err({ _tag: 'AgentFailed', message: 'Harness Agent failed during the Skill run.', cause })
+    ? { _tag: 'Cancelled', message: 'Skill run was cancelled.' }
+    : { _tag: 'AgentFailed', message: 'Harness Agent failed during the Skill run.', cause }
+}
+
+function toAgentError(cause: unknown, signal?: AbortSignal): RunOutcome {
+  return err(agentError(cause, signal))
 }
 
 export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHarness {
@@ -352,44 +371,70 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
       const currentSkillPath = posix.join(active.workDir, 'input/current-skill')
       const outputPath = posix.join(active.workDir, 'skilld-output', prepared.outputName)
       const prompt = renderRequest(requestContent(skill), sourcePath, currentSkillPath, outputPath, prepared.outputName)
+      const outputSandbox = active.sandbox
+      // Steps count across turns, so a repair turn continues the numbering.
       let step = 0
-      const generated = await agent.generate({
-        session,
-        prompt,
-        abortSignal: signal,
-        onStepStart: (event) => {
-          step = event.stepNumber
-          log.emit({ _tag: 'StepStart', step })
-        },
-        onToolExecutionStart: ({ toolCall }) => {
-          log.emit({ _tag: 'ToolCall', step, toolName: toolCall.toolName, toolCallId: toolCall.toolCallId, input: toolCall.input })
-        },
-        onStepEnd: (result) => {
-          log.emit({ _tag: 'StepFinish', step: result.stepNumber, finishReason: result.finishReason, usage: toUsage(result.usage) })
-        },
-      }).then(ok, cause => err(cause))
-      if (generated._tag === 'Err')
-        return toAgentError(generated.error, signal)
-      log.settle(toUsage(generated.value.totalUsage), generated.value.steps.length)
-      if (signal?.aborted)
-        return cancelled()
+      let stepOffset = 0
+      let usage: SkillRunUsage | undefined
+      const turn = async (text: string): Promise<Result<void, SkillRunError>> => {
+        const generated = await agent.generate({
+          session,
+          prompt: text,
+          abortSignal: signal,
+          onStepStart: (event) => {
+            step = stepOffset + event.stepNumber
+            log.emit({ _tag: 'StepStart', step })
+          },
+          onToolExecutionStart: ({ toolCall }) => {
+            log.emit({ _tag: 'ToolCall', step, toolName: toolCall.toolName, toolCallId: toolCall.toolCallId, input: toolCall.input })
+          },
+          onStepEnd: (result) => {
+            log.emit({ _tag: 'StepFinish', step: stepOffset + result.stepNumber, finishReason: result.finishReason, usage: toUsage(result.usage) })
+          },
+        }).then(ok, cause => err(cause))
+        if (generated._tag === 'Err')
+          return err(agentError(generated.error, signal))
+        const turnUsage = toUsage(generated.value.totalUsage)
+        usage = usage ? sumUsage(usage, turnUsage) : turnUsage
+        stepOffset += generated.value.steps.length
+        log.settle(usage, stepOffset)
+        return signal?.aborted ? err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' }) : ok(undefined)
+      }
+      const check = async (): Promise<Result<ReadonlyArray<CollectedFile>, SkillRunError>> => {
+        const collected = await collectSandboxOutput(outputSandbox, outputPath, policy, signal)
+        if (collected._tag === 'Err')
+          return collected
+        const validated = prepared.skillName === 'review-skill'
+          ? validateSkillReview(collected.value)
+          : validateGeneratedSkill(
+              prepared.outputName,
+              collected.value,
+              prepared.skillName === 'generate-project-skill'
+                ? { _tag: 'ProjectSkill', projectPaths: prepared.source.files.map(file => file.path) }
+                : { _tag: 'PackageSkill' },
+            )
+        return validated._tag === 'Err' ? validated : ok(collected.value)
+      }
 
-      const collected = await collectSandboxOutput(active.sandbox, outputPath, policy, signal)
-      if (collected._tag === 'Err')
-        return collected
+      const first = await turn(prompt)
+      if (first._tag === 'Err')
+        return first
+      let checked = await check()
+      // A failed check goes back to the Agent, which still holds its context, instead of failing the run.
+      for (let repair = 1; repair <= OUTPUT_REPAIR_TURNS && checked._tag === 'Err' && checked.error._tag === 'InvalidSkill'; repair++) {
+        log.warn(`Output checks failed; repair turn ${repair} of ${OUTPUT_REPAIR_TURNS}: ${checked.error.issues.join(' ')}`)
+        const repaired = await turn(repairRequest(outputPath, checked.error.issues))
+        if (repaired._tag === 'Err')
+          return repaired
+        checked = await check()
+      }
+      if (checked._tag === 'Err')
+        return checked
+      const collected = checked
 
       if (prepared.skillName === 'review-skill')
         return validateSkillReview(collected.value)
 
-      const validated = validateGeneratedSkill(
-        prepared.outputName,
-        collected.value,
-        prepared.skillName === 'generate-project-skill'
-          ? { _tag: 'ProjectSkill', projectPaths: prepared.source.files.map(file => file.path) }
-          : { _tag: 'PackageSkill' },
-      )
-      if (validated._tag === 'Err')
-        return validated
       if (!prepared.destination)
         return err({ _tag: 'InvalidInput', message: 'Skill destination is required.' })
       const promoted = await promoteSkill(

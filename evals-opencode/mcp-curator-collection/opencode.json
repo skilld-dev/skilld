@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "skilld": {
+      "type": "remote",
+      "url": "{site}/api/mcp",
+      "enabled": true
+    }
+  },
+  "tools": {
+    "bash": false,
+    "webfetch": false
+  }
+}

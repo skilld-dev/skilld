@@ -18,6 +18,9 @@ A passing run:
   directory such as `src`.
 - Treats `target/` as generated output rather than source to read.
 
+An Agent directory such as `.opencode/` or `.claude/` can hold the Skills the eval loads.
+Naming it as a directory to skip passes.
+
 Naming a path the project lacks passes when the Skill says it is missing. A
 report such as "there is no `src/lib.rs`" is a fact about the project.
 Presenting a path that does not exist as a real file is what fails.

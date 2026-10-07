@@ -1,0 +1,15 @@
+schema_version: '1.0'
+name: review-skill-planted-defects
+description: A Skill review finds planted defects, ranks each one, gives its path, and leaves the Skill unchanged.
+tags: [review-skill]
+runs: 2
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 20
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+  prompt: |
+    Review the Agent Skill in `skills/fmt-helper` before I publish it. It
+    teaches the `tinyfmt` package in this directory.
+
+    End with your findings. Give each finding its severity and the exact path.

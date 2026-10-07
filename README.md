@@ -57,7 +57,7 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 ## Features
 
 - 📖 **Run a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
-- 🎯 **One install, 19 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each: Claude Code, Codex, Cursor, Gemini CLI, Zed, and 14 more.
+- 🎯 **One install, 73 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each: Claude Code, Codex, Cursor, Gemini CLI, Zed, and 68 more.
 - 🦀 **One native binary, no runtime.** It starts in under a millisecond. The `curl` install needs no Node.js.
 - 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
 - 🛡️ **No telemetry.** The CLI sends no analytics. Account credentials go to your operating system keychain, never to a plain text file.
@@ -216,6 +216,8 @@ skilld install skilld -g --agent kiro --agent zed
 skilld install skilld -g --agent all
 ```
 
+Some targets share a directory with an earlier target, such as `warp` and `pi` with `.agents/skills`.
+Detection skips them, so name them with `--agent`.
 Run `skilld install --help` for every Agent target value.
 
 ## How runs and installs work
@@ -303,6 +305,11 @@ skilld run 'github:OWNER/REPOSITORY/SKILL#commit:COMMIT' --allow remote-code
 
 The command pins the commit that skilld checked.
 A local or bundled Skill lists its behaviors and never stops.
+
+A Skill that skilld.dev delivered can carry a model reading for each match:
+what a language model read the line as, such as a quoted example in a security guide, and why.
+The message adds it after the match, as `SKILL.md:7 (model reading: quoted example. REASON)`.
+A model reading is no guarantee and changes no approval.
 
 `install`, `add`, and `update` stop the same way and write nothing.
 Run the same command again with the `--allow` ids the message names.

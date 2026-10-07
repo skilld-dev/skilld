@@ -10,6 +10,7 @@ use std::process::{Command, Output};
 
 #[cfg(unix)]
 use nix::pty::{Winsize, openpty};
+use skilld_core::{AGENT_TARGETS, TargetDetection};
 
 const DETECTION_SIGNALS: [&str; 29] = [
     "CLAUDE_CODE",
@@ -205,11 +206,13 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
         "https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH",
         "Values: claude-code, cursor, windsurf, cline, codex, github-copilot,",
         "gemini-cli, goose, amp, opencode, roo, antigravity, openclaw,",
-        "hermes, kiro, kilo, droid, trae, zed.",
+        "hermes, kiro, kilo, droid, trae, zed, aider-desk,",
         "Use --agent all to select every Agent target.",
         "Repeat --agent to select several.",
         "Default: every Agent target skilld detects.",
         "If skilld detects none, it uses agent.targets.",
+        "Detection skips targets that share a directory with an earlier target.",
+        "Select them with --agent: antigravity-cli, deepagents, dexto,",
         "Values: copy, symlink. The default comes from install.mode.",
         "A fresh configuration sets install.mode to copy.",
         "The default is the current project.",
@@ -221,6 +224,25 @@ fn install_help_gives_agents_actionable_source_and_target_grammar() {
     ] {
         assert!(help.contains(guidance), "missing help guidance: {guidance}");
     }
+    let listed = |label: &str| {
+        let rest = &help[help.find(label).unwrap() + label.len()..];
+        rest[..rest.find('.').unwrap()]
+            .split(',')
+            .map(|value| value.trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let ids = |detection: Option<TargetDetection>| {
+        AGENT_TARGETS
+            .iter()
+            .filter(|target| detection.is_none_or(|detection| target.detection == detection))
+            .map(|target| target.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(listed("Values:"), ids(None));
+    assert_eq!(
+        listed("Select them with --agent:"),
+        ids(Some(TargetDetection::ExplicitOnly))
+    );
 }
 
 #[test]
@@ -424,6 +446,12 @@ fn agent_all_installs_to_every_known_target() {
         ".kilo/skills",
         ".factory/skills",
         ".trae/skills",
+        ".continue/skills",
+        ".qwen/skills",
+        ".tabnine/agent/skills",
+        ".posit/assistant/skills",
+        ".zencoder/skills",
+        "data/skills",
     ] {
         assert!(
             project.join(dir).join("local-skill/SKILL.md").exists(),

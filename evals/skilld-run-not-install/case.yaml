@@ -1,0 +1,17 @@
+schema_version: '1.0'
+name: skilld-run-not-install
+description: A one-off task runs a Skill found through skilld search and installs nothing.
+tags: [skilld, run]
+runs: 1
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    Find an Agent Skill on skilld for reviewing web accessibility, then use it
+    once to review `index.html`. I only need it for this task, so do not keep
+    it in the project.
+
+    End with a short summary that names the Skill you used, quotes the command
+    that loaded it, and lists the top three problems in `index.html`.

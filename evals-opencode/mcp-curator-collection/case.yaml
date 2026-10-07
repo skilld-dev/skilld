@@ -1,0 +1,12 @@
+schema_version: '1.0'
+name: mcp-curator-collection
+description: With only the skilld MCP server, a request for a curator's collection finds it and returns the command that installs the whole set.
+tags: [mcp]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, mcp__skilld__search_skills, mcp__skilld__get_skill, mcp__skilld__get_collection, mcp__skilld__install_command]
+  prompt: |
+    On skilld, the curator harlan-zw keeps a collection for building agents.
+    List the Skills in it with the curator's reason for each, and give me the
+    one command that installs the whole collection. Do not install anything.

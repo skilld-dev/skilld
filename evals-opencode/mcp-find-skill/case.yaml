@@ -1,0 +1,12 @@
+schema_version: '1.0'
+name: mcp-find-skill
+description: With the skilld MCP server connected, a request for a Skill uses the discovery tools and returns a run command.
+tags: [mcp]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, mcp__skilld__search_skills, mcp__skilld__get_skill, mcp__skilld__get_collection, mcp__skilld__install_command]
+  prompt: |
+    Find an Agent Skill for Tailwind CSS on skilld and give me the exact
+    command to try it once without installing anything. Tell me who publishes
+    it and link its skilld.dev page.
