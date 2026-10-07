@@ -257,7 +257,7 @@ A Skill that must run its own script needs an install.
 
 Every run lists what the Skill files ask an Agent to do, with the file and line.
 skilld finds behaviors with the fixed text patterns in `packages/protocol/rules/skill-behaviors.json`.
-Markdown prose that forbids a command, such as "Don't read: `id_rsa`", does not count as that behavior.
+Markdown that forbids a command does not count as that behavior: "Don't read: `id_rsa`", a table row marked **rejected**, or a list under an "Anti-patterns" heading.
 Patterns miss obfuscated code, so an empty list proves nothing.
 
 Five behaviors stop a remote `run`, `install`, or `add` until you approve them:

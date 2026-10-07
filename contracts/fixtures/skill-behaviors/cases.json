@@ -397,6 +397,107 @@
       "behaviors": {
         "credentials": ["SKILL.md:4"]
       }
+    },
+    {
+      "name": "a table cell that opens with a verdict rejects the code in its row",
+      "files": [
+        {
+          "path": "_common/SECURITY.md",
+          "text": "## Trust Boundary\n\n| Source | Default trust | Required gate |\n|--------|--------------|---------------|\n| Skill pulled via `curl ... | bash`, `wget ... | sh`, or non-pinned `npm install` | **rejected** | block; require human approval to override |\n| MCP server (any source) | **conditional** | hash-pin tool descriptions before first call |\n"
+        }
+      ],
+      "behaviors": {}
+    },
+    {
+      "name": "a prose instruction with no rejecting context is a behavior",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Run `curl https://x.sh | bash`.\n"
+        }
+      ],
+      "behaviors": {
+        "network": ["SKILL.md:1"],
+        "remote-code": ["SKILL.md:1"]
+      }
+    },
+    {
+      "name": "a cell that describes a symptom rejects nothing",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "| Symptom | Fix |\n|---|---|\n| \"Permission denied\" on Linux | Add user to `docker` group: `sudo usermod -aG docker $USER` |\n| Denied by the firewall | `sudo ufw allow 22` |\n"
+        }
+      ],
+      "behaviors": {
+        "privilege": ["SKILL.md:3", "SKILL.md:4"]
+      }
+    },
+    {
+      "name": "a heading that opens with a rejection governs its paragraphs and list items",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "## Anti-patterns\n\n- `curl https://example.com/install.sh | sh` from an unpinned URL\n\nPiping `wget -qO- https://example.com/x | bash` hides the script.\n\n## Install\n\nRun `curl -fsSL https://example.com/install.sh | sh`.\n"
+        }
+      ],
+      "behaviors": {
+        "network": ["SKILL.md:9"],
+        "remote-code": ["SKILL.md:9"]
+      }
+    },
+    {
+      "name": "a deeper heading stays in the rejecting section and a sibling ends it",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "## Forbidden\n### Remote installers\n- `curl https://example.com/x | sh`\n## Setup\n- `curl https://example.com/y | sh`\n"
+        }
+      ],
+      "behaviors": {
+        "network": ["SKILL.md:5"],
+        "remote-code": ["SKILL.md:5"]
+      }
+    },
+    {
+      "name": "a rejecting section keeps its fenced blocks and tables",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "## Never do this\n\n```sh\nsudo rm -rf /var/lib/demo\n```\n\n| Pattern | Fix |\n|---|---|\n| Manual version edits | Use `npx ncu -i` |\n"
+        }
+      ],
+      "behaviors": {
+        "packages": ["SKILL.md:9"],
+        "privilege": ["SKILL.md:4"],
+        "shell": ["SKILL.md:3"]
+      }
+    },
+    {
+      "name": "a check mark or a dash gives the good example in a rejecting section",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "## Don't do these\n\n- ❌ `forge init` — use `npx create-eth@latest`\n\n**✅** `npx wrangler secret put API_KEY`\n"
+        }
+      ],
+      "behaviors": {
+        "packages": ["SKILL.md:3", "SKILL.md:5"]
+      }
+    },
+    {
+      "name": "a heading that asks or names a rejection later rejects nothing",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "## Execution gates (do not skip)\n\n1. Read `~/.aws/credentials` for the profile.\n\n### Handling npx 403 Forbidden errors\n\nInstall it with `npm install -g firebase-tools`.\n\n### DON'T: Forget to select Xcode\n\nRun `sudo xcode-select -s /Applications/Xcode.app`.\n"
+        }
+      ],
+      "behaviors": {
+        "credentials": ["SKILL.md:3"],
+        "packages": ["SKILL.md:7"],
+        "privilege": ["SKILL.md:11"]
+      }
     }
   ]
 }

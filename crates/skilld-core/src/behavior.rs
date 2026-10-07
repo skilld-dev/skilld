@@ -644,6 +644,8 @@ struct Prose {
     lead_in: bool,
     /// The indent of the list items a prohibition lead-in governs.
     list: Option<usize>,
+    /// The level of a heading that rejects its section, as in `## Anti-patterns`.
+    rejecting: Option<usize>,
     /// Buffers every line reuses, so a file allocates them once.
     buffers: ProseBuffers,
 }
@@ -655,6 +657,7 @@ impl Default for Prose {
             opening: true,
             lead_in: false,
             list: None,
+            rejecting: None,
             buffers: ProseBuffers::default(),
         }
     }
@@ -662,6 +665,7 @@ impl Default for Prose {
 
 impl Prose {
     /// Close the sentence, the lead-in, and the list, as a fenced block does.
+    /// The section goes on.
     fn reset(&mut self) {
         self.negated = false;
         self.opening = true;
@@ -678,13 +682,24 @@ struct ProseBuffers {
     spans: Vec<Span>,
     /// Whether each sentence of the line names an exception or a condition.
     exceptions: Vec<bool>,
+    /// The cells of a table row.
+    cells: Vec<Cell>,
 }
 
-/// One inline code span: its bytes in the line, its sentence, and whether a prohibition governs it.
+/// One inline code span: its bytes in the line, its sentence and table cell, and
+/// whether a prohibition governs it.
 struct Span {
     bytes: std::ops::Range<usize>,
     sentence: usize,
+    cell: usize,
     negated: bool,
+}
+
+/// One table cell: whether it opens with a rejection, and whether it names an exception.
+#[derive(Clone, Copy, Default)]
+struct Cell {
+    rejects: bool,
+    excepts: bool,
 }
 
 /// One-word prohibitions.
@@ -699,6 +714,33 @@ const MODALS: &[&str] = &["do", "must", "should"];
 /// A prohibition of one of these words asks for the action, as in "don't forget to run".
 const REQUESTS: &[&str] = &[
     "forget", "hesitate", "skip", "miss", "omit", "worry", "panic", "mind",
+];
+
+/// A table cell that opens with one of these words rejects the code in the other cells of its row.
+const ROW_REJECTIONS: &[&str] = &[
+    "rejected",
+    "blocked",
+    "block",
+    "deny",
+    "denied",
+    "forbidden",
+    "never",
+    "disallowed",
+];
+
+/// A heading that opens with one of these words rejects the code in its section.
+const SECTION_REJECTIONS: &[&str] = &[
+    "forbidden",
+    "never",
+    "rejected",
+    "blocked",
+    "antipattern",
+    "antipatterns",
+];
+
+/// Characters that end a verdict: a cell edge, punctuation, or a dash.
+const VERDICT_ENDS: &[char] = &[
+    '|', ';', ',', '.', ':', '!', '(', '-', '\u{2013}', '\u{2014}',
 ];
 
 /// A sentence with one of these words names an exception or a condition, so its code still counts.
@@ -716,6 +758,8 @@ fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
     buffers.spans.clear();
     buffers.exceptions.clear();
     buffers.exceptions.push(false);
+    buffers.cells.clear();
+    buffers.cells.push(Cell::default());
     scan_prose(line, prose, &mut buffers, facts);
     prose.buffers = buffers;
 }
@@ -730,6 +774,7 @@ fn scan_prose<'a>(
         characters,
         spans,
         exceptions,
+        cells,
     } = buffers;
     // Blockquote markers belong to the indent, so a quoted list still reads as a list.
     let indent = characters
@@ -742,8 +787,17 @@ fn scan_prose<'a>(
         prose.opening = true;
         return;
     }
-    let heading = indent <= 3 && heading_marker(characters, indent);
+    let level = if indent <= 3 {
+        heading_level(characters, indent)
+    } else {
+        0
+    };
+    let heading = level > 0;
     let table = characters[indent] == '|';
+    // A heading at the same level or above ends the section a rejecting heading opened.
+    if heading && prose.rejecting.is_some_and(|rejecting| level <= rejecting) {
+        prose.rejecting = None;
+    }
     let item = if heading || table {
         0
     } else {
@@ -772,10 +826,18 @@ fn scan_prose<'a>(
         prose.lead_in = false;
     }
     let governed = prose.list.is_some();
+    // A rejecting heading governs the paragraphs and list items of its section. A line
+    // with a check mark gives the good example, as in `✅ \`npx wrangler secret put\``.
+    let section = prose.rejecting.is_some()
+        && !table
+        && !characters
+            .iter()
+            .any(|character| matches!(character, '\u{2705}' | '\u{2714}'));
     let backticks = line.bytes().filter(|byte| *byte == b'`').count();
-    // Exceptions and negations decide only code spans and a lead-in. A line
-    // with neither skips them.
+    // Exceptions and negations decide only code spans, a lead-in, and a heading.
+    // A line with none of them skips them.
     let classify = backticks > 0
+        || heading
         || line
             .trim_end_matches(|character: char| {
                 character.is_whitespace() || matches!(character, '*' | '_')
@@ -784,6 +846,11 @@ fn scan_prose<'a>(
     let mut last_colon = false;
     // The word right before a code span negates it, with nothing but whitespace or emphasis between.
     let mut before_negates = false;
+    let mut cell_opening = table;
+    // A dash ends the section's rejection for the rest of its sentence: "❌ X — use `Y`".
+    let mut dashed = false;
+    let mut heading_rejects = false;
+    let mut heading_excepts = false;
     let (mut byte, mut character_at) = (0, 0);
     for (index, segment) in line.split('`').enumerate() {
         let bytes = byte..byte + segment.len();
@@ -793,10 +860,12 @@ fn scan_prose<'a>(
         character_at = end + 1;
         if index % 2 == 1 {
             prose.opening = false;
+            cell_opening = false;
             spans.push(Span {
                 bytes,
                 sentence: exceptions.len() - 1,
-                negated: prose.negated || governed || before_negates,
+                cell: cells.len() - 1,
+                negated: prose.negated || governed || before_negates || (section && !dashed),
             });
             before_negates = false;
             continue;
@@ -812,12 +881,25 @@ fn scan_prose<'a>(
                 if prose.opening {
                     prose.opening = false;
                     prose.negated = opens_prohibition(word, text, end);
+                    if heading {
+                        heading_rejects |= rejects_section(word, text, end);
+                    }
+                }
+                if cell_opening {
+                    cell_opening = false;
+                    if let Some(cell) = cells.last_mut() {
+                        cell.rejects = rejects_row(word, text, end, last);
+                    }
                 }
                 if classify {
-                    if word.is(EXCEPTIONS)
-                        && let Some(exception) = exceptions.last_mut()
-                    {
-                        *exception = true;
+                    if word.is(EXCEPTIONS) {
+                        if let Some(exception) = exceptions.last_mut() {
+                            *exception = true;
+                        }
+                        if let Some(cell) = cells.last_mut() {
+                            cell.excepts = true;
+                        }
+                        heading_excepts = true;
                     }
                     before_negates = word.is(NEGATIONS);
                 }
@@ -827,14 +909,22 @@ fn scan_prose<'a>(
             if !character.is_whitespace() && !matches!(character, '*' | '_' | '~') {
                 before_negates = false;
             }
+            if table && character == '|' {
+                cells.push(Cell::default());
+                cell_opening = true;
+            }
             match boundary(text, at, last) {
                 Some(Boundary::Sentence) => {
                     prose.negated = false;
                     prose.opening = true;
+                    dashed = false;
                     exceptions.push(false);
                 }
                 // A dash ends a prohibition, as in "Never X — use `Y`". It opens none.
-                Some(Boundary::Clause) => prose.negated = false,
+                Some(Boundary::Clause) => {
+                    prose.negated = false;
+                    dashed = true;
+                }
                 // A label such as "Tip:" ends, and the words after it open the sentence again.
                 None if character == ':' && !prose.negated => prose.opening = true,
                 None => {}
@@ -845,14 +935,22 @@ fn scan_prose<'a>(
             last_colon = ends_with_colon(text);
         }
     }
+    let rejected = heading && heading_rejects && !heading_excepts;
     for span in spans.iter() {
-        if !span.negated || exceptions[span.sentence] {
+        let row = cells
+            .iter()
+            .enumerate()
+            .any(|(index, cell)| index != span.cell && cell.rejects && !cell.excepts);
+        if !(span.negated || row || rejected) || exceptions[span.sentence] {
             facts.code.push(&line[span.bytes.clone()]);
         }
     }
     if heading {
         prose.negated = false;
         prose.opening = true;
+        if rejected && prose.rejecting.is_none() {
+            prose.rejecting = Some(level);
+        }
     } else if !table {
         prose.lead_in =
             prose.negated && !exceptions.last().copied().unwrap_or_default() && last_colon;
@@ -867,16 +965,74 @@ fn ends_with_colon(text: &[char]) -> bool {
         == Some(&':')
 }
 
-/// Whether ATX heading hashes open the line at `at`.
-fn heading_marker(characters: &[char], at: usize) -> bool {
+/// The level of the ATX heading that opens the line at `at`, or 0 for none.
+fn heading_level(characters: &[char], at: usize) -> usize {
     let run = characters[at..]
         .iter()
         .take_while(|character| **character == '#')
         .count();
-    (1..=6).contains(&run)
+    let marked = (1..=6).contains(&run)
         && characters
             .get(at + run)
-            .is_none_or(|character| matches!(character, ' ' | '\t'))
+            .is_none_or(|character| matches!(character, ' ' | '\t'));
+    if marked { run } else { 0 }
+}
+
+/// Whether the first word of a table cell is a verdict that rejects the row:
+/// "**rejected**", "block; require approval", "Not allowed". The verdict stands
+/// alone, so "Denied by the firewall" describes a symptom and rejects nothing.
+fn rejects_row(word: Word<'_>, text: &[char], end: usize, last: bool) -> bool {
+    if word.is(ROW_REJECTIONS) {
+        return stands_alone(text, end, last);
+    }
+    word.is(&["not"])
+        && next_word(text, end)
+            .is_some_and(|(next, after)| next.is(&["allowed"]) && stands_alone(text, after, last))
+}
+
+/// Whether a word ends its cell or clause: only emphasis comes before a cell
+/// edge, punctuation, or the line end.
+fn stands_alone(text: &[char], end: usize, last: bool) -> bool {
+    let at = end
+        + text[end..]
+            .iter()
+            .take_while(|character| {
+                character.is_whitespace() || matches!(character, '*' | '_' | '~')
+            })
+            .count();
+    text.get(at)
+        .map_or(last, |character| VERDICT_ENDS.contains(character))
+}
+
+/// Whether a heading that opens with this word rejects its section: "Never",
+/// "Do not", "What not to do", "Anti-patterns".
+fn rejects_section(word: Word<'_>, text: &[char], end: usize) -> bool {
+    if word.is(SECTION_REJECTIONS) {
+        return true;
+    }
+    if word.is(&["anti"]) && text.get(end) == Some(&'-') {
+        return next_word(text, end + 1).is_some_and(|(next, _)| next.is(&["pattern", "patterns"]));
+    }
+    // A label colon still asks: "DON'T: Forget to set the delegate".
+    let asks = |at: usize| {
+        let at = if text.get(at) == Some(&':') {
+            at + 1
+        } else {
+            at
+        };
+        next_word(text, at).is_some_and(|(next, _)| next.is(REQUESTS))
+    };
+    if word.is(&["dont", "don't"]) {
+        return !asks(end);
+    }
+    let next = next_word(text, end);
+    if word.is(&["do"])
+        && let Some((not, after)) = next
+        && not.is(&["not"])
+    {
+        return !asks(after);
+    }
+    word.is(&["what"]) && next.is_some_and(|(next, _)| next.is(&["not"]))
 }
 
 /// The length of a list marker at `at`, with the whitespace and checkbox after it.
