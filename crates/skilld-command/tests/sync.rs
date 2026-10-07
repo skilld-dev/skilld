@@ -515,6 +515,7 @@ impl RemoteProvider for Hosted {
             },
             page_url: None,
             omitted_files: Vec::new(),
+            behavior_readings: Vec::new(),
         })
     }
 }

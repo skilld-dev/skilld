@@ -265,6 +265,7 @@ impl StubRemote {
             // Only a delivery names a page. A direct read never does.
             page_url: self.verified.then(|| self.page_url.clone()).flatten(),
             omitted_files: Vec::new(),
+            behavior_readings: Vec::new(),
         }
     }
 }

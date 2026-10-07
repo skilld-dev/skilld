@@ -23,6 +23,7 @@ Every public export, command, error, route, and document uses these terms.
 | Check result | `skilld.dev/api/v1` | published protocol | skilld CLI, developer | check result |
 | Linked file | `skilld.dev/api/v1` | published protocol | skilld CLI | linked file |
 | behavior | `packages/protocol/rules/skill-behaviors.json`, `skilld run` | published value | Agent, developer | behavior |
+| behavior reading | `behavior-review` check result, `BEHAVIOR_CONFIRMATION_REQUIRED` | published value | Agent, developer | model reading |
 | Source status | lockfile and protocol | published value | skilld CLI, CI | source status |
 | Skill page | `skilld.dev` and skilld CLI output | published value | Agent, developer | Skill page |
 | Update relation | skilld CLI JSON v1 | published value | Agent, developer, CI | update relation |
@@ -300,6 +301,16 @@ The digest reports changes in watched Repositories.
 **Never:** permission, capability, risk, threat, scan result. A behavior names a match and its location. No match never means the Skill does nothing.
 
 **Casing:** `behavior` in prose, `Skill behaviors` as the output label, kebab-case ids such as `remote-code`.
+
+### behavior reading
+
+**Is:** a language model's reading of one `ask` behavior match, from the non-required `behavior-review` check result skilld.dev signs into an attestation. It names a verdict, `instruction`, `quoted example`, `prohibition`, `documentation`, or `unclear`, and a reason.
+
+**Use for:** the parenthesis after a match in `BEHAVIOR_CONFIRMATION_REQUIRED`, labelled `model reading`.
+
+**Never:** review result, scan, clearance, "safe", "false positive". A behavior reading never changes whether a behavior needs approval.
+
+**Casing:** `behavior reading` in prose, `model reading` as the output label.
 
 ### Source status
 

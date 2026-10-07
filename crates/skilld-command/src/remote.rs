@@ -19,8 +19,10 @@ use skilld_core::{
     verify_artifact, verify_attestation, verify_linked_file, verify_trusted_root,
     with_linked_files,
 };
-use skilld_ui::text::is_unsafe_terminal;
+use skilld_ui::text::{is_unsafe_terminal, sanitize};
 use url::Url;
+
+use crate::run::{BehaviorReading, BehaviorVerdict};
 
 mod api;
 
@@ -324,6 +326,9 @@ pub struct PreparedRemoteSkill {
     pub page_url: Option<String>,
     /// Files over a size limit that skilld.dev left out of the Artifact.
     pub omitted_files: Vec<OmittedFile>,
+    /// A language model's reading of each behavior match. Only an Artifact
+    /// skilld.dev delivered carries readings.
+    pub behavior_readings: Vec<BehaviorReading>,
 }
 
 impl PreparedRemoteSkill {
@@ -1998,6 +2003,7 @@ impl SkilldRemote {
             files,
             page_url: None,
             omitted_files: Vec::new(),
+            behavior_readings: Vec::new(),
         })
     }
 
@@ -2970,6 +2976,7 @@ impl RemoteProvider for SkilldRemote {
                 attestation_key_id: verified.attestation.signature.key_id.clone(),
             },
             omitted_files: omitted_files(&verified.attestation.check_results),
+            behavior_readings: behavior_readings(&verified.attestation.check_results),
             files: verified.files,
             page_url,
         })
@@ -4189,6 +4196,79 @@ fn omitted_file(finding: &str) -> OmittedFile {
         bytes: Some(bytes),
         url,
     }
+}
+
+/// The signed check in which skilld.dev names a language model's reading of
+/// each behavior match. It is never required, and skilld never gates on it.
+///
+/// Each finding reads `PATH:LINE BEHAVIOR: VERDICT.`, then a reason. PATH
+/// holds no whitespace, so the first space ends the location.
+const BEHAVIOR_REVIEW_CHECK: &str = "behavior-review";
+
+/// The most readings skilld takes from one Artifact.
+const MAX_BEHAVIOR_READINGS: usize = 100;
+
+/// The longest reason skilld prints.
+const MAX_READING_REASON_CHARS: usize = 200;
+
+/// The readings the `behavior-review` check names. A finding in another
+/// shape gives none, and a match named twice reads as neither.
+fn behavior_readings(results: &[skilld_core::CheckResult]) -> Vec<BehaviorReading> {
+    let readings = results
+        .iter()
+        .filter(|result| result.name == BEHAVIOR_REVIEW_CHECK)
+        .flat_map(|result| &result.findings)
+        .take(MAX_BEHAVIOR_READINGS)
+        .filter_map(|finding| behavior_reading(finding))
+        .collect::<Vec<_>>();
+    let mut named = BTreeMap::<(String, usize, String), usize>::new();
+    for reading in &readings {
+        *named
+            .entry((reading.path.clone(), reading.line, reading.behavior.clone()))
+            .or_default() += 1;
+    }
+    readings
+        .into_iter()
+        .filter(|reading| {
+            named.get(&(reading.path.clone(), reading.line, reading.behavior.clone())) == Some(&1)
+        })
+        .collect()
+}
+
+/// Parse `PATH:LINE BEHAVIOR: VERDICT.` and an optional reason.
+fn behavior_reading(finding: &str) -> Option<BehaviorReading> {
+    let (location, rest) = finding.split_once(' ')?;
+    let (path, line) = location.rsplit_once(':')?;
+    let line = line.parse::<usize>().ok().filter(|line| *line > 0)?;
+    let (behavior, rest) = rest.split_once(": ")?;
+    if path.is_empty()
+        || behavior.is_empty()
+        || !behavior
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    {
+        return None;
+    }
+    let (verdict, reason) = match rest.split_once(". ") {
+        Some((verdict, reason)) => (verdict, Some(reason)),
+        None => (rest.strip_suffix('.')?, None),
+    };
+    let reason = reason
+        .map(|reason| {
+            sanitize(reason)
+                .trim()
+                .chars()
+                .take(MAX_READING_REASON_CHARS)
+                .collect::<String>()
+        })
+        .filter(|reason| !reason.is_empty());
+    Some(BehaviorReading {
+        path: path.to_owned(),
+        line,
+        behavior: behavior.to_owned(),
+        verdict: BehaviorVerdict::parse(verdict)?,
+        reason,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
