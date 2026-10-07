@@ -18,9 +18,38 @@ pub mod upgrade;
 pub mod weekly;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BrowserCommand {
-    pub program: &'static str,
-    pub arguments: Vec<String>,
+pub enum BrowserCommand {
+    Process {
+        program: &'static str,
+        arguments: Vec<String>,
+    },
+    WindowsUrl(String),
+}
+
+impl BrowserCommand {
+    pub fn open(self) -> std::io::Result<()> {
+        match self {
+            Self::Process { program, arguments } => {
+                let status = std::process::Command::new(program)
+                    .args(arguments)
+                    .status()?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "Browser command failed: {status}"
+                    )))
+                }
+            }
+            #[cfg(windows)]
+            Self::WindowsUrl(url) => opener::open(url).map_err(std::io::Error::other),
+            #[cfg(not(windows))]
+            Self::WindowsUrl(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "The Windows URL opener requires Windows",
+            )),
+        }
+    }
 }
 
 /// The command that opens one authorization URL in the browser.
@@ -32,6 +61,12 @@ pub fn auth_browser_command(
     authorization_url: &str,
     origin: &ServiceOrigin,
 ) -> Result<BrowserCommand, RemoteError> {
+    if authorization_url.contains('\0') {
+        return Err(RemoteError::new(
+            "INVALID_AUTH_URL",
+            "the authorization URL is invalid",
+        ));
+    }
     let url = Url::parse(authorization_url)
         .map_err(|_| RemoteError::new("INVALID_AUTH_URL", "the authorization URL is invalid"))?;
     if !origin.contains(&url) {
@@ -43,7 +78,7 @@ pub fn auth_browser_command(
     let program = match platform {
         "macos" => "open",
         "linux" => "xdg-open",
-        "windows" => "explorer.exe",
+        "windows" => return Ok(BrowserCommand::WindowsUrl(authorization_url.to_owned())),
         _ => {
             return Err(RemoteError::new(
                 "UNSUPPORTED_HOST",
@@ -51,7 +86,7 @@ pub fn auth_browser_command(
             ));
         }
     };
-    Ok(BrowserCommand {
+    Ok(BrowserCommand::Process {
         program,
         arguments: vec![authorization_url.to_owned()],
     })

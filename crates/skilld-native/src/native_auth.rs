@@ -1,5 +1,4 @@
 use std::io::Read;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -102,13 +101,9 @@ impl BrowserLauncher for NativeBrowser {
             eprintln!("Open this authorization URL in your signed-in browser:\n{url}");
             return Ok(());
         }
-        Command::new(launch.program)
-            .args(launch.arguments)
-            .status()
-            .map_err(|_| boundary(BoundaryErrorKind::Failed))?
-            .success()
-            .then_some(())
-            .ok_or_else(|| boundary(BoundaryErrorKind::Failed))
+        launch
+            .open()
+            .map_err(|_| boundary(BoundaryErrorKind::Failed))
     }
 }
 
