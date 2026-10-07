@@ -429,6 +429,101 @@ fn local_source(path: &Path) -> LockedSource {
 }
 
 #[test]
+fn store_lock_failure_reports_the_filesystem_operation_and_path() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = source(temporary.path(), "source", "first");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let lock = store.root().join(".skilld-store-lock");
+    fs::create_dir_all(&lock).unwrap();
+
+    let error = store
+        .install_from(&skill, local_source(&skill), &[], &[])
+        .unwrap_err();
+
+    assert_eq!(error.code(), "FILESYSTEM_ERROR");
+    assert!(error.to_string().contains("open"), "{error}");
+    assert!(
+        error.to_string().contains(&lock.display().to_string()),
+        "{error}"
+    );
+}
+
+#[cfg(windows)]
+fn hold_without_delete_sharing(path: &Path) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1 | 2) // FILE_SHARE_READ | FILE_SHARE_WRITE
+        .open(path)
+        .unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn replacement_retries_a_temporary_windows_file_lock() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = source(temporary.path(), "source", "first");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    store
+        .install_from(&skill, local_source(&skill), &[], &[])
+        .unwrap();
+    let handle = hold_without_delete_sharing(&store.root().join("example/SKILL.md"));
+    let release = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(250));
+        drop(handle);
+    });
+    fs::write(skill.join("SKILL.md"), skill_text("replacement")).unwrap();
+
+    let result = store.install_from(&skill, local_source(&skill), &[], &[]);
+    release.join().unwrap();
+    result.unwrap();
+
+    assert_eq!(
+        fs::read_to_string(store.root().join("example/SKILL.md")).unwrap(),
+        skill_text("replacement")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn persistent_windows_file_lock_reports_paths_and_preserves_the_install() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill = source(temporary.path(), "source", "first");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    store
+        .install_from(&skill, local_source(&skill), &[], &[])
+        .unwrap();
+    let before = store.snapshot(&[]).unwrap();
+    let handle = hold_without_delete_sharing(&store.root().join("example/SKILL.md"));
+    fs::write(skill.join("SKILL.md"), skill_text("replacement")).unwrap();
+
+    let start = std::time::Instant::now();
+    let error = store
+        .install_from(&skill, local_source(&skill), &[], &[])
+        .unwrap_err();
+    drop(handle);
+
+    assert!(start.elapsed() < Duration::from_secs(10));
+    assert_eq!(error.code(), "FILESYSTEM_ERROR");
+    assert!(error.to_string().contains("Cannot rename"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains(&store.root().join("example").display().to_string()),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains(".skilld-backup-example-"),
+        "{error}"
+    );
+    assert_eq!(store.snapshot(&[]).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(store.root().join("example/SKILL.md")).unwrap(),
+        skill_text("first")
+    );
+}
+
+#[test]
 fn copy_install_lists_views_and_removes_managed_state() {
     let temporary = tempfile::tempdir().unwrap();
     let skill = source(temporary.path(), "source", "first");
