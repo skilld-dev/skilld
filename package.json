@@ -1,7 +1,7 @@
 {
   "name": "skilld",
   "type": "module",
-  "version": "3.6.4",
+  "version": "3.6.5",
   "packageManager": "pnpm@11.25.0",
   "description": "Search, run, install, and keep Agent Skills current. The open-source CLI behind skilld.dev.",
   "author": {
