@@ -132,6 +132,17 @@ it('rejects a release when Harness has a different v3 version', async () => {
   )
 })
 
+it('rejects a release when the Rust workspace has another version', async () => {
+  const root = await temporaryDirectory()
+  await writeReleaseManifests(root, '3.6.7', '2.4.0')
+  await writeFile(join(root, 'Cargo.toml'), '[workspace.package]\nversion = "3.6.6"\n')
+
+  await assert.rejects(
+    verifyReleaseVersions(root, 'v3.6.7'),
+    /Rust workspace version 3\.6\.6 does not match release 3\.6\.7/,
+  )
+})
+
 it('skips an independently versioned package that already exists', () => {
   const decision = independentPackagePublishDecision({
     packageName: 'skilld-protocol',
@@ -235,6 +246,7 @@ async function writeNativePackage(root, spec) {
 }
 
 async function writeReleaseManifests(root, sharedVersion, protocolVersion) {
+  await writeFile(join(root, 'Cargo.toml'), `[workspace.package]\nversion = "${sharedVersion}"\n`)
   const manifests = [
     ['package.json', { name: 'skilld', version: sharedVersion }],
     ['packages/harness/package.json', { name: 'skilld-harness', version: sharedVersion }],

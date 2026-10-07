@@ -1,7 +1,7 @@
 {
   "name": "skilld-harness",
   "type": "module",
-  "version": "3.6.6",
+  "version": "3.6.7",
   "description": "Run skilld-maintained Skills with checked, atomic output",
   "author": {
     "name": "Harlan Wilton",

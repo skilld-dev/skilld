@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { cargoWorkspaceVersion } from './cargo-version.mjs'
 
 const execFileAsync = promisify(execFile)
 const NPM_REGISTRY = 'https://registry.npmjs.org/'
@@ -128,6 +129,10 @@ export async function verifyReleaseVersions(repositoryRoot, tag) {
     throw new Error(`Shared v3 package versions differ: ${mismatched.join(', ')}`)
   if (tag !== `v${root.version}`)
     throw new Error(`Release tag ${tag} does not match v${root.version}`)
+
+  const rustVersion = cargoWorkspaceVersion(await readFile(join(repositoryRoot, 'Cargo.toml'), 'utf8'))
+  if (rustVersion !== root.version)
+    throw new Error(`Rust workspace version ${rustVersion} does not match release ${root.version}`)
 
   return {
     protocol: { name: protocol.name, version: protocol.version },

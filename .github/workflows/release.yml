@@ -141,7 +141,10 @@ jobs:
         run: |
           expected="skilld $(node -p "require('./package.json').version")"
           actual="$(node bin/skilld.mjs --version)"
-          test "$actual" = "$expected"
+          if test "$actual" != "$expected"; then
+            printf 'CLI version mismatch: expected %s, received %s\n' "$expected" "$actual" >&2
+            exit 1
+          fi
       - name: Pack the root CLI
         run: pnpm pack --pack-destination artifacts
       - name: Stage signed standalone release
