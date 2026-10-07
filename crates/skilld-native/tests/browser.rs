@@ -68,7 +68,7 @@ fn windows_url_opener_delivers_the_complete_url_to_the_registered_handler() {
     let scheme = format!("skilld-browser-test-{}", std::process::id());
     let key = format!(r"HKCU\Software\Classes\{scheme}");
     let url = format!(
-        "{scheme}://authorize?code=a&state=b%23c&redirect_uri=http%3A%2F%2F127.0.0.1#fragment"
+        "{scheme}://skilld.test/auth/cli?code=a&state=b%23c&redirect_uri=http%3A%2F%2F127.0.0.1#fragment"
     );
     // A private protocol exercises ShellExecuteW without changing browser defaults.
     // The test executable acts as the handler, so no browser or account is needed.
