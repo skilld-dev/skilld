@@ -20,6 +20,15 @@ permissions:
   contents: read
 
 jobs:
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Local copy install, replacement, and removal
+        run: cargo test --locked -p skilld-native --test install_copy
+      - name: Store transactions and Windows file locks
+        run: cargo test --locked -p skilld-command --test local_store
+
   quality:
     runs-on: ubuntu-24.04
     steps:

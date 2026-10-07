@@ -113,7 +113,7 @@ impl StoreError {
         match self {
             Self::CommittedCleanupPending(_) => "COMMITTED_CLEANUP_PENDING",
             Self::Conflict(_) => "TARGET_CONFLICT",
-            Self::Filesystem(_) => "SERVICE_UNAVAILABLE",
+            Self::Filesystem(_) => "FILESYSTEM_ERROR",
             Self::InvalidLockfile(_) => "INVALID_LOCKFILE",
             Self::InvalidSource(_) => "INVALID_SOURCE",
             Self::InvalidTargetPath(_) => "INVALID_TARGET",
@@ -469,25 +469,23 @@ impl LocalStore {
             );
         }
 
-        if canonical_had_existing
-            && let Err(error) = fs::rename(&canonical, &canonical_backup).map_err(fs_error)
-        {
+        if canonical_had_existing && let Err(error) = rename_path(&canonical, &canonical_backup) {
             return self.rollback_error(error, known_targets);
         }
-        if let Err(error) = fs::rename(&canonical_stage, &canonical).map_err(fs_error) {
+        if let Err(error) = rename_path(&canonical_stage, &canonical) {
             return self.rollback_error(error, known_targets);
         }
         for change in &changes {
             let destination = change.target.destination(&name);
             let backup = backup_path(&destination, &transaction)?;
             if change.had_existing
-                && let Err(error) = fs::rename(&destination, &backup).map_err(fs_error)
+                && let Err(error) = rename_path(&destination, &backup)
             {
                 return self.rollback_error(error, known_targets);
             }
             if change.install.is_some() {
                 let stage = stage_path(&destination, &transaction)?;
-                if let Err(error) = fs::rename(&stage, &destination).map_err(fs_error) {
+                if let Err(error) = rename_path(&stage, &destination) {
                     return self.rollback_error(error, known_targets);
                 }
             }
@@ -700,22 +698,19 @@ impl LocalStore {
             for prepared in &prepared {
                 let canonical_backup = backup_path(&prepared.canonical, &transaction)?;
                 if prepared.canonical_had_existing {
-                    fs::rename(&prepared.canonical, canonical_backup).map_err(fs_error)?;
+                    rename_path(&prepared.canonical, canonical_backup)?;
                 }
-                fs::rename(
+                rename_path(
                     stage_path(&prepared.canonical, &transaction)?,
                     &prepared.canonical,
-                )
-                .map_err(fs_error)?;
+                )?;
                 for change in &prepared.changes {
                     let destination = change.target.destination(&prepared.update.name);
                     if change.had_existing {
-                        fs::rename(&destination, backup_path(&destination, &transaction)?)
-                            .map_err(fs_error)?;
+                        rename_path(&destination, backup_path(&destination, &transaction)?)?;
                     }
                     if change.install.is_some() {
-                        fs::rename(stage_path(&destination, &transaction)?, &destination)
-                            .map_err(fs_error)?;
+                        rename_path(stage_path(&destination, &transaction)?, &destination)?;
                     }
                 }
             }
@@ -818,14 +813,13 @@ impl LocalStore {
         };
         self.write_journal(&journal)?;
         if canonical_had_existing {
-            fs::rename(&canonical, backup_path(&canonical, &transaction)?).map_err(fs_error)?;
+            rename_path(&canonical, backup_path(&canonical, &transaction)?)?;
         }
         for target in &targets {
             let destination = target.destination(name);
             if path_exists(&destination)?
                 && let Err(error) =
-                    fs::rename(&destination, backup_path(&destination, &transaction)?)
-                        .map_err(fs_error)
+                    rename_path(&destination, backup_path(&destination, &transaction)?)
             {
                 return self.rollback_error(error, known_targets);
             }
@@ -1051,10 +1045,11 @@ impl LocalStore {
         file.write_all(&bytes).map_err(fs_error)?;
         file.write_all(b"\n").map_err(fs_error)?;
         file.sync_all().map_err(fs_error)?;
+        drop(file);
         if path_exists(&path)? {
-            fs::rename(&path, &backup).map_err(fs_error)?;
+            rename_path(&path, &backup)?;
         }
-        fs::rename(&temporary, &path).map_err(fs_error)
+        rename_path(&temporary, &path)
     }
 
     fn write_journal(&self, journal: &Journal) -> Result<(), StoreError> {
@@ -1069,18 +1064,23 @@ impl LocalStore {
             journal.transaction_id
         ));
         let write_result = (|| {
-            fs::create_dir(&stage).map_err(fs_error)?;
+            fs::create_dir(&stage)
+                .map_err(|error| fs_path_error("create directory", &stage, error))?;
             let state = stage.join("state.json");
             let bytes = serde_json::to_vec_pretty(journal)
                 .map_err(|error| StoreError::Filesystem(error.to_string()))?;
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .open(state)
-                .map_err(fs_error)?;
-            file.write_all(&bytes).map_err(fs_error)?;
-            file.sync_all().map_err(fs_error)?;
-            fs::rename(&stage, &path).map_err(fs_error)
+                .open(&state)
+                .map_err(|error| fs_path_error("open", &state, error))?;
+            file.write_all(&bytes)
+                .map_err(|error| fs_path_error("write", &state, error))?;
+            file.sync_all()
+                .map_err(|error| fs_path_error("sync", &state, error))?;
+            // Windows cannot rename this directory while its journal file is open.
+            drop(file);
+            rename_path(&stage, &path)
         })();
         if let Err(error) = write_result {
             return match remove_path(&stage) {
@@ -1668,7 +1668,7 @@ fn restore_path(
     remove_path(stage).map_err(fs_error)?;
     if path_exists(backup)? {
         remove_path(destination).map_err(fs_error)?;
-        fs::rename(backup, destination).map_err(fs_error)?;
+        rename_path(backup, destination)?;
     } else if !had_existing {
         remove_path(destination).map_err(fs_error)?;
     }
@@ -1682,7 +1682,7 @@ fn restore_lockfile(root: &Path, transaction: &str) -> Result<(), StoreError> {
     remove_path(&stage).map_err(fs_error)?;
     if path_exists(&backup)? {
         remove_path(&lockfile).map_err(fs_error)?;
-        fs::rename(backup, lockfile).map_err(fs_error)?;
+        rename_path(backup, lockfile)?;
     }
     Ok(())
 }
@@ -1786,14 +1786,15 @@ fn ensure_write_capability() -> Result<(), StoreError> {
 
 #[cfg(not(target_os = "wasi"))]
 fn acquire_store_lock(root: &Path) -> Result<StoreLock, StoreError> {
+    let path = root.join(LOCK_NAME);
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(root.join(LOCK_NAME))
-        .map_err(fs_error)?;
-    fs4::FileExt::lock(&lock).map_err(fs_error)?;
+        .open(&path)
+        .map_err(|error| fs_path_error("open", &path, error))?;
+    fs4::FileExt::lock(&lock).map_err(|error| fs_path_error("lock", &path, error))?;
     Ok(StoreLock { _file: lock })
 }
 
@@ -1876,6 +1877,44 @@ fn fs_error(error: io::Error) -> StoreError {
 
 fn stale_update_plan() -> StoreError {
     StoreError::StalePlan("The Skill store changed while the update was preparing".to_owned())
+}
+
+fn fs_path_error(operation: &str, path: &Path, error: io::Error) -> StoreError {
+    StoreError::Filesystem(format!("Cannot {operation} {}: {error}", path.display()))
+}
+
+fn rename_path(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), StoreError> {
+    let from = from.as_ref();
+    let to = to.as_ref();
+    #[cfg(windows)]
+    let result = rename_with_retry(from, to);
+    #[cfg(not(windows))]
+    let result = fs::rename(from, to);
+    result.map_err(|error| {
+        StoreError::Filesystem(format!(
+            "Cannot rename {} to {}: {error}",
+            from.display(),
+            to.display()
+        ))
+    })
+}
+
+#[cfg(windows)]
+fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            // Antivirus scanners can briefly hold a file without delete sharing.
+            Err(error)
+                if matches!(error.raw_os_error(), Some(5 | 32))
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
