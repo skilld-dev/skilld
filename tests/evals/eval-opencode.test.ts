@@ -1,6 +1,7 @@
 import type { Grader } from '../../scripts/eval-opencode/case.ts'
 import { describe, expect, it } from 'vitest'
 import { parseGrader } from '../../scripts/eval-opencode/case.ts'
+import { runEnv } from '../../scripts/eval-opencode/env.ts'
 import { gradeRun, opencodeToolName, parseVerdict, runScore } from '../../scripts/eval-opencode/grade.ts'
 import { friction, parseTranscript } from '../../scripts/eval-opencode/transcript.ts'
 
@@ -117,5 +118,38 @@ describe('parseVerdict', () => {
     expect(parseVerdict('Sure.\n{"pass": true, "reason": "Quotes the code."}')).toEqual({ pass: true, reason: 'Quotes the code.' })
     expect(parseVerdict('{"pass": "yes"}')).toBeNull()
     expect(parseVerdict('no json here')).toBeNull()
+  })
+})
+
+describe('runEnv', () => {
+  const input = {
+    base: { HOME: '/home/dev', PATH: '/usr/bin', OPENCODE_CONFIG: '/home/dev/oc.json', CARGO_HOME: '/opt/cargo' },
+    tempHome: '/tmp/run',
+    config: { model: 'm' },
+    auth: '{"provider":{}}',
+    extra: { SKILLD_DATA_DIR: '/tmp/run/skilld' },
+  }
+
+  it('moves HOME and the XDG homes into the run directory', () => {
+    const env = runEnv(input)
+    expect(env.HOME).toBe('/tmp/run')
+    expect(env.XDG_CONFIG_HOME).toBe('/tmp/run/config')
+    expect(env.XDG_DATA_HOME).toBe('/tmp/run/data')
+    expect(env.OPENCODE_CONFIG).toBeUndefined()
+    expect(env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1')
+    expect(env.SKILLD_DATA_DIR).toBe('/tmp/run/skilld')
+  })
+
+  it('keeps toolchains and caches at their real paths', () => {
+    const env = runEnv(input)
+    expect(env.CARGO_HOME).toBe('/opt/cargo')
+    expect(env.RUSTUP_HOME).toBe('/home/dev/.rustup')
+    expect(env.npm_config_cache).toBe('/home/dev/.npm')
+    expect(env.XDG_CACHE_HOME).toBe('/home/dev/.cache')
+  })
+
+  it('passes credentials in memory and omits them when there are none', () => {
+    expect(runEnv(input).OPENCODE_AUTH_CONTENT).toBe('{"provider":{}}')
+    expect(runEnv({ ...input, auth: null }).OPENCODE_AUTH_CONTENT).toBeUndefined()
   })
 })

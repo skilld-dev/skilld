@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { findCaseDirs, loadCase } from './eval-opencode/case.ts'
+import { runEnv } from './eval-opencode/env.ts'
 import { gradeRun, parseVerdict, runScore } from './eval-opencode/grade.ts'
 import { friction, parseTranscript } from './eval-opencode/transcript.ts'
 
@@ -106,31 +107,9 @@ function globRegex(glob: string): RegExp {
   return new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`)
 }
 
-/**
- * opencode reads Skills from its global config, `~/.claude/skills`, and
- * `~/.agents/skills`. A temp config, data, and state home, plus the two
- * disable flags, leave only the Skills inside the run's project. The provider
- * settings and credentials pass in memory, so no secret lands in the temp dir.
- */
 function isolatedEnv(home: string, config: Record<string, unknown>, extra: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    XDG_CONFIG_HOME: join(home, 'config'),
-    XDG_DATA_HOME: join(home, 'data'),
-    XDG_STATE_HOME: join(home, 'state'),
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
-    OPENCODE_DISABLE_CLAUDE_CODE: '1',
-    OPENCODE_DISABLE_AUTOUPDATE: '1',
-    OPENCODE_DISABLE_SHARE: '1',
-    ...extra,
-  }
-  delete env.OPENCODE_CONFIG
-  delete env.OPENCODE_CONFIG_DIR
   const auth = join(process.env.HOME ?? '', '.local/share/opencode/auth.json')
-  if (existsSync(auth))
-    env.OPENCODE_AUTH_CONTENT = readFileSync(auth, 'utf8')
-  return env
+  return runEnv({ base: process.env, tempHome: home, config, auth: existsSync(auth) ? readFileSync(auth, 'utf8') : null, extra })
 }
 
 function userProviders(): Record<string, unknown> {
