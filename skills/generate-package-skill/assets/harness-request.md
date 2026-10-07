@@ -13,3 +13,4 @@ List each documentation and behaviour mismatch in your final message.
 Write no files outside `{{OUTPUT_PATH}}`. Build fixtures in a scratch directory outside it.
 Write only `SKILL.md` and Markdown files under `references/`: at most 9 files and 64 KiB in total. Skillgen rejects other output.
 Finish only after checking every output rule in this Skill.
+After you finish, the Harness checks the output. It returns each failed check to you; fix them in place.

@@ -1,7 +1,7 @@
 import type { SkillReview, SkillReviewFinding, SkillRunError } from '../../types.ts'
 import type { Result } from '../result.ts'
 import type { CollectedFile } from './collect.ts'
-import { parseDocument } from 'yaml'
+import { isScalar, parseDocument, Scalar } from 'yaml'
 import { isSkillName, normalizeOutputPath } from '../paths.ts'
 import { checkProjectSkill } from './project.ts'
 import { err, ok } from '../result.ts'
@@ -14,6 +14,12 @@ const packageSkillLineLimit = 500
 
 /** `generate-package-skill`: "Write at most eight reference files." */
 const packageSkillReferenceLimit = 8
+
+/**
+ * Skill loaders and viewers parse frontmatter with different YAML parsers.
+ * A plain one-line description without these characters reads the same in all of them.
+ */
+const riskyDescription = /["`%]/
 
 /**
  * The Skill that produced the output decides which of its written rules apply.
@@ -125,6 +131,9 @@ export const validateGeneratedSkill = (
     issues.push('Frontmatter name is invalid.')
   if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0 || frontmatter.description.length > 1024)
     issues.push('Frontmatter description must contain 1 to 1024 characters.')
+  const description = document.get('description', true)
+  if (typeof frontmatter.description === 'string' && (!isScalar(description) || description.type !== Scalar.PLAIN || riskyDescription.test(frontmatter.description)))
+    issues.push('Frontmatter description must be one plain line without double quotes, backticks, or %. Name symptoms in plain words.')
   issues.push(...structureIssues(source, files, contract))
 
   return issues.length === 0 ? ok(undefined) : invalid(issues)

@@ -45,6 +45,8 @@ Observed behaviour beats documentation.
 3. Run each example you include. Compare output with the claim: HTML, return values, type errors, build logs, exit codes, report files.
    Each concrete claim in prose is an example too: a value, count, default, result shape, error text, exit code, or bundle effect. Run it, or report it read from source.
    Run each example with one failure input as well, such as an unreachable URL, a bad token, or a stalled request.
+   Run each example under each global setting the Skill describes, such as a staging environment or a site-wide switch.
+   For each claim that a setting or dependency is required, run once without it and record what fails.
    Test each mode the package declares: framework modes (SSR, SPA, streaming, dev, build), each condition in `exports`, the oldest runtime in `engines`, and each CLI binary with a config file and with flags. Report other modes untested.
    Wrap every run in `timeout 120`.
    Grep the package for agent and CI detection, such as `CLAUDECODE` or `CI`; unset each variable it reads with `env -u VAR`.
@@ -102,6 +104,7 @@ The frontmatter contains only `name` and `description`.
 The name uses lowercase letters, numbers, and single hyphens, at most 64 characters, and matches the directory.
 For a scoped package, drop the `@` and replace `/` with a hyphen: `@nuxtjs/seo` becomes `nuxtjs-seo`.
 The description, at most 1024 characters in third person, says what the Skill does, then when to use it, in the words a user types: package name, main exports, config key, error symptoms.
+Write it as one plain line of 300 to 450 characters. Skill loaders parse frontmatter with different YAML parsers, so use no double quotes, backticks, or `%`. Name an error symptom in plain words, never as a quoted message.
 Good: `Adds and debugs Schema.org JSON-LD in Nuxt with nuxt-schema-org. Use when a task mentions structured data, rich results, useSchemaOrg, defineArticle, or the schemaOrg config key.`
 
 ## 4. Check and report
@@ -131,7 +134,7 @@ Confirm:
 
 - Each example ran against the recorded version, or is reported untested.
 - Each reference is linked. Delete stale files from an earlier Skill.
-- The frontmatter follows the rules above.
+- The frontmatter follows the rules above, parses with a strict YAML parser, and `skilld run SKILL_DIR --json` returns `_tag: Success`. Fix each failure before you finish.
 
 Report to the user:
 

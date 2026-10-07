@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSkillHarness } from '../../src/index.ts'
@@ -237,6 +237,8 @@ describe('createSkillHarness', () => {
       async onPrompt({ workDir }) {
         const outputDir = join(workDir, 'skilld-output/example-project')
         await mkdir(outputDir, { recursive: true })
+        // Every repair turn links the file again.
+        await rm(join(outputDir, 'SKILL.md'), { force: true })
         await symlink(outside, join(outputDir, 'SKILL.md'))
       },
     })
