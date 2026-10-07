@@ -18,6 +18,15 @@ use skilld_core::{
 struct ListingRemote;
 
 impl RemoteProvider for ListingRemote {
+    fn list_direct_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
+        let mut listing = self.list_skills(reference)?;
+        for skill in &mut listing.items {
+            skill.origin = ListedOrigin::Direct {
+                path: format!("skills/{}", skill.name),
+            };
+        }
+        Ok(listing)
+    }
     fn list_skills(&self, reference: &MultiSkillRef) -> Result<SkillListing, RemoteError> {
         assert_eq!(
             *reference,
@@ -50,10 +59,13 @@ impl RemoteProvider for ListingRemote {
         selector: &RemoteSelector,
         direct: bool,
     ) -> Result<PreparedRemoteSkill, RemoteError> {
-        assert!(!direct, "add uses hosted delivery");
-        let SourceSelector::NamedSkill { name } = &selector.source().selector else {
-            panic!("expected a named Skill selector: {selector}");
+        let name = match &selector.source().selector {
+            SourceSelector::NamedSkill { name } => name.as_str(),
+            SourceSelector::Path { path } => path.rsplit('/').next().unwrap(),
         };
+        if direct {
+            assert!(selector.canonical().starts_with("github:"));
+        }
         let file = PreparedFile {
             path: "SKILL.md".to_owned(),
             mode: 0o644,
@@ -125,6 +137,39 @@ fn installed_digest(file: &PreparedFile) -> String {
 }
 
 #[test]
+fn noninteractive_add_requires_explicit_selection_before_writing_files() {
+    for flags in [vec![], vec!["--plain"]] {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let host = LocalHost::new(project.clone(), temporary.path().join("global"))
+            .with_detection_environment(DetectionEnvironment::new(["CLAUDE_CODE".to_owned()]))
+            .with_remote_provider(Arc::new(ListingRemote));
+        let mut args = vec!["skilld", "add", "vuejs/core"];
+        args.extend(flags);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run_with_output(
+            args,
+            &host,
+            OutputContext::Plain {
+                platform: CommandPlatform::Unix,
+            },
+            &mut stdout,
+            &mut stderr,
+        );
+        assert_eq!(result.exit_code, 1);
+        let error = String::from_utf8(stderr).unwrap();
+        assert!(error.contains("SKILL_SELECTION_REQUIRED"), "{error}");
+        assert!(error.contains("vue"), "{error}");
+        assert!(error.contains("nuxt"), "{error}");
+        assert!(error.contains("--all"), "{error}");
+        assert!(!project.join(".skills").exists());
+        assert!(!project.join(".claude/skills").exists());
+    }
+}
+
+#[test]
 fn add_installs_every_skill_the_repository_ref_names() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
@@ -136,7 +181,7 @@ fn add_installs_every_skill_the_repository_ref_names() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let result = run_with_output(
-        ["skilld", "add", "vuejs/core"],
+        ["skilld", "add", "vuejs/core", "--all"],
         &host,
         OutputContext::Plain {
             platform: CommandPlatform::Unix,
@@ -146,22 +191,32 @@ fn add_installs_every_skill_the_repository_ref_names() {
     );
 
     assert_eq!(result.exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
+    let output = String::from_utf8(stdout).unwrap();
+    for name in ["vue", "nuxt"] {
+        assert!(
+            output.contains(&format!("Installed Skill {name}.")),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "Files: {}",
+                project.join(".claude/skills").join(name).display()
+            )),
+            "{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "https://github.com/vuejs/core/blob/{}/skills/{name}/SKILL.md",
+                "a".repeat(40)
+            )),
+            "{output}"
+        );
+    }
     assert_eq!(
-        String::from_utf8(stdout).unwrap(),
-        concat!(
-            "Installed Skill vue.\n",
-            "vue · vuejs/core @ aaaaaaa\n",
-            "Source: vuejs/core/vue\n",
-            "Source status: unverified\n",
-            "skilld did not check this source. Read this Skill before you follow it.\n",
-            "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/vue/SKILL.md\n",
-            "Installed Skill nuxt.\n",
-            "nuxt · vuejs/core @ aaaaaaa\n",
-            "Source: vuejs/core/nuxt\n",
-            "Source status: unverified\n",
-            "skilld did not check this source. Read this Skill before you follow it.\n",
-            "Read it first: https://github.com/vuejs/core/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/nuxt/SKILL.md\n",
-        )
+        output
+            .matches("Read the instructions before using each Skill.")
+            .count(),
+        1
     );
     assert_eq!(host.list(InstallScope::Project).unwrap(), ["nuxt", "vue"]);
     for name in ["vue", "nuxt"] {
@@ -260,6 +315,38 @@ fn add_with(host: &LocalHost, args: &[&str]) -> (u8, String) {
 }
 
 #[test]
+fn explicit_direct_add_installs_all_listed_skills_for_the_selected_agent() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let host = LocalHost::new(project.clone(), temporary.path().join("global"))
+        .with_remote_provider(Arc::new(ListingRemote));
+    let (exit, output) = add_with(
+        &host,
+        &[
+            "skilld",
+            "add",
+            "vuejs/core",
+            "--direct",
+            "--all",
+            "--agent",
+            "codex",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert_eq!(host.list(InstallScope::Project).unwrap(), ["nuxt", "vue"]);
+    for name in ["vue", "nuxt"] {
+        let path = project.join(".agents/skills").join(name);
+        assert!(path.join("SKILL.md").is_file());
+        assert!(
+            output.contains(&format!("Files: {}", path.display())),
+            "{output}"
+        );
+    }
+    assert_eq!(output.matches("Source status: unverified").count(), 2);
+}
+
+#[test]
 fn add_holds_back_only_the_skill_with_an_unapproved_behavior() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
@@ -268,7 +355,7 @@ fn add_holds_back_only_the_skill_with_an_unapproved_behavior() {
         .with_detection_environment(DetectionEnvironment::new(["CLAUDE_CODE".to_owned()]))
         .with_remote_provider(Arc::new(PrivilegedNuxtRemote));
 
-    let (exit, output) = add_with(&host, &["skilld", "add", "vuejs/core"]);
+    let (exit, output) = add_with(&host, &["skilld", "add", "vuejs/core", "--all"]);
 
     assert_ne!(exit, 0, "{output}");
     assert!(
@@ -284,7 +371,14 @@ fn add_holds_back_only_the_skill_with_an_unapproved_behavior() {
 
     let (exit, output) = add_with(
         &host,
-        &["skilld", "add", "vuejs/core", "--allow", "privilege"],
+        &[
+            "skilld",
+            "add",
+            "vuejs/core",
+            "--all",
+            "--allow",
+            "privilege",
+        ],
     );
 
     assert_eq!(exit, 0, "{output}");

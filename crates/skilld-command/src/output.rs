@@ -584,15 +584,9 @@ fn run_command(item: &ListedSkill) -> String {
 
 /// The `skilld run` arguments that load one listed Skill.
 ///
-/// A Skill the registry does not list resolves through GitHub, so its command
-/// carries `--direct`.
+/// Discovery never chooses direct delivery on the user's behalf.
 fn run_arguments(item: &ListedSkill) -> Vec<String> {
-    let mut arguments = Vec::new();
-    if item.needs_direct() {
-        arguments.push("--direct".to_owned());
-    }
-    arguments.push(item.selector());
-    arguments
+    vec![item.selector()]
 }
 
 #[derive(Serialize)]

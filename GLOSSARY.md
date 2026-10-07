@@ -145,7 +145,10 @@ The Rust type for the second is `TransientSkill`, never `SkillRun`.
 The Skill index is the list of Skills that `skilld run` prints for a ref.
 
 `skilld add` and `skilld collection add` share a verb.
-`skilld add` installs every Skill one ref names.
+`skilld add` installs selected Skills from one ref.
+If several Skills are listed, a normal terminal asks which to install.
+An Agent, pipe, CI, or `--plain` requires `--all` to install every listed Skill.
+Listing never requests registry indexing. Delivery failures never switch to direct installation.
 `skilld collection add` puts one Skill in one of your collections and installs nothing.
 
 The weekly and the digest are two emails.
