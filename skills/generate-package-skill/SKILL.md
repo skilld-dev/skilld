@@ -27,7 +27,7 @@ Skip an internal package, whose users are the repository's own packages, such as
 5. Read the current official docs and examples, and release notes only for breaking changes and removed APIs.
    When docs cover several frameworks, read the consumer's framework pages first, then the core pages they link.
 
-Test an existing Skill's claims; do not copy its layout.
+To update an existing Skill after a release, use `update-package-skill`. It tests only what the release changed.
 
 ## 2. Test the examples
 
@@ -57,7 +57,7 @@ Observed behaviour beats documentation.
    For a binary, use `--fetch-raw PATH --out DIR`. `DIR/responses.json` lists each status, content type, and response headers.
    For an HTTP client package, start a fake target on port 0 inside the test, and assert on the requests it receives.
    Without `--fetch`, it holds the server until SIGTERM. Background it with your tool's option; `&` and `nohup` die with the shell call.
-   Never kill by port or with `pkill -f`: another Agent can own that process.
+   Start servers from your own test script and record each process ID you start; stop only those. Never kill by port or with `pkill -f`: another Agent can own that process.
    In a browser, set a desktop user agent; a package can treat `HeadlessChrome` as a bot.
 4. If documentation and behaviour disagree, write the behaviour and report the mismatch.
 5. Keep an unrunnable example only when the types prove it; report it untested.

@@ -7,6 +7,7 @@ describe('skilld-maintained Skills', () => {
   it('loads the runnable Harness Skills', async () => {
     await expect(harnessSkillNames()).resolves.toEqual([
       'generate-package-skill',
+      'update-package-skill',
       'generate-project-skill',
       'review-skill',
     ])
@@ -65,6 +66,7 @@ describe('skilld-maintained Skills', () => {
   it('lists every published skilld-maintained Skill', async () => {
     await expect(skilldMaintainedSkillNames()).resolves.toEqual([
       'generate-package-skill',
+      'update-package-skill',
       'generate-project-skill',
       'review-skill',
       'skilld',

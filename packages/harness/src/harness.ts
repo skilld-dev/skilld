@@ -32,7 +32,7 @@ import { prepareNpmPackage } from './internal/source/npm.ts'
 import { DEFAULT_OUTPUT_POLICY, loadSkilldMaintainedSkill } from './skills.ts'
 
 interface PreparedRun {
-  readonly skillName: 'generate-package-skill' | 'generate-project-skill' | 'review-skill'
+  readonly skillName: 'generate-package-skill' | 'update-package-skill' | 'generate-project-skill' | 'review-skill'
   readonly outputName: string
   readonly source: PreparedSource
   // Path under `input/source`. A reviewed Skill keeps its directory name, so
@@ -200,7 +200,7 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
       return err({ _tag: 'Cancelled', message: 'Skill run was cancelled.' })
     return source._tag === 'Err'
       ? source
-      : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
+      : ok({ skillName: packageSkillName(current.value), outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
   }
 
   const packageDir = resolveWithin(input.source.rootDir, input.source.packageDir)
@@ -218,7 +218,12 @@ async function prepareRun(input: SkillRun, policy: SkillOutputPolicy, fetchClien
   const source = await collectHostDirectory(packageDir, policy, packageDir, signal)
   return source._tag === 'Err'
     ? source
-    : ok({ skillName: 'generate-package-skill', outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
+    : ok({ skillName: packageSkillName(current.value), outputName: input.destination.name, source: source.value, sourceDir: '', current: current.value, destination: input.destination })
+}
+
+/** A destination that already holds the Skill gets an update run, which tests only what the release changed. */
+function packageSkillName(current: PreparedSource | undefined): 'generate-package-skill' | 'update-package-skill' {
+  return current === undefined ? 'generate-package-skill' : 'update-package-skill'
 }
 
 function requestContent(skill: HarnessV1Skill): string {

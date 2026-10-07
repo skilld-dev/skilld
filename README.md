@@ -462,6 +462,7 @@ The skilld-maintained Skills:
 
 - [`skilld`](./skills/skilld): search, run, and install Skills with the CLI
 - [`generate-package-skill`](./skills/generate-package-skill): draft a Skill for a package you maintain
+- [`update-package-skill`](./skills/update-package-skill): update that Skill after a release, testing only what changed
 - [`generate-project-skill`](./skills/generate-project-skill): draft a Skill from a project you maintain
 - [`review-skill`](./skills/review-skill): review a Skill before you publish it
 

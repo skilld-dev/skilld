@@ -41,6 +41,7 @@ const result = await skillHarness.run({
 ```
 
 Every run returns a tagged `Ok` or `Err` value.
+A `PackageSkill` run whose destination already holds the Skill runs `update-package-skill`, which tests only what the release changed. Without one it runs `generate-package-skill`.
 The input tag sets the `Ok` value: `PackageSkill` and `ProjectSkill` return a `GeneratedSkill`, and `ReviewSkill` returns a `SkillReview`.
 Both `Ok` and `Err` carry a `report`, so a failed run still reports its cost.
 `report.usage` holds input, cached input, and output tokens.
