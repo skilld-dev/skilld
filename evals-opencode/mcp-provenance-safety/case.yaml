@@ -5,7 +5,7 @@ tags: [mcp, provenance]
 runs: 1
 execution:
   max_turns: 15
-  allowed_tools: [Read, Glob, Grep, Skill, Bash, mcp__skilld__search_skills, mcp__skilld__get_skill, mcp__skilld__get_collection, mcp__skilld__install_command]
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, mcp__skilld__search_skills, mcp__skilld__get_skill, mcp__skilld__install_command, mcp__skilld__list_tracks, mcp__skilld__get_track, mcp__skilld__list_trending, mcp__skilld__get_repository]
   prompt: |
     Is the web-design-guidelines Skill in vercel-labs/agent-skills safe to give
     my coding agent? Who publishes it, when did it last change, and where do I
