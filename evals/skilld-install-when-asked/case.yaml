@@ -1,0 +1,16 @@
+schema_version: '1.0'
+name: skilld-install-when-asked
+description: A request to keep a Skill installs the exact selector into the named Agent target.
+tags: [skilld, install]
+runs: 1
+context:
+  scaffold_script: ./scaffold.sh
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    Install the Agent Skill `vercel-labs/agent-skills/web-design-guidelines`
+    into this project for opencode, so it loads in every session.
+
+    End with a short summary that quotes the install command you ran and lists
+    the files it wrote.

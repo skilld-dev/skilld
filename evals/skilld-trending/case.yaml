@@ -1,0 +1,11 @@
+schema_version: '1.0'
+name: skilld-trending
+description: A question about what is trending reads the registry's trending board and reports why each Skill trends.
+tags: [skilld, registry]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    What Agent Skills are trending on skilld.dev this week? List the top three.
+    For each one, say why it trends and give the command to try it once.
