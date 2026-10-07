@@ -1,19 +1,20 @@
 use skilld_core::{AGENT_TARGETS, AgentTargetId, DomainError, parse_agent_targets};
 
 #[test]
-fn every_new_agent_target_parses_by_name() {
-    let cases = [
-        ("openclaw", AgentTargetId::Openclaw),
-        ("hermes", AgentTargetId::Hermes),
-        ("kiro", AgentTargetId::Kiro),
-        ("kilo", AgentTargetId::Kilo),
-        ("droid", AgentTargetId::Droid),
-        ("trae", AgentTargetId::Trae),
-        ("zed", AgentTargetId::Zed),
-    ];
-    for (name, expected) in cases {
-        assert_eq!(AgentTargetId::parse(name), Ok(expected));
-        assert_eq!(expected.as_str(), name);
+fn every_agent_target_parses_and_serializes_by_its_id() {
+    for target in AGENT_TARGETS {
+        let id = target.id.as_str();
+        assert_eq!(AgentTargetId::parse(id), Ok(target.id), "{id}");
+        assert_eq!(
+            serde_json::to_string(&target.id).unwrap(),
+            format!("\"{id}\""),
+            "{id}"
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentTargetId>(&format!("\"{id}\"")).unwrap(),
+            target.id,
+            "{id}"
+        );
     }
 }
 

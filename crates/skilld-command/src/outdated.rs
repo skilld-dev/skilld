@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use skilld_core::{AgentTargetId, InstallScope, SkillName};
+use skilld_core::{AGENT_TARGETS, AgentTargetId, InstallScope, SkillName};
 use skilld_ui::text::{display_path, grouped_number};
 use skilld_ui::{Detail, Line, Marker};
 
@@ -71,6 +71,13 @@ pub(crate) fn scan_unmanaged(
             }
         }
     }
+    // A directory that a detected target owns names only detected targets,
+    // so its install hint matches the targets a plain install selects.
+    for (_, agents) in roots.values_mut() {
+        if agents.iter().any(|agent| is_detected(*agent)) {
+            agents.retain(|agent| is_detected(*agent));
+        }
+    }
     let mut by_path = BTreeMap::new();
     for (root, (scope, agents)) in roots {
         let Ok(entries) = fs::read_dir(&root) else {
@@ -119,6 +126,12 @@ pub(crate) fn scan_unmanaged(
     }
     skills.sort_by(|left, right| left.name.cmp(&right.name).then(left.path.cmp(&right.path)));
     skills
+}
+
+fn is_detected(agent: AgentTargetId) -> bool {
+    AGENT_TARGETS
+        .iter()
+        .any(|target| target.id == agent && target.is_detected())
 }
 
 pub(crate) fn found_line(skill: &UnmanagedSkill) -> String {

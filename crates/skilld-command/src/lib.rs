@@ -123,7 +123,7 @@ enum Command {
         #[arg(
             long = "agent",
             value_name = "AGENT",
-            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity, openclaw,\n        hermes, kiro, kilo, droid, trae, zed.\nUse --agent all to select every Agent target.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets."
+            long_help = "Select an Agent target. Repeat --agent to select several.\nValues: claude-code, cursor, windsurf, cline, codex, github-copilot,\n        gemini-cli, goose, amp, opencode, roo, antigravity, openclaw,\n        hermes, kiro, kilo, droid, trae, zed, aider-desk,\n        antigravity-cli, astrbot, augment, bob, codearts-agent,\n        codebuddy, codemaker, codestudio, command-code, continue,\n        cortex, crush, deepagents, devin, dexto, firebender, forgecode,\n        fx, inference-sh, jazz, junie, iflow-cli, kimchi, kimi-code-cli,\n        kode, lingma, loaf, mcpjam, minimax-code, moxby, mux, openhands,\n        ona, pi, posit-assistant, qoder, qoder-cn, qwen-code, replit,\n        reasonix, rovodev, sarvam-code, tabnine-cli, terramind,\n        tinycloud, trae-cn, warp, zcode, zencoder, zenflow, neovate,\n        pochi, adal.\nUse --agent all to select every Agent target.\nDefault: every Agent target skilld detects. If skilld detects none, it uses agent.targets.\nDetection skips targets that share a directory with an earlier target.\nSelect them with --agent: antigravity-cli, deepagents, dexto,\n        firebender, kimi-code-cli, loaf, pi, qoder-cn, replit,\n        sarvam-code, trae-cn, warp, zenflow."
         )]
         agents: Vec<String>,
         #[arg(
@@ -2607,6 +2607,7 @@ impl LocalHost {
     fn detected_targets(&self, scope: InstallScope) -> Vec<AgentTargetId> {
         AGENT_TARGETS
             .iter()
+            .filter(|target| target.is_detected())
             .filter(|target| match scope {
                 InstallScope::Project => {
                     (target.auto_detects_project_dir()
@@ -4532,6 +4533,60 @@ fn detects_environment(agent: AgentTargetId, environment: &DetectionEnvironment)
         AgentTargetId::Droid => false,
         AgentTargetId::Trae => false,
         AgentTargetId::Zed => environment.has("ZED_TERM"),
+        AgentTargetId::AiderDesk
+        | AgentTargetId::AntigravityCli
+        | AgentTargetId::Astrbot
+        | AgentTargetId::Augment
+        | AgentTargetId::Bob
+        | AgentTargetId::CodeartsAgent
+        | AgentTargetId::Codebuddy
+        | AgentTargetId::Codemaker
+        | AgentTargetId::Codestudio
+        | AgentTargetId::CommandCode
+        | AgentTargetId::Continue
+        | AgentTargetId::Cortex
+        | AgentTargetId::Crush
+        | AgentTargetId::Deepagents
+        | AgentTargetId::Devin
+        | AgentTargetId::Dexto
+        | AgentTargetId::Firebender
+        | AgentTargetId::Forgecode
+        | AgentTargetId::Fx
+        | AgentTargetId::InferenceSh
+        | AgentTargetId::Jazz
+        | AgentTargetId::Junie
+        | AgentTargetId::IflowCli
+        | AgentTargetId::Kimchi
+        | AgentTargetId::KimiCodeCli
+        | AgentTargetId::Kode
+        | AgentTargetId::Lingma
+        | AgentTargetId::Loaf
+        | AgentTargetId::Mcpjam
+        | AgentTargetId::MinimaxCode
+        | AgentTargetId::Moxby
+        | AgentTargetId::Mux
+        | AgentTargetId::Openhands
+        | AgentTargetId::Ona
+        | AgentTargetId::Pi
+        | AgentTargetId::PositAssistant
+        | AgentTargetId::Qoder
+        | AgentTargetId::QoderCn
+        | AgentTargetId::QwenCode
+        | AgentTargetId::Replit
+        | AgentTargetId::Reasonix
+        | AgentTargetId::Rovodev
+        | AgentTargetId::SarvamCode
+        | AgentTargetId::TabnineCli
+        | AgentTargetId::Terramind
+        | AgentTargetId::Tinycloud
+        | AgentTargetId::TraeCn
+        | AgentTargetId::Warp
+        | AgentTargetId::Zcode
+        | AgentTargetId::Zencoder
+        | AgentTargetId::Zenflow
+        | AgentTargetId::Neovate
+        | AgentTargetId::Pochi
+        | AgentTargetId::Adal => false,
     }
 }
 
@@ -4567,10 +4622,67 @@ fn detects_project(agent: AgentTargetId, root: &Path) -> bool {
         AgentTargetId::Droid => exists(".factory"),
         AgentTargetId::Trae => exists(".trae"),
         AgentTargetId::Zed => exists(".zed"),
+        // The skills CLI reads these markers from the working directory.
+        // Every other new target needs its own skills directory.
+        AgentTargetId::Codebuddy => exists(".codebuddy"),
+        AgentTargetId::Continue => exists(".continue"),
+        AgentTargetId::Jazz => exists(".jazz"),
+        AgentTargetId::AiderDesk
+        | AgentTargetId::AntigravityCli
+        | AgentTargetId::Astrbot
+        | AgentTargetId::Augment
+        | AgentTargetId::Bob
+        | AgentTargetId::CodeartsAgent
+        | AgentTargetId::Codemaker
+        | AgentTargetId::Codestudio
+        | AgentTargetId::CommandCode
+        | AgentTargetId::Cortex
+        | AgentTargetId::Crush
+        | AgentTargetId::Deepagents
+        | AgentTargetId::Devin
+        | AgentTargetId::Dexto
+        | AgentTargetId::Firebender
+        | AgentTargetId::Forgecode
+        | AgentTargetId::Fx
+        | AgentTargetId::InferenceSh
+        | AgentTargetId::Junie
+        | AgentTargetId::IflowCli
+        | AgentTargetId::Kimchi
+        | AgentTargetId::KimiCodeCli
+        | AgentTargetId::Kode
+        | AgentTargetId::Lingma
+        | AgentTargetId::Loaf
+        | AgentTargetId::Mcpjam
+        | AgentTargetId::MinimaxCode
+        | AgentTargetId::Moxby
+        | AgentTargetId::Mux
+        | AgentTargetId::Openhands
+        | AgentTargetId::Ona
+        | AgentTargetId::Pi
+        | AgentTargetId::PositAssistant
+        | AgentTargetId::Qoder
+        | AgentTargetId::QoderCn
+        | AgentTargetId::QwenCode
+        | AgentTargetId::Replit
+        | AgentTargetId::Reasonix
+        | AgentTargetId::Rovodev
+        | AgentTargetId::SarvamCode
+        | AgentTargetId::TabnineCli
+        | AgentTargetId::Terramind
+        | AgentTargetId::Tinycloud
+        | AgentTargetId::TraeCn
+        | AgentTargetId::Warp
+        | AgentTargetId::Zcode
+        | AgentTargetId::Zencoder
+        | AgentTargetId::Zenflow
+        | AgentTargetId::Neovate
+        | AgentTargetId::Pochi
+        | AgentTargetId::Adal => false,
     }
 }
 
 fn detects_installed(agent: AgentTargetId, roots: &TargetRoots) -> bool {
+    let home = |path: &str| roots.home.join(path).exists();
     match agent {
         AgentTargetId::ClaudeCode => roots.claude_home.exists(),
         AgentTargetId::Cursor => roots.home.join(".cursor").exists(),
@@ -4593,6 +4705,62 @@ fn detects_installed(agent: AgentTargetId, roots: &TargetRoots) -> bool {
         AgentTargetId::Droid => roots.home.join(".factory").exists(),
         AgentTargetId::Trae => roots.home.join(".trae").exists(),
         AgentTargetId::Zed => roots.config_home.join("zed").exists(),
+        // These markers match detectInstalled in vercel-labs/skills src/agents.ts.
+        // Explicit-only targets return false, and detection skips them anyway.
+        AgentTargetId::AiderDesk => home(".aider-desk"),
+        AgentTargetId::Astrbot => home(".astrbot"),
+        AgentTargetId::Augment => home(".augment"),
+        AgentTargetId::Bob => home(".bob"),
+        AgentTargetId::CodeartsAgent => home(".codeartsdoer"),
+        AgentTargetId::Codebuddy => home(".codebuddy"),
+        AgentTargetId::Codemaker => home(".codemaker"),
+        AgentTargetId::Codestudio => home(".codestudio"),
+        AgentTargetId::CommandCode => home(".commandcode"),
+        AgentTargetId::Continue => home(".continue"),
+        AgentTargetId::Cortex => home(".snowflake/cortex"),
+        AgentTargetId::Crush => home(".config/crush"),
+        AgentTargetId::Devin => roots.config_home.join("devin").exists(),
+        AgentTargetId::Forgecode => home(".forge"),
+        AgentTargetId::Fx => home(".fx"),
+        AgentTargetId::InferenceSh => home(".inferencesh"),
+        AgentTargetId::Jazz => home(".jazz"),
+        AgentTargetId::Junie => home(".junie"),
+        AgentTargetId::IflowCli => home(".iflow"),
+        AgentTargetId::Kimchi => home(".config/kimchi"),
+        AgentTargetId::Kode => home(".kode"),
+        AgentTargetId::Lingma => home(".lingma"),
+        AgentTargetId::Mcpjam => home(".mcpjam"),
+        AgentTargetId::MinimaxCode => home(".minimax"),
+        AgentTargetId::Moxby => home(".moxby"),
+        AgentTargetId::Mux => home(".mux"),
+        AgentTargetId::Openhands => home(".openhands"),
+        AgentTargetId::Ona => home(".ona"),
+        AgentTargetId::PositAssistant => home(".posit/assistant") || home(".positai"),
+        AgentTargetId::Qoder => home(".qoder"),
+        AgentTargetId::QwenCode => home(".qwen"),
+        AgentTargetId::Reasonix => home(".reasonix"),
+        AgentTargetId::Rovodev => home(".rovodev"),
+        AgentTargetId::TabnineCli => home(".tabnine"),
+        AgentTargetId::Terramind => home(".terramind"),
+        AgentTargetId::Tinycloud => home(".tinycloud"),
+        AgentTargetId::Zcode => home(".zcode"),
+        AgentTargetId::Zencoder => home(".zencoder"),
+        AgentTargetId::Neovate => home(".neovate"),
+        AgentTargetId::Pochi => home(".pochi"),
+        AgentTargetId::Adal => home(".adal"),
+        AgentTargetId::AntigravityCli
+        | AgentTargetId::Deepagents
+        | AgentTargetId::Dexto
+        | AgentTargetId::Firebender
+        | AgentTargetId::KimiCodeCli
+        | AgentTargetId::Loaf
+        | AgentTargetId::Pi
+        | AgentTargetId::QoderCn
+        | AgentTargetId::Replit
+        | AgentTargetId::SarvamCode
+        | AgentTargetId::TraeCn
+        | AgentTargetId::Warp
+        | AgentTargetId::Zenflow => false,
     }
 }
 

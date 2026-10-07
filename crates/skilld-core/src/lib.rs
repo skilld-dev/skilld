@@ -35,7 +35,7 @@ pub use remote::{
 use serde::{Deserialize, Serialize};
 pub use target::{
     AGENT_TARGETS, ALL_AGENT_TARGETS, AgentTarget, AgentTargetId, GlobalTargetPath,
-    TargetSelection, parse_agent_targets, select_target_ids,
+    TargetDetection, TargetSelection, parse_agent_targets, select_target_ids,
 };
 pub use update::{
     CommitAuthor, CommitHistory, CommitSha, CommitSummary, NotTrackedReason, UpdateFailure,
