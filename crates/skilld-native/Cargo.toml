@@ -48,6 +48,9 @@ ratatui = { version = "=0.30.2", default-features = false, features = [
 
 unicode-width.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+opener = "=0.9.0"
+
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31.3", features = [ "term" ] }
 
