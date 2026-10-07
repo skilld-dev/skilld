@@ -24,12 +24,13 @@ pub use release::{
     ReleasePin, VerifiedRelease, is_release_version, verify_release_asset, verify_release_manifest,
 };
 pub use remote::{
-    ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult,
-    PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility, ResolvedSource,
-    SearchResponse, SearchResult, SignatureAlgorithm, SourceProvider, SourceRef, SourceRequest,
-    SourceSelector, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin, VerifiedArtifact,
-    VerifiedTrustedRoot, declared_skill_name, parse_search_response, prepare_unverified_files,
-    skill_identity, verify_artifact, verify_attestation, verify_trusted_root,
+    ArtifactAttestation, ArtifactFile, AttestationSignature, CheckOutcome, CheckResult, LinkedFile,
+    MAX_LINKED_BYTES, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
+    ResolvedSource, SearchResponse, SearchResult, SignatureAlgorithm, SourceProvider, SourceRef,
+    SourceRequest, SourceSelector, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin,
+    VerifiedArtifact, VerifiedTrustedRoot, declared_skill_name, parse_search_response,
+    prepare_unverified_files, skill_identity, verify_artifact, verify_attestation,
+    verify_linked_file, verify_trusted_root, with_linked_files,
 };
 use serde::{Deserialize, Serialize};
 pub use target::{

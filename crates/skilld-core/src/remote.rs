@@ -15,6 +15,10 @@ const TRUSTED_KEY_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
 const MAX_STATEMENT_BYTES: usize = 6 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FILES: usize = 2_000;
+/// The bytes all linked files of one Skill may hold. skilld holds every Skill
+/// file in memory before it writes one, and GitHub refuses a file over 100 MiB
+/// in a Repository. skilld.dev applies the same limit (its ADR-0013).
+pub const MAX_LINKED_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -463,6 +467,21 @@ pub struct ArtifactFile {
     pub sha256: String,
 }
 
+/// A Skill file the attestation lists without packing it in the Artifact.
+///
+/// skilld reads it from GitHub at the attested commit and installs it only
+/// when its size and Git blob SHA match. skilld.dev lists linked files only
+/// for a client that sends `skilld-capabilities: linked-files`.
+// Strict on purpose: skilld must understand every signed claim it verifies.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LinkedFile {
+    pub path: String,
+    pub mode: u32,
+    pub size: u64,
+    pub git_blob_sha: String,
+}
+
 // Strict on purpose: skilld must understand every signed claim it verifies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -492,6 +511,9 @@ pub struct ArtifactAttestation {
     pub policy_version: String,
     pub files: Vec<ArtifactFile>,
     pub check_results: Vec<CheckResult>,
+    /// Absent from every statement that links no file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_files: Vec<LinkedFile>,
     pub statement: String,
     pub signature: AttestationSignature,
 }
@@ -511,6 +533,8 @@ struct SignedStatement {
     policy_version: String,
     files: Vec<ArtifactFile>,
     check_results: Vec<CheckResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    linked_files: Vec<LinkedFile>,
 }
 
 impl ArtifactAttestation {
@@ -527,6 +551,7 @@ impl ArtifactAttestation {
             policy_version: self.policy_version.clone(),
             files: self.files.clone(),
             check_results: self.check_results.clone(),
+            linked_files: self.linked_files.clone(),
         }
     }
 }
@@ -676,6 +701,71 @@ pub fn verify_artifact(
     })
 }
 
+/// Check one linked file against its declaration: the exact size and the Git
+/// blob SHA the attestation signs. Only the attestation is trusted, never the
+/// host that served the bytes.
+pub fn verify_linked_file(
+    declaration: &LinkedFile,
+    bytes: Vec<u8>,
+) -> Result<PreparedFile, RemoteError> {
+    if bytes.len() as u64 != declaration.size {
+        return Err(RemoteError::new(
+            "LINKED_FILE_SIZE_MISMATCH",
+            "a linked file does not have its attested size",
+        ));
+    }
+    if git_blob_sha1(&bytes) != declaration.git_blob_sha {
+        return Err(RemoteError::new(
+            "LINKED_FILE_DIGEST_MISMATCH",
+            "a linked file does not match its attested Git blob",
+        ));
+    }
+    Ok(PreparedFile {
+        path: declaration.path.clone(),
+        mode: declaration.mode,
+        bytes,
+    })
+}
+
+/// The verified Artifact with its linked files added, once every one is read.
+///
+/// The installed digest then covers the linked files too, so the lockfile
+/// names every byte skilld wrote.
+pub fn with_linked_files(
+    mut artifact: VerifiedArtifact,
+    linked: Vec<PreparedFile>,
+) -> Result<VerifiedArtifact, RemoteError> {
+    let declared = artifact
+        .attestation
+        .linked_files
+        .iter()
+        .map(|file| (file.path.as_str(), file.mode))
+        .collect::<BTreeSet<_>>();
+    let read = linked
+        .iter()
+        .map(|file| (file.path.as_str(), file.mode))
+        .collect::<BTreeSet<_>>();
+    if linked.len() != declared.len() || declared != read {
+        return Err(RemoteError::new(
+            "LINKED_FILES_MISMATCH",
+            "the linked files do not match the attestation",
+        ));
+    }
+    artifact.files.extend(linked);
+    artifact
+        .files
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    artifact.installed_sha256 = installed_digest(&artifact.files);
+    Ok(artifact)
+}
+
+fn git_blob_sha1(bytes: &[u8]) -> String {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hex(&hasher.finalize())
+}
+
 pub fn verify_attestation(
     attestation: &ArtifactAttestation,
     root: &VerifiedTrustedRoot,
@@ -784,7 +874,7 @@ fn validate_attestation_shape(attestation: &ArtifactAttestation) -> Result<(), R
         || !is_sha256(&attestation.content_sha256)
         || attestation.artifact_id != format!("sha256:{}", attestation.content_sha256)
         || attestation.files.is_empty()
-        || attestation.files.len() > MAX_FILES
+        || attestation.files.len() + attestation.linked_files.len() > MAX_FILES
         || attestation.check_results.is_empty()
         || attestation.check_results.len() > 100
         || attestation.content_bytes == 0
@@ -831,6 +921,29 @@ fn validate_attestation_shape(attestation: &ArtifactAttestation) -> Result<(), R
         content_size = content_size.checked_add(file.size).ok_or_else(|| {
             RemoteError::new("ATTESTATION_INVALID", "the Artifact file sizes overflowed")
         })?;
+    }
+    let mut linked_size = 0_u64;
+    for file in &attestation.linked_files {
+        validate_relative_path(&file.path, 1024)?;
+        if !paths.insert(file.path.clone())
+            || !folded_paths.insert(file.path.to_ascii_lowercase())
+            || !matches!(file.mode, 0o644 | 0o755)
+            || !is_commit_sha(&file.git_blob_sha)
+        {
+            return Err(RemoteError::new(
+                "ATTESTATION_INVALID",
+                "a linked file declaration is invalid",
+            ));
+        }
+        linked_size = linked_size
+            .checked_add(file.size)
+            .filter(|size| *size <= MAX_LINKED_BYTES)
+            .ok_or_else(|| {
+                RemoteError::new(
+                    "ATTESTATION_INVALID",
+                    "the linked files exceed the size limit",
+                )
+            })?;
     }
     if content_size > attestation.content_bytes
         || paths.iter().any(|path| {
