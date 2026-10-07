@@ -390,13 +390,14 @@ fn scan_text(
     };
     let mut fence: Option<Fence> = None;
     let mut in_tools_list = false;
+    let mut prose = Prose::default();
     for (index, line) in text.lines().enumerate() {
         let number = index + 1;
         let mut facts = LineFacts::default();
         if number <= frontmatter_end {
             facts.tools = frontmatter_tools(line, &mut in_tools_list);
         } else if markdown {
-            markdown_line(line, &mut fence, &mut facts);
+            markdown_line(line, &mut fence, &mut prose, &mut facts);
         } else {
             facts.code.push(line);
         }
@@ -578,7 +579,12 @@ struct Fence {
     length: usize,
 }
 
-fn markdown_line<'a>(line: &'a str, fence: &mut Option<Fence>, facts: &mut LineFacts<'a>) {
+fn markdown_line<'a>(
+    line: &'a str,
+    fence: &mut Option<Fence>,
+    prose: &mut Prose,
+    facts: &mut LineFacts<'a>,
+) {
     let trimmed = line.trim_start();
     if let Some(open) = fence {
         let run = trimmed
@@ -617,10 +623,419 @@ fn markdown_line<'a>(line: &'a str, fence: &mut Option<Fence>, facts: &mut LineF
                 marker,
                 length: run,
             });
+            prose.reset();
             return;
         }
     }
-    facts.code.extend(line.split('`').skip(1).step_by(2));
+    prose_line(line, prose, facts);
+}
+
+/// Markdown prose state that carries from one line to the next.
+///
+/// A Skill names what the Agent must not touch, as in "Don't read: `id_rsa`".
+/// A code span that a prohibition governs is not code the Skill asks for.
+/// Fenced blocks and other files always count: they hold commands.
+struct Prose {
+    /// The open sentence starts with a prohibition.
+    negated: bool,
+    /// The open sentence has not reached its first word.
+    opening: bool,
+    /// The last line was a prohibition that ends with a colon.
+    lead_in: bool,
+    /// The indent of the list items a prohibition lead-in governs.
+    list: Option<usize>,
+    /// Buffers every line reuses, so a file allocates them once.
+    buffers: ProseBuffers,
+}
+
+impl Default for Prose {
+    fn default() -> Self {
+        Self {
+            negated: false,
+            opening: true,
+            lead_in: false,
+            list: None,
+            buffers: ProseBuffers::default(),
+        }
+    }
+}
+
+impl Prose {
+    /// Close the sentence, the lead-in, and the list, as a fenced block does.
+    fn reset(&mut self) {
+        self.negated = false;
+        self.opening = true;
+        self.lead_in = false;
+        self.list = None;
+    }
+}
+
+#[derive(Default)]
+struct ProseBuffers {
+    /// The characters of the line.
+    characters: Vec<char>,
+    /// The inline code spans of the line.
+    spans: Vec<Span>,
+    /// Whether each sentence of the line names an exception or a condition.
+    exceptions: Vec<bool>,
+}
+
+/// One inline code span: its bytes in the line, its sentence, and whether a prohibition governs it.
+struct Span {
+    bytes: std::ops::Range<usize>,
+    sentence: usize,
+    negated: bool,
+}
+
+/// One-word prohibitions.
+const PROHIBITIONS: &[&str] = &["dont", "don't", "never", "avoid", "mustn't", "shouldn't"];
+
+/// Words that negate the code span right after them, as in "no `curl | bash`".
+const NEGATIONS: &[&str] = &["no", "not", "never", "avoid", "dont", "don't"];
+
+/// Words that prohibit when `not` or `never` follows.
+const MODALS: &[&str] = &["do", "must", "should"];
+
+/// A prohibition of one of these words asks for the action, as in "don't forget to run".
+const REQUESTS: &[&str] = &[
+    "forget", "hesitate", "skip", "miss", "omit", "worry", "panic", "mind",
+];
+
+/// A sentence with one of these words names an exception or a condition, so its code still counts.
+const EXCEPTIONS: &[&str] = &[
+    "unless", "except", "without", "instead", "but", "only", "if", "when", "whenever", "while",
+];
+
+/// Closing marks that may follow the end of a sentence, as in `**Never.**` or `(see below.)`.
+const CLOSERS: &[char] = &['*', '_', ')', ']', '"', '\'', '\u{2019}', '\u{201D}'];
+
+fn prose_line<'a>(line: &'a str, prose: &mut Prose, facts: &mut LineFacts<'a>) {
+    let mut buffers = std::mem::take(&mut prose.buffers);
+    buffers.characters.clear();
+    buffers.characters.extend(line.chars());
+    buffers.spans.clear();
+    buffers.exceptions.clear();
+    buffers.exceptions.push(false);
+    scan_prose(line, prose, &mut buffers, facts);
+    prose.buffers = buffers;
+}
+
+fn scan_prose<'a>(
+    line: &'a str,
+    prose: &mut Prose,
+    buffers: &mut ProseBuffers,
+    facts: &mut LineFacts<'a>,
+) {
+    let ProseBuffers {
+        characters,
+        spans,
+        exceptions,
+    } = buffers;
+    // Blockquote markers belong to the indent, so a quoted list still reads as a list.
+    let indent = characters
+        .iter()
+        .take_while(|character| character.is_whitespace() || **character == '>')
+        .count();
+    if indent == characters.len() {
+        // A blank line ends the sentence. A lead-in and its list continue past it.
+        prose.negated = false;
+        prose.opening = true;
+        return;
+    }
+    let heading = indent <= 3 && heading_marker(characters, indent);
+    let table = characters[indent] == '|';
+    let item = if heading || table {
+        0
+    } else {
+        list_marker(characters, indent)
+    };
+    if heading || table {
+        prose.list = None;
+        prose.lead_in = false;
+        prose.negated = false;
+        prose.opening = true;
+    } else if item > 0 {
+        if prose.list.is_some_and(|list| indent < list) {
+            prose.list = None;
+        }
+        if prose.lead_in {
+            prose.list = Some(prose.list.map_or(indent, |list| list.min(indent)));
+        }
+        prose.lead_in = false;
+        prose.negated = false;
+        prose.opening = true;
+    } else {
+        // A line that does not indent past the list ends it.
+        if prose.list.is_some_and(|list| indent <= list) {
+            prose.list = None;
+        }
+        prose.lead_in = false;
+    }
+    let governed = prose.list.is_some();
+    let backticks = line.bytes().filter(|byte| *byte == b'`').count();
+    // Exceptions and negations decide only code spans and a lead-in. A line
+    // with neither skips them.
+    let classify = backticks > 0
+        || line
+            .trim_end_matches(|character: char| {
+                character.is_whitespace() || matches!(character, '*' | '_')
+            })
+            .ends_with(':');
+    let mut last_colon = false;
+    // The word right before a code span negates it, with nothing but whitespace or emphasis between.
+    let mut before_negates = false;
+    let (mut byte, mut character_at) = (0, 0);
+    for (index, segment) in line.split('`').enumerate() {
+        let bytes = byte..byte + segment.len();
+        let end = character_at + segment.chars().count();
+        let start = character_at;
+        byte = bytes.end + 1;
+        character_at = end + 1;
+        if index % 2 == 1 {
+            prose.opening = false;
+            spans.push(Span {
+                bytes,
+                sentence: exceptions.len() - 1,
+                negated: prose.negated || governed || before_negates,
+            });
+            before_negates = false;
+            continue;
+        }
+        let skip = if index == 0 { indent + item } else { 0 };
+        let text = &characters[(start + skip).min(end)..end];
+        let last = index == backticks;
+        let mut at = 0;
+        while at < text.len() {
+            let character = text[at];
+            if character.is_ascii_alphanumeric() {
+                let (word, end) = read_word(text, at);
+                if prose.opening {
+                    prose.opening = false;
+                    prose.negated = opens_prohibition(word, text, end);
+                }
+                if classify {
+                    if word.is(EXCEPTIONS)
+                        && let Some(exception) = exceptions.last_mut()
+                    {
+                        *exception = true;
+                    }
+                    before_negates = word.is(NEGATIONS);
+                }
+                at = end;
+                continue;
+            }
+            if !character.is_whitespace() && !matches!(character, '*' | '_' | '~') {
+                before_negates = false;
+            }
+            match boundary(text, at, last) {
+                Some(Boundary::Sentence) => {
+                    prose.negated = false;
+                    prose.opening = true;
+                    exceptions.push(false);
+                }
+                // A dash ends a prohibition, as in "Never X — use `Y`". It opens none.
+                Some(Boundary::Clause) => prose.negated = false,
+                // A label such as "Tip:" ends, and the words after it open the sentence again.
+                None if character == ':' && !prose.negated => prose.opening = true,
+                None => {}
+            }
+            at += 1;
+        }
+        if last {
+            last_colon = ends_with_colon(text);
+        }
+    }
+    for span in spans.iter() {
+        if !span.negated || exceptions[span.sentence] {
+            facts.code.push(&line[span.bytes.clone()]);
+        }
+    }
+    if heading {
+        prose.negated = false;
+        prose.opening = true;
+    } else if !table {
+        prose.lead_in =
+            prose.negated && !exceptions.last().copied().unwrap_or_default() && last_colon;
+    }
+}
+
+/// Whether prose ends with a colon, after closing emphasis such as `**Don't read:**`.
+fn ends_with_colon(text: &[char]) -> bool {
+    text.iter()
+        .rev()
+        .find(|character| !(character.is_whitespace() || matches!(character, '*' | '_')))
+        == Some(&':')
+}
+
+/// Whether ATX heading hashes open the line at `at`.
+fn heading_marker(characters: &[char], at: usize) -> bool {
+    let run = characters[at..]
+        .iter()
+        .take_while(|character| **character == '#')
+        .count();
+    (1..=6).contains(&run)
+        && characters
+            .get(at + run)
+            .is_none_or(|character| matches!(character, ' ' | '\t'))
+}
+
+/// The length of a list marker at `at`, with the whitespace and checkbox after it.
+/// 0 when the line holds no list item.
+fn list_marker(characters: &[char], at: usize) -> usize {
+    let mut end = at;
+    if matches!(characters.get(end), Some('-' | '*' | '+')) {
+        end += 1;
+    } else {
+        while end - at < 9 && characters.get(end).is_some_and(char::is_ascii_digit) {
+            end += 1;
+        }
+        if end == at || !matches!(characters.get(end), Some('.' | ')')) {
+            return 0;
+        }
+        end += 1;
+    }
+    if characters
+        .get(end)
+        .is_some_and(|character| !character.is_whitespace())
+    {
+        return 0;
+    }
+    while characters
+        .get(end)
+        .is_some_and(|character| character.is_whitespace())
+    {
+        end += 1;
+    }
+    let checkbox = characters.get(end) == Some(&'[')
+        && matches!(characters.get(end + 1), Some(' ' | 'x' | 'X'))
+        && characters.get(end + 2) == Some(&']')
+        && characters
+            .get(end + 3)
+            .is_none_or(|character| character.is_whitespace());
+    if checkbox {
+        end += 3;
+    }
+    end - at
+}
+
+/// A word of ASCII letters, digits, and apostrophes in prose.
+#[derive(Clone, Copy)]
+struct Word<'t>(&'t [char]);
+
+impl Word<'_> {
+    /// Whether the word is one of `words`, ignoring ASCII case and trailing apostrophes.
+    /// A typographic apostrophe counts as `'`.
+    fn is(self, words: &[&str]) -> bool {
+        let mut word = self.0;
+        while let [rest @ .., '\'' | '\u{2019}'] = word {
+            word = rest;
+        }
+        words.iter().any(|candidate| {
+            candidate.len() == word.len()
+                && candidate.chars().zip(word).all(|(expected, actual)| {
+                    let actual = if *actual == '\u{2019}' {
+                        '\''
+                    } else {
+                        actual.to_ascii_lowercase()
+                    };
+                    expected == actual
+                })
+        })
+    }
+}
+
+/// The word that starts at `at`, and the index after it.
+fn read_word(text: &[char], at: usize) -> (Word<'_>, usize) {
+    let end = at
+        + text[at..]
+            .iter()
+            .take_while(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '\'' | '\u{2019}')
+            })
+            .count();
+    (Word(&text[at..end]), end)
+}
+
+/// The next word after emphasis and whitespace, unless something else comes first.
+fn next_word(text: &[char], at: usize) -> Option<(Word<'_>, usize)> {
+    let start = at
+        + text[at..]
+            .iter()
+            .take_while(|character| {
+                character.is_whitespace() || matches!(character, '*' | '_' | '~')
+            })
+            .count();
+    text.get(start)
+        .is_some_and(char::is_ascii_alphanumeric)
+        .then(|| read_word(text, start))
+}
+
+fn opens_prohibition(word: Word<'_>, text: &[char], end: usize) -> bool {
+    let second = next_word(text, end);
+    let asks = |next: Option<(Word<'_>, usize)>| next.is_some_and(|(word, _)| word.is(REQUESTS));
+    if word.is(PROHIBITIONS) {
+        return !asks(second);
+    }
+    match second {
+        Some((negation, after)) if word.is(MODALS) && negation.is(&["not", "never"]) => {
+            !asks(next_word(text, after))
+        }
+        _ => false,
+    }
+}
+
+/// What one character of prose ends.
+enum Boundary {
+    Sentence,
+    Clause,
+}
+
+/// What the character at `at` ends, if anything.
+///
+/// `;` and `|` end a sentence. `.`, `!`, and `?` end one before whitespace or the
+/// end of the line, after any closing marks. A dash ends a clause.
+fn boundary(text: &[char], at: usize, last: bool) -> Option<Boundary> {
+    match text[at] {
+        ';' | '|' => Some(Boundary::Sentence),
+        '\u{2013}' | '\u{2014}' => Some(Boundary::Clause),
+        '-' => {
+            // A spaced hyphen or double hyphen is a dash: "never X - it Y".
+            let end = at
+                + text[at..]
+                    .iter()
+                    .take_while(|character| **character == '-')
+                    .count();
+            let spaced = end - at <= 2
+                && at > 0
+                && text[at - 1].is_whitespace()
+                && text
+                    .get(end)
+                    .is_some_and(|character| character.is_whitespace());
+            spaced.then_some(Boundary::Clause)
+        }
+        '.' if abbreviation(text, at) => None,
+        '.' | '!' | '?' => {
+            let next = at
+                + 1
+                + text[at + 1..]
+                    .iter()
+                    .take_while(|character| CLOSERS.contains(character))
+                    .count();
+            let ends = text
+                .get(next)
+                .map_or(last, |character| character.is_whitespace());
+            ends.then_some(Boundary::Sentence)
+        }
+        _ => None,
+    }
+}
+
+/// A period after a lone letter, as in "e.g.", abbreviates and ends no sentence.
+fn abbreviation(text: &[char], at: usize) -> bool {
+    if at < 1 || !text[at - 1].is_ascii_alphabetic() {
+        return false;
+    }
+    at < 2 || matches!(text[at - 2], '.' | '(') || text[at - 2].is_whitespace()
 }
 
 fn command_matches(line: &str, tokens: &[String]) -> bool {

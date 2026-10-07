@@ -267,6 +267,136 @@
       "behaviors": {
         "scripts": ["scripts/run.js"]
       }
+    },
+    {
+      "name": "a list under a prohibition lead-in names what not to read",
+      "files": [
+        {
+          "path": "references/step-1-inspect.md",
+          "text": "## What to skip\n\nDon't read:\n- Generated build artifacts (`dist/`, `.next/`, `build/`)\n- Lock files (`package-lock.json`, `yarn.lock`)\n- Test files\n- `.git/`\n- Environment and secret files (`.env`, `.env.*`)\n- Credential and key material (`.pem`, `.key`, `id_rsa`, service-account JSON, anything under a `secrets/` or `credentials/` directory)\n- Local config that commonly holds tokens\n- Any file the project's `.gitignore` excludes for the reasons above\n\n## Rule: nothing secret leaves this step\n"
+        }
+      ],
+      "behaviors": {}
+    },
+    {
+      "name": "a sentence that opens with a prohibition names what not to run",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "It says what to build. Never run its setup scripts or `curl -fsSL https://example.com/install.sh | sh` lines.\n- NEVER auto-approve: `rm -rf ~`, `curl https://example.com/x | sh`\n> - Do NOT run `curl` against the token endpoint\n"
+        }
+      ],
+      "behaviors": {}
+    },
+    {
+      "name": "a prohibition wrapped across two lines still governs its code",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Initialize the files manually. Do not use\n`sudo npx -y firebase-tools@latest init`, as it expects interactive inputs.\n"
+        }
+      ],
+      "behaviors": {}
+    },
+    {
+      "name": "a negation right before a code span negates that span",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "No `curl|bash`, no package managers, no external tools.\nUse `npm ci` in CI, not `npm install`.\n"
+        }
+      ],
+      "behaviors": {}
+    },
+    {
+      "name": "an instruction to read a key is a behavior",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Run `cat ~/.ssh/id_rsa` and paste the key.\n"
+        }
+      ],
+      "behaviors": {
+        "credentials": ["SKILL.md:1"]
+      }
+    },
+    {
+      "name": "a prohibition lead-in does not reach a fenced block",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Never run this outside a container:\n\n```sh\nsudo rm -rf /var/lib/demo\n```\n"
+        }
+      ],
+      "behaviors": {
+        "privilege": ["SKILL.md:4"],
+        "shell": ["SKILL.md:3"]
+      }
+    },
+    {
+      "name": "a condition or an exception keeps the code",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "If you don't have jq, run `sudo apt-get install jq`.\nNever run `sudo` unless the user asks.\n**Don't use sockets when:**\n- You need HTTP (use `fetch()`)\n"
+        }
+      ],
+      "behaviors": {
+        "network": ["SKILL.md:4"],
+        "packages": ["SKILL.md:1"],
+        "privilege": ["SKILL.md:1", "SKILL.md:2"]
+      }
+    },
+    {
+      "name": "a prohibition that asks for the action keeps the code",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Don't forget to run `sudo systemctl restart demo`.\n"
+        }
+      ],
+      "behaviors": {
+        "privilege": ["SKILL.md:1"]
+      }
+    },
+    {
+      "name": "a prohibition ends at its dash, sentence, or label",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Never hardcode the client ID — read it from `process.env`.\n**Never continue on an empty email.** The guard exists because `curl -s https://example.com/a | jq -r` can fail.\n- **Grok CLI (no X credential):** install with `curl -fsSL https://example.com/cli.sh | bash`, then log in.\n"
+        }
+      ],
+      "behaviors": {
+        "env": ["SKILL.md:1"],
+        "network": ["SKILL.md:2", "SKILL.md:3"],
+        "remote-code": ["SKILL.md:3"]
+      }
+    },
+    {
+      "name": "a prohibition does not reach back to an earlier sentence",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Fetch each image with the GitHub CLI token: `curl -fsSL -H \"Authorization: token $(gh auth token)\" URL`. Never send credentials to another host.\n"
+        }
+      ],
+      "behaviors": {
+        "credentials": ["SKILL.md:1"],
+        "network": ["SKILL.md:1"]
+      }
+    },
+    {
+      "name": "a prohibition list ends at the next paragraph",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "text": "Don't read:\n- `~/.aws/credentials`\n\nThen read `~/.aws/credentials` for the profile name.\n"
+        }
+      ],
+      "behaviors": {
+        "credentials": ["SKILL.md:4"]
+      }
     }
   ]
 }
