@@ -1199,12 +1199,15 @@ impl SkilldRemote {
             .map(|row| format!("{}/{}/{}", row.owner, row.repo, row.name))
             .collect::<Vec<_>>();
         if candidates.is_empty() {
+            // A search ranks by topic, so its top results can share no part
+            // of the ref. Only a near name is worth suggesting.
             candidates = self
                 .search(&terms, 5)
                 .map(|found| {
                     found
                         .items
                         .iter()
+                        .filter(|item| is_near_name(name, &item.name))
                         .map(|item| {
                             format!(
                                 "{}/{}/{}",
@@ -4093,6 +4096,19 @@ fn did_you_mean(name: &str, candidates: Vec<String>) -> Vec<String> {
         .take(5)
         .map(|(_, candidate)| candidate)
         .collect()
+}
+
+/// Whether a Skill found elsewhere in the registry is a fair guess for the
+/// requested name. It is when it contains the whole requested name, or when it
+/// differs by a typo: at most one edit for every four characters.
+fn is_near_name(requested: &str, candidate: &str) -> bool {
+    let requested = requested.to_ascii_lowercase();
+    let candidate = candidate.to_ascii_lowercase();
+    let length = requested.chars().count();
+    if length >= 4 && candidate.contains(&requested) {
+        return true;
+    }
+    edit_distance(&requested, &candidate) <= (length / 4).max(1)
 }
 
 /// Levenshtein distance over characters. Skill names are short.

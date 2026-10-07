@@ -61,6 +61,10 @@ use output::{
     render_update_check, resolve_mode, screen_message, shell_command,
 };
 
+/// An Agent without the skilld Skill reads `--help` first. It names every command
+/// that answers in JSON; a test keeps it in step with `supports_json`.
+const JSON_COMMANDS_HELP: &str = "Agents: add --json to sync, search, run, update --check, view with a registry ref,\nbrowse, trending, tracks, index, curators, account, like, unlike, likes, watch,\nunwatch, watches, changes, stars, collection, and tokens. Read data when _tag is Success.\nOther commands answer in text. Add --plain to them for stable text.";
+
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
 
 #[derive(Debug, Parser)]
@@ -68,6 +72,7 @@ const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITOR
     name = "skilld",
     version = VERSION,
     about = "Search, run, install, and keep Skills current",
+    after_help = JSON_COMMANDS_HELP,
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -4641,6 +4646,74 @@ pub fn command_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_help_names_exactly_the_commands_that_answer_in_json() {
+        let json_commands: &[(&str, &[&str])] = &[
+            ("sync", &["sync"]),
+            ("search", &["search", "vue"]),
+            ("run", &["run", "a/b/c"]),
+            ("update --check", &["update", "--check"]),
+            ("view with a registry ref", &["view", "a/b/c"]),
+            ("browse", &["browse"]),
+            ("trending", &["trending"]),
+            ("tracks", &["tracks"]),
+            ("index", &["index", "a/b"]),
+            ("curators", &["curators"]),
+            ("account", &["account"]),
+            ("like", &["like", "a/b/c"]),
+            ("unlike", &["unlike", "a/b/c"]),
+            ("likes", &["likes"]),
+            ("watch", &["watch", "a/b"]),
+            ("unwatch", &["unwatch", "a/b"]),
+            ("watches", &["watches"]),
+            ("changes", &["changes"]),
+            ("stars", &["stars"]),
+            (
+                "collection",
+                &["collection", "create", "stack", "--title", "Stack"],
+            ),
+            ("tokens", &["tokens"]),
+        ];
+        let text_commands: &[&[&str]] = &[
+            &["install", "a/b/c"],
+            &["add", "a/b"],
+            &["list"],
+            &["view", "vue"],
+            &["remove", "vue"],
+            &["update"],
+            &["verify"],
+            &["outdated"],
+            &["auth", "status"],
+            &["config", "list"],
+        ];
+        let named = |phrase: &str| {
+            JSON_COMMANDS_HELP
+                .split([',', '.'])
+                .map(|part| part.split_whitespace().collect::<Vec<_>>().join(" "))
+                .any(|part| {
+                    part == phrase
+                        || part.ends_with(&format!(" {phrase}"))
+                        || part == format!("and {phrase}")
+                })
+        };
+        let parse = |argv: &[&str]| {
+            Cli::try_parse_from(std::iter::once("skilld").chain(argv.iter().copied()))
+                .unwrap_or_else(|error| panic!("{argv:?}: {error}"))
+                .command
+        };
+        for (phrase, argv) in json_commands {
+            assert!(supports_json(&parse(argv)), "{argv:?} must answer in JSON");
+            assert!(named(phrase), "help must name {phrase}");
+        }
+        for argv in text_commands {
+            assert!(!supports_json(&parse(argv)), "{argv:?} must answer in text");
+            // view and update answer in JSON in one form, so the help names them.
+            if !matches!(argv[0], "view" | "update") {
+                assert!(!named(argv[0]), "help must not name {}", argv[0]);
+            }
+        }
+    }
 
     struct RecordingHost;
 
