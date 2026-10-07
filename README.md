@@ -234,11 +234,35 @@ skilld 3.0 printed `skilld:OWNER/REPOSITORY/SKILL` and `gh:OWNER/REPOSITORY`. Th
 The index has one line per Skill with its run command. It loads no Skill.
 
 `skilld add` installs the Skills the same ref names. It accepts the `skilld install` flags.
-A terminal asks which Skills to install. `--all` installs every one without asking.
-Any other context, such as an Agent, a pipe, or CI, installs every one.
+A normal terminal asks which Skills to install when several are listed.
+Agents, pipes, CI, and `--plain` require `--all` when several Skills are listed.
+One listed Skill installs without a picker. `add` does not support JSON output.
+
+```sh
+skilld add antfu/skills --all --agent codex
+```
+
+Success lists the installed agent paths, exact source commit, and source status.
+Read the instructions before your agent uses a Skill.
 
 A Repository that skilld.dev does not list yet falls back to its public GitHub tree.
-Those Skills install through direct mode and record the `unverified` source status.
+Listing does not request registry indexing or wait for an index job.
+The listed GitHub paths still use hosted delivery by default.
+If delivery fails, skilld reports the failure and an explicit direct installation command where possible.
+It never switches source paths automatically.
+
+To choose direct installation for a public Repository:
+
+```sh
+skilld add antfu/skills --all --direct --agent codex
+```
+
+This command lists and reads files from GitHub without skilld.dev.
+It records `unverified` and checks no Artifact attestation.
+Behavior approval still applies. Curator and collection refs require hosted delivery.
+
+`skilld add ./PATH` installs one local Skill. The path must contain its `SKILL.md`.
+It does not search a local Repository for several Skills.
 
 ### Supporting files
 

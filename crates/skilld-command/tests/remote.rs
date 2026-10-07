@@ -12,8 +12,8 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use skilld_command::{
-    Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, INDEX_POLL_ATTEMPTS,
-    LocalHost, NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
+    Cancellation, HeaderValue, Host, HttpAdapter, HttpRequest, HttpResponse, LocalHost,
+    NativeRemoteConfig, NoTokenProvider, PreparedRemoteSkill, RemoteComparisonAccess,
     RemoteComparisonOutcome, RemoteComparisonRelation, RemoteProgress, RemoteProgressStage,
     RemoteProvider, RemoteSourceState, RemoteUpdateComparison, SecretValue, SkilldRemote, Sleeper,
     TokenProvider, run,
@@ -553,242 +553,65 @@ fn direct_listed(owner: &str, repository: &str, name: &str, path: &str) -> Liste
     }
 }
 
-/// Answers every index poll with `queued`, then serves the GitHub tree.
-#[derive(Default)]
-struct IndexingForeverHttp {
-    polls: Mutex<usize>,
-}
-
-impl HttpAdapter for IndexingForeverHttp {
-    fn send(
-        &self,
-        request: &HttpRequest,
-        _cancellation: &dyn Cancellation,
-        _timeout: Option<Duration>,
-    ) -> Result<HttpResponse, RemoteError> {
-        let url = request.url.as_str();
-        if url.contains("/api/skills") {
-            return Ok(registry_page(&[]));
-        }
-        if url.ends_with("/api/repos") {
-            return Ok(submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"));
-        }
-        if url.contains("/api/repos/index/") {
-            *self.polls.lock().unwrap() += 1;
-            return Ok(response(
-                200,
-                serde_json::to_vec(&json!({
-                    "_tag": "queued",
-                    "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-                    "progress": { "_tag": "checking" },
-                }))
-                .unwrap(),
-            ));
-        }
-        if url.contains("/git/trees/") {
-            return Ok(github_tree(&["skills/vue/SKILL.md"]));
-        }
-        Ok(github_repository("main", false))
-    }
-}
-
-/// skilld.dev refuses the submission, so the listing reads GitHub instead.
-fn submission_declined() -> HttpResponse {
-    response(404, br#"{"message":"Not Found"}"#.to_vec())
-}
-
-fn submission_queued(job_id: &str) -> HttpResponse {
-    response(
-        200,
-        serde_json::to_vec(&json!({
-            "_tag": "queued",
-            "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-            "jobId": job_id,
-            "progress": { "_tag": "queued" },
-        }))
-        .unwrap(),
-    )
-}
-
-fn index_rows(names: &[&str]) -> serde_json::Value {
-    json!(
-        names
-            .iter()
-            .map(|name| json!({
-                "name": name,
-                "slug": format!("vuejs/{name}"),
-                "path": format!("skills/{name}/SKILL.md"),
-                "description": null,
-                "likeCount": 0,
-                "registryPath": format!("/gh/vuejs/core/{name}"),
-            }))
-            .collect::<Vec<_>>()
-    )
-}
-
-/// One hosted Skill that also knows its path, so it can fall back to GitHub.
-fn indexed_listed(name: &str) -> ListedSkill {
-    ListedSkill {
-        name: name.to_owned(),
-        owner: "vuejs".to_owned(),
-        repository: "core".to_owned(),
-        description: None,
-        origin: ListedOrigin::Registry {
-            path: Some(format!("skills/{name}")),
-        },
-    }
-}
-
-fn index_indexed(names: &[&str]) -> HttpResponse {
-    response(
-        200,
-        serde_json::to_vec(&json!({
-            "_tag": "indexed",
-            "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-            "skills": index_rows(names),
-        }))
-        .unwrap(),
-    )
-}
-
 #[test]
-fn a_repository_the_registry_does_not_list_is_submitted_then_listed_once_indexed() {
+fn explicit_direct_listing_does_not_contact_the_registry() {
     let http = Arc::new(FakeHttp::with([
-        registry_page(&[]),
-        submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"),
-        response(
-            200,
-            serde_json::to_vec(&json!({
-                "_tag": "queued",
-                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-                "progress": { "_tag": "indexing", "indexed": 1, "total": 2 },
-            }))
-            .unwrap(),
-        ),
-        index_indexed(&["nuxt", "vue"]),
+        github_repository("main", false),
+        github_tree(&["skills/vue/SKILL.md"]),
     ]));
     let remote = search_remote(http.clone());
-
     let listing = remote
-        .list_skills(&MultiSkillRef::Repository {
+        .list_direct_skills(&MultiSkillRef::Repository {
             owner: "vuejs".to_owned(),
             repository: "core".to_owned(),
         })
         .unwrap();
-
     assert_eq!(
         listing.items,
-        [indexed_listed("nuxt"), indexed_listed("vue")]
-    );
-    assert!(listing.items.iter().all(|item| !item.needs_direct()));
-    assert_eq!(
-        listing.items[0].direct_selector().as_deref(),
-        Some("github:vuejs/core/skills/nuxt")
+        [direct_listed("vuejs", "core", "vue", "skills/vue")]
     );
     assert_eq!(
         request_paths(&http),
         [
-            "/api/skills?owner=vuejs&limit=200",
-            "/api/repos",
-            "/api/repos/index/7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d",
-            "/api/repos/index/7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d",
+            "https://api.github.com/repos/vuejs/core",
+            "https://api.github.com/repos/vuejs/core/git/trees/main?recursive=1",
         ]
     );
 }
 
 #[test]
-fn a_repository_skilld_dev_already_holds_needs_no_index_poll() {
+fn github_discovery_does_not_select_direct_delivery_in_run_commands() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
-        response(
-            200,
-            serde_json::to_vec(&json!({
-                "_tag": "indexed",
-                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-                "skills": index_rows(&["vue"]),
-            }))
-            .unwrap(),
-        ),
-    ]));
-    let remote = search_remote(http.clone());
-
-    let listing = remote
-        .list_skills(&MultiSkillRef::Repository {
-            owner: "vuejs".to_owned(),
-            repository: "core".to_owned(),
-        })
-        .unwrap();
-
-    assert_eq!(listing.items, [indexed_listed("vue")]);
-    assert_eq!(
-        request_paths(&http),
-        ["/api/skills?owner=vuejs&limit=200", "/api/repos"]
-    );
-}
-
-#[test]
-fn a_failed_index_job_falls_back_to_the_github_tree() {
-    let http = Arc::new(FakeHttp::with([
-        registry_page(&[]),
-        submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"),
-        response(
-            200,
-            serde_json::to_vec(&json!({
-                "_tag": "failed",
-                "repository": { "_tag": "repository", "owner": "vuejs", "repo": "core", "url": "https://github.com/vuejs/core" },
-                "reason": "No supported SKILL.md files were found.",
-            }))
-            .unwrap(),
-        ),
         github_repository("main", false),
         github_tree(&["skills/vue/SKILL.md"]),
     ]));
-    let remote = search_remote(http);
-
-    let listing = remote
-        .list_skills(&MultiSkillRef::Repository {
-            owner: "vuejs".to_owned(),
-            repository: "core".to_owned(),
-        })
-        .unwrap();
-
-    assert_eq!(
-        listing.items,
-        [direct_listed("vuejs", "core", "vue", "skills/vue")]
-    );
-}
-
-#[test]
-fn a_submission_that_never_finishes_stops_waiting_and_reads_github() {
-    let http = Arc::new(IndexingForeverHttp::default());
-    let remote = SkilldRemote::new(
-        http.clone(),
-        Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Unconfigured,
+    let temporary = tempfile::tempdir().unwrap();
+    let host = LocalHost::new(
+        temporary.path().join("project"),
+        temporary.path().join("global"),
     )
-    .with_endpoint("http://127.0.0.1:8787")
-    .unwrap()
-    .with_sleeper(Arc::new(NoSleep));
-
-    let listing = remote
-        .list_skills(&MultiSkillRef::Repository {
-            owner: "vuejs".to_owned(),
-            repository: "core".to_owned(),
-        })
-        .unwrap();
-
-    assert_eq!(
-        listing.items,
-        [direct_listed("vuejs", "core", "vue", "skills/vue")]
+    .with_remote_provider(Arc::new(search_remote(http)));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run(
+        ["skilld", "run", "vuejs/core", "--json"],
+        &host,
+        &mut stdout,
+        &mut stderr,
     );
-    assert_eq!(*http.polls.lock().unwrap(), INDEX_POLL_ATTEMPTS);
+    assert_eq!(result.exit_code, 0, "{}", String::from_utf8_lossy(&stderr));
+    let output: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(
+        output["data"]["items"][0]["runArgv"],
+        json!(["skilld", "run", "github:vuejs/core/skills/vue", "--json"])
+    );
 }
 
 #[test]
 fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[("vuejs", "router", "vue-router", None)]),
-        submission_declined(),
         github_repository("main", false),
         github_tree(&[
             "README.md",
@@ -818,12 +641,10 @@ fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
         listing.items[0].selector(),
         "github:vuejs/core/skills/nuxt".to_owned()
     );
-    assert!(listing.items.iter().all(ListedSkill::needs_direct));
     assert_eq!(
         request_paths(&http),
         [
             "/api/skills?owner=vuejs&limit=200",
-            "/api/repos",
             "https://api.github.com/repos/vuejs/core",
             "https://api.github.com/repos/vuejs/core/git/trees/main?recursive=1",
         ]
@@ -834,7 +655,6 @@ fn a_repository_the_registry_does_not_list_falls_back_to_its_github_tree() {
 fn the_fallback_listing_drops_a_skill_file_at_the_repository_root() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
-        submission_declined(),
         github_repository("trunk", false),
         github_tree(&["SKILL.md"]),
     ]));
@@ -856,11 +676,7 @@ fn a_private_or_missing_github_repository_lists_no_skills() {
         github_repository("main", true),
         response(404, br#"{"message":"Not Found"}"#.to_vec()),
     ] {
-        let http = Arc::new(FakeHttp::with([
-            registry_page(&[]),
-            submission_declined(),
-            github,
-        ]));
+        let http = Arc::new(FakeHttp::with([registry_page(&[]), github]));
         let remote = search_remote(http);
 
         let listing = remote
@@ -878,7 +694,6 @@ fn a_private_or_missing_github_repository_lists_no_skills() {
 fn a_truncated_github_tree_stops_the_fallback_listing() {
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
-        submission_declined(),
         github_repository("main", false),
         response(
             200,
@@ -904,7 +719,6 @@ fn a_repository_past_the_direct_listing_cap_is_a_too_large_error() {
         .collect::<Vec<_>>();
     let http = Arc::new(FakeHttp::with([
         registry_page(&[]),
-        submission_declined(),
         github_repository("main", false),
         github_tree(&paths.iter().map(String::as_str).collect::<Vec<_>>()),
     ]));
@@ -1188,7 +1002,7 @@ impl HttpAdapter for CollectionExpansionHttp {
             return Ok(registry_page(&[]));
         }
         if url.ends_with("/api/repos") {
-            return Ok(submission_queued("7b6a1f2c-1d4e-4a5b-8c9d-0e1f2a3b4c5d"));
+            panic!("Listing must not request registry indexing");
         }
         if url.contains("/api/repos/index/") {
             *self.polls.lock().unwrap() += 1;
@@ -1388,7 +1202,7 @@ impl HttpAdapter for LargeRepositoryHttp {
 }
 
 #[test]
-fn a_named_collection_entry_installs_through_the_github_path_selector() {
+fn a_named_collection_entry_reports_delivery_failure_without_installing_directly() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
@@ -1421,12 +1235,12 @@ fn a_named_collection_entry_installs_through_the_github_path_selector() {
     );
 
     let output = String::from_utf8(stdout).unwrap();
-    assert_eq!(result.exit_code, 0, "{output}");
-    assert!(output.contains("Installed Skill vue."), "{output}");
-    assert_eq!(
-        host.list(InstallScope::Project).unwrap(),
-        ["vue".to_owned()]
+    assert_eq!(result.exit_code, 1, "{output}");
+    assert!(
+        output.contains("skilld install github:vuejs/core/skills/vue --direct --agent codex"),
+        "{output}"
     );
+    assert!(host.list(InstallScope::Project).unwrap().is_empty());
 }
 
 #[test]
@@ -4219,7 +4033,7 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    let host = LocalHost::new(project, temporary.path().join("data"))
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider("---\nname: example\n---\n"));
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -4238,18 +4052,19 @@ fn cli_install_shows_the_author_the_source_status_and_the_exact_skill_file() {
     );
 
     assert_eq!(result.exit_code, 0);
-    assert_eq!(
-        String::from_utf8(stdout).unwrap(),
-        concat!(
-            "Installed Skill example.\n",
-            "example · skilld-dev/skills @ 0123456\n",
-            "Source: skilld-dev/skills/example\n",
-            "Source status: verified\n",
-            "skilld checked where this Skill came from, not what it asks you to do.\n",
-            "Read it before you follow it.\n",
-            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
-            "Skill page: https://skilld.dev/gh/skilld-dev/skills/example\n",
-        )
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains(&format!(
+            "Files: {}",
+            project.join(".agents/skills/example").display()
+        )),
+        "{output}"
+    );
+    assert!(output.contains("Source status: verified"), "{output}");
+    assert!(output.contains("Source: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md"), "{output}");
+    assert!(
+        output.contains("Read the instructions before using each Skill."),
+        "{output}"
     );
     assert!(stderr.is_empty());
 }
@@ -4289,7 +4104,7 @@ fn cli_direct_install_marks_review_as_required() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    let host = LocalHost::new(project, temporary.path().join("data"))
+    let host = LocalHost::new(project.clone(), temporary.path().join("data"))
         .with_remote_provider(provider("---\nname: example\n---\n"));
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -4309,16 +4124,19 @@ fn cli_direct_install_marks_review_as_required() {
     );
 
     assert_eq!(result.exit_code, 0);
-    assert_eq!(
-        String::from_utf8(stdout).unwrap(),
-        concat!(
-            "Installed Skill example.\n",
-            "example · skilld-dev/skills @ 0123456\n",
-            "Source: github:skilld-dev/skills/skills/example\n",
-            "Source status: unverified\n",
-            "skilld did not check this source. Read this Skill before you follow it.\n",
-            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
-        )
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains(&format!(
+            "Files: {}",
+            project.join(".agents/skills/example").display()
+        )),
+        "{output}"
+    );
+    assert!(output.contains("Source status: unverified"), "{output}");
+    assert!(output.contains("Source: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md"), "{output}");
+    assert!(
+        output.contains("Read the instructions before using each Skill."),
+        "{output}"
     );
     assert!(stderr.is_empty());
 }
@@ -4360,16 +4178,19 @@ fn cli_direct_restore_uses_the_locked_commit() {
     );
 
     assert_eq!(restored.exit_code, 0);
-    assert_eq!(
-        String::from_utf8(stdout).unwrap(),
-        concat!(
-            "Installed Skill example.\n",
-            "example · skilld-dev/skills @ 0123456\n",
-            "Source: github:skilld-dev/skills/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
-            "Source status: unverified\n",
-            "skilld did not check this source. Read this Skill before you follow it.\n",
-            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
-        )
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains(&format!(
+            "Files: {}",
+            project.join(".agents/skills/example").display()
+        )),
+        "{output}"
+    );
+    assert!(output.contains("Source status: unverified"), "{output}");
+    assert!(output.contains("Source: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md"), "{output}");
+    assert!(
+        output.contains("Read the instructions before using each Skill."),
+        "{output}"
     );
     assert!(stderr.is_empty());
     assert_eq!(
@@ -4486,18 +4307,19 @@ fn cli_verified_restore_keeps_artifact_delivery() {
     );
 
     assert_eq!(restored.exit_code, 0);
-    assert_eq!(
-        String::from_utf8(stdout).unwrap(),
-        concat!(
-            "Installed Skill example.\n",
-            "example · skilld-dev/skills @ 0123456\n",
-            "Source: skilld-dev/skills/example#commit:0123456789abcdef0123456789abcdef01234567\n",
-            "Source status: verified\n",
-            "skilld checked where this Skill came from, not what it asks you to do.\n",
-            "Read it before you follow it.\n",
-            "Read it first: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md\n",
-            "Skill page: https://skilld.dev/gh/skilld-dev/skills/example\n",
-        )
+    let output = String::from_utf8(stdout).unwrap();
+    assert!(
+        output.contains(&format!(
+            "Files: {}",
+            project.join(".agents/skills/example").display()
+        )),
+        "{output}"
+    );
+    assert!(output.contains("Source status: verified"), "{output}");
+    assert!(output.contains("Source: https://github.com/skilld-dev/skills/blob/0123456789abcdef0123456789abcdef01234567/skills/example/SKILL.md"), "{output}");
+    assert!(
+        output.contains("Read the instructions before using each Skill."),
+        "{output}"
     );
     assert!(stderr.is_empty());
     assert_eq!(
@@ -4574,7 +4396,7 @@ fn cli_restores_a_lockfile_that_records_the_legacy_skilld_prefix() {
     assert!(
         String::from_utf8(stdout)
             .unwrap()
-            .contains("Source: skilld-dev/skills/example#commit:")
+            .contains("Commit: 0123456789abcdef0123456789abcdef01234567")
     );
 }
 

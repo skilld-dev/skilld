@@ -95,7 +95,7 @@ impl RemoteProvenance {
 pub fn source_status_caution(status: &str) -> &'static str {
     match status {
         "verified" => {
-            "skilld checked where this Skill came from, not what it asks you to do.\nRead it before you follow it.\n"
+            "skilld checked the source and file contents. Read the instructions before using the Skill.\n"
         }
         "unverified" => "skilld did not check this source. Read this Skill before you follow it.\n",
         _ => "Read this Skill before you follow it.\n",

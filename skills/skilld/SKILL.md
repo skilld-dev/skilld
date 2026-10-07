@@ -265,19 +265,28 @@ skilld install skilld --global
 Install every Skill a Repository, curator, or collection names:
 
 ```sh
-skilld add OWNER/REPOSITORY
-skilld add @LOGIN/SLUG --global
+skilld add OWNER/REPOSITORY --all
+skilld add @LOGIN/SLUG --all --global
 ```
 
 `skilld add` accepts `--global`, `--agent`, and `--mode` like `skilld install`.
 It prints one `Installed Skill` line per Skill.
-An Agent run installs every Skill the ref names. Pass `--all` to state that intent.
-A person at a terminal is asked which Skills to install.
-Run `skilld run` with the same ref first, then confirm the list with the user.
+If several Skills are listed, an Agent run requires `--all`.
+A normal terminal asks which Skills to install. `--plain` also requires `--all` for several Skills.
+One listed Skill installs without a picker. `add` does not support JSON output.
+Run `skilld run` with the same ref first, then confirm the list with the user before using `--all`.
 `skilld add` with one Skill selector installs that Skill like `skilld install`.
+Listing never requests registry indexing.
+Skills discovered through GitHub still use hosted delivery by default.
+If delivery fails, skilld shows an explicit direct installation command where possible.
+Only use direct installation when the user chooses it. Never use it to bypass a verification or policy failure.
+`skilld add OWNER/REPOSITORY --all --direct` lists and installs public GitHub files without skilld.dev.
+It records `unverified`. Curator and collection refs require hosted delivery.
+Behavior approval still applies.
+`skilld add ./PATH` installs one local Skill whose directory contains `SKILL.md`.
 
 Always use the source selector shown by `skilld search`.
-After installation, report the Skill name, scope, Agent targets, and source status.
+After installation, report the Skill name, scope, installed agent paths, and source status.
 
 ## Fork a Skill
 

@@ -515,10 +515,12 @@ fn local_install_list_view_and_remove_use_project_state() {
         format!(
             concat!(
                 "Installed Skill local-skill.\n",
+                "Files: {}\n",
                 "Source: local {}\n",
                 "Source status: local\n",
-                "Read this Skill before you follow it.\n",
+                "Read the instructions before using each Skill.\n",
             ),
+            project.join(".agents/skills/local-skill").display(),
             fixture().display()
         )
     );

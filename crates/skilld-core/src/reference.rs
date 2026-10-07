@@ -37,9 +37,9 @@ pub enum MultiSkillRef {
 pub enum ListedOrigin {
     /// skilld.dev lists the Skill. Install resolves an Artifact for it.
     /// `path` is the Skill directory in the Repository, when the listing
-    /// names it, so a failed Artifact delivery can still read GitHub.
+    /// names it, so a delivery failure can offer explicit direct installation.
     Registry { path: Option<String> },
-    /// GitHub carries the Skill at `path`. Install reads GitHub directly.
+    /// GitHub carries the Skill at `path`. Hosted delivery remains the default.
     Direct { path: String },
 }
 
@@ -57,8 +57,8 @@ impl ListedSkill {
     /// The selector `skilld run` and `skilld install` accept for this Skill.
     ///
     /// A registry Skill uses its hosted `OWNER/REPOSITORY/SKILL` form. A
-    /// direct Skill uses its explicit `github:` path, which only direct mode
-    /// resolves.
+    /// Skill discovered on GitHub uses its explicit `github:` path.
+    /// Hosted delivery resolves that path unless direct mode is explicit.
     pub fn selector(&self) -> String {
         match &self.origin {
             // The path resolves one Skill even when two directories share a
@@ -77,8 +77,7 @@ impl ListedSkill {
     /// The `github:` selector that reads this Skill from GitHub, when skilld
     /// knows where the Skill sits in the Repository.
     ///
-    /// A hosted Skill keeps this as its fallback: skilld.dev can list a Skill
-    /// and still fail to deliver its Artifact.
+    /// A hosted Skill uses this in its explicit direct recovery command.
     pub fn direct_selector(&self) -> Option<String> {
         match &self.origin {
             ListedOrigin::Registry { path } => path.as_ref().map(|path| self.github_selector(path)),
@@ -88,11 +87,6 @@ impl ListedSkill {
 
     fn github_selector(&self, path: &str) -> String {
         format!("github:{}/{}/{path}", self.owner, self.repository)
-    }
-
-    /// Whether loading or installing this Skill needs `--direct`.
-    pub const fn needs_direct(&self) -> bool {
-        matches!(self.origin, ListedOrigin::Direct { .. })
     }
 }
 

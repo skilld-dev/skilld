@@ -139,7 +139,7 @@ fn main() -> ExitCode {
         .with_api(remote.clone())
         .with_remote_provider(remote);
     // Only a person at a terminal can answer the Skill picker. An Agent, a
-    // pipe, or CI installs every Skill the ref names.
+    // pipe, or CI requires explicit --all when several Skills are listed.
     let host = if asks_which_skills(&args) {
         host.with_skill_chooser(Arc::new(TtySkillChooser::new(!environment_present(
             "NO_COLOR",
