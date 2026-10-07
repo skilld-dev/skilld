@@ -314,6 +314,9 @@ const REQUESTS = new Set(['forget', 'hesitate', 'skip', 'miss', 'omit', 'worry',
 /** A table cell that opens with one of these words rejects the code in the other cells of its row. */
 const ROW_REJECTIONS = new Set(['rejected', 'blocked', 'block', 'deny', 'denied', 'forbidden', 'never', 'disallowed'])
 
+/** Characters that end a verdict: a cell edge, punctuation, or a dash. */
+const VERDICT_ENDS = new Set(['|', ';', ',', '.', ':', '!', '(', '-', '\u2013', '\u2014'])
+
 /** A heading that opens with one of these words rejects the code in its section. */
 const SECTION_REJECTIONS = new Set(['forbidden', 'never', 'rejected', 'blocked', 'antipattern', 'antipatterns'])
 
@@ -506,8 +509,6 @@ function standsAlone(text: string[], end: number, last: boolean): boolean {
   return at === text.length ? last : VERDICT_ENDS.has(text[at]!)
 }
 
-/** Characters that end a verdict: a cell edge, punctuation, or a dash. */
-const VERDICT_ENDS = new Set(['|', ';', ',', '.', ':', '!', '(', '-', '\u2013', '\u2014'])
 
 /** Whether a heading that opens with this word rejects its section: "Never", "Do not", "What not to do", "Anti-patterns". */
 function rejectsSection(word: string, text: string[], end: number): boolean {
