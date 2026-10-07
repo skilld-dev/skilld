@@ -312,6 +312,28 @@ describe('createSkillHarness', () => {
     await expect(readFile(join(currentDir, 'references/old.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('runs update-package-skill when the destination already holds the package Skill', async () => {
+    const packageDir = await makePackage()
+    const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-output-'))
+    await mkdir(join(destinationRoot, 'example-package'), { recursive: true })
+    await writeFile(join(destinationRoot, 'example-package/SKILL.md'), skillSource('example-package'))
+    const fake = createFakeHarness({
+      async onPrompt({ sandbox, workDir }) {
+        await sandbox.writeTextFile({ path: join(workDir, 'skilld-output/example-package/SKILL.md'), content: skillSource('example-package') })
+      },
+    })
+
+    const result = await createSkillHarness({ harness: fake.harness, sandbox: createFakeSandboxProvider() }).run({
+      _tag: 'PackageSkill',
+      source: { _tag: 'LocalPackage', rootDir: packageDir, packageDir: '.' },
+      destination: { rootDir: destinationRoot, name: 'example-package' },
+    })
+
+    expect(result._tag).toBe('Ok')
+    expect(fake.capture.prompts[0]?.skills.map(skill => skill.name)).toEqual(['update-package-skill'])
+    expect(promptText(fake.capture.prompts[0]?.prompt)).toMatch(/The current Skill is at `\S*\/input\/current-skill`/)
+  })
+
   it('creates the project .skilld root for a project Skill', async () => {
     const projectDir = await makePackage()
     const fake = createFakeHarness({
