@@ -280,6 +280,11 @@ skilld run 'github:OWNER/REPOSITORY/SKILL#commit:COMMIT' --allow remote-code
 The command pins the commit that skilld checked.
 A local or bundled Skill lists its behaviors and never stops.
 
+A Skill that skilld.dev delivered can carry a model reading for each match:
+what a language model read the line as, such as a quoted example in a security guide, and why.
+The message adds it after the match, as `SKILL.md:7 (model reading: quoted example. REASON)`.
+A model reading is no guarantee and changes no approval.
+
 `install`, `add`, and `update` stop the same way and write nothing.
 Run the same command again with the `--allow` ids the message names.
 `add` installs every other Skill the ref names.

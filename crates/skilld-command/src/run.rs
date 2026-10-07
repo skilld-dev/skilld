@@ -93,6 +93,9 @@ pub struct TransientSkill {
     /// Files over a size limit that skilld.dev left out. The Skill loaded
     /// without them.
     pub omitted_files: Vec<crate::OmittedFile>,
+    /// A language model's reading of each behavior match, from skilld.dev.
+    /// It annotates the approval message and changes no approval.
+    pub behavior_readings: Vec<BehaviorReading>,
 }
 
 /// What the person said about the behaviors a remote Skill needs approved.
@@ -127,10 +130,19 @@ pub fn held_behaviors<'a>(
 
 /// One behavior as a line: its label, then where it appears.
 pub fn describe_behavior(behavior: &Behavior) -> String {
+    describe_read_behavior(behavior, &[])
+}
+
+/// One behavior as a line, with the model reading skilld.dev sent for each
+/// match, if any: `SKILL.md:7 (model reading: quoted example. REASON)`.
+pub fn describe_read_behavior(behavior: &Behavior, readings: &[BehaviorReading]) -> String {
     let mut places = behavior
         .locations
         .iter()
-        .map(ToString::to_string)
+        .map(|location| match reading_for(behavior, location, readings) {
+            Some(reading) => format!("{location} ({})", reading.describe()),
+            None => location.to_string(),
+        })
         .collect::<Vec<_>>();
     let hidden = behavior.total.saturating_sub(behavior.locations.len());
     if hidden > 0 {
@@ -139,9 +151,97 @@ pub fn describe_behavior(behavior: &Behavior) -> String {
     format!("{}: {}", behavior.label, places.join(", "))
 }
 
+/// Whether any match of these behaviors has a model reading.
+pub fn any_reading(behaviors: &[&Behavior], readings: &[BehaviorReading]) -> bool {
+    behaviors.iter().any(|behavior| {
+        behavior
+            .locations
+            .iter()
+            .any(|location| reading_for(behavior, location, readings).is_some())
+    })
+}
+
+fn reading_for<'a>(
+    behavior: &Behavior,
+    location: &skilld_core::BehaviorLocation,
+    readings: &'a [BehaviorReading],
+) -> Option<&'a BehaviorReading> {
+    let line = location.line?;
+    readings.iter().find(|reading| {
+        reading.behavior == behavior.id && reading.path == location.path && reading.line == line
+    })
+}
+
 /// What a behavior list can and cannot show. Every behavior list ends with it.
 pub const BEHAVIOR_CAVEAT: &str =
     "skilld matched fixed text patterns. Patterns miss obfuscated code.";
+
+/// What a model reading is. Every behavior list with a reading ends with it.
+pub const BEHAVIOR_READING_CAVEAT: &str = "A language model on skilld.dev wrote each model reading. A reading is no guarantee and changes no approval.";
+
+/// What a language model read one behavior match as, in its context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BehaviorVerdict {
+    /// The Skill tells the Agent to do it.
+    Instruction,
+    /// The line quotes it as an example, such as an attack to block.
+    QuotedExample,
+    /// The line forbids it.
+    Prohibition,
+    /// The line describes it for a reader.
+    Documentation,
+    /// The line and its context do not settle it.
+    Unclear,
+}
+
+impl BehaviorVerdict {
+    /// The kebab-case value skilld.dev writes. Any other value is no verdict.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "instruction" => Some(Self::Instruction),
+            "quoted-example" => Some(Self::QuotedExample),
+            "prohibition" => Some(Self::Prohibition),
+            "documentation" => Some(Self::Documentation),
+            "unclear" => Some(Self::Unclear),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Instruction => "instruction",
+            Self::QuotedExample => "quoted example",
+            Self::Prohibition => "prohibition",
+            Self::Documentation => "documentation",
+            Self::Unclear => "unclear",
+        }
+    }
+}
+
+/// A language model's reading of one behavior match, from the signed
+/// `behavior-review` check result skilld.dev adds to an attestation.
+///
+/// It annotates the match for the person who approves it. It never changes
+/// whether the behavior needs approval: skilld gates on its own pattern match.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BehaviorReading {
+    pub path: String,
+    pub line: usize,
+    /// The behavior id, such as `remote-code`.
+    pub behavior: String,
+    pub verdict: BehaviorVerdict,
+    /// At most 200 characters, with unsafe terminal characters replaced.
+    pub reason: Option<String>,
+}
+
+impl BehaviorReading {
+    fn describe(&self) -> String {
+        match &self.reason {
+            Some(reason) => format!("model reading: {}. {reason}", self.verdict.label()),
+            None => format!("model reading: {}", self.verdict.label()),
+        }
+    }
+}
 
 /// One supporting file the Agent asked for.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -2134,17 +2134,12 @@ fn gate_behaviors<H: Host>(
                 .chain(held.iter().map(|behavior| behavior.id))
                 .collect::<Vec<_>>();
             let command = output::shell_command(&output::allow_argv(&skill.origin, &ids), platform);
-            let behaviors = held
-                .iter()
-                .map(|behavior| run::describe_behavior(behavior))
-                .collect::<Vec<_>>()
-                .join("; ");
+            let (behaviors, caveat) = describe_held(&held, &skill.behavior_readings);
             Err(CommandError::operation(
                 "BEHAVIOR_CONFIRMATION_REQUIRED",
                 format!(
-                    "The Skill {} needs the user's approval before it loads. skilld loaded nothing. Behaviors: {behaviors}. {} Show these behaviors to the user. If the user approves, run: {command}",
+                    "The Skill {} needs the user's approval before it loads. skilld loaded nothing. Behaviors: {behaviors}. {caveat} Show these behaviors to the user. If the user approves, run: {command}",
                     skill.name,
-                    run::BEHAVIOR_CAVEAT,
                 ),
             ))
         }
@@ -2170,6 +2165,7 @@ fn gate_new_behaviors(
     behaviors: &[skilld_core::Behavior],
     approved_before: &[skilld_core::Behavior],
     allowed: &[String],
+    readings: &[run::BehaviorReading],
 ) -> Result<(), CommandError> {
     let held = run::held_behaviors(behaviors, allowed, approved_before);
     if held.is_empty() {
@@ -2188,11 +2184,7 @@ fn gate_new_behaviors(
                 .chain(held.iter().map(|behavior| behavior.id))
                 .collect::<Vec<_>>()
                 .join(",");
-            let behaviors = held
-                .iter()
-                .map(|behavior| run::describe_behavior(behavior))
-                .collect::<Vec<_>>()
-                .join("; ");
+            let (behaviors, caveat) = describe_held(&held, readings);
             let opening = match change {
                 BehaviorChange::Install => {
                     format!("The Skill {skill} needs the user's approval before it installs.")
@@ -2204,12 +2196,30 @@ fn gate_new_behaviors(
             Err(CommandError::operation(
                 "BEHAVIOR_CONFIRMATION_REQUIRED",
                 format!(
-                    "{opening} skilld changed nothing. Behaviors: {behaviors}. {} Show these behaviors to the user. If the user approves, run the same command again with --allow {ids}",
-                    run::BEHAVIOR_CAVEAT,
+                    "{opening} skilld changed nothing. Behaviors: {behaviors}. {caveat} Show these behaviors to the user. If the user approves, run the same command again with --allow {ids}",
                 ),
             ))
         }
     }
+}
+
+/// The held behaviors as one line each, with any model readings, and the
+/// caveat that ends the list.
+fn describe_held(
+    held: &[&skilld_core::Behavior],
+    readings: &[run::BehaviorReading],
+) -> (String, String) {
+    let behaviors = held
+        .iter()
+        .map(|behavior| run::describe_read_behavior(behavior, readings))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let caveat = if run::any_reading(held, readings) {
+        format!("{} {}", run::BEHAVIOR_CAVEAT, run::BEHAVIOR_READING_CAVEAT)
+    } else {
+        run::BEHAVIOR_CAVEAT.to_owned()
+    };
+    (behaviors, caveat)
 }
 
 /// Stop an update whose new version adds an ask behavior the installed copy lacks.
@@ -2219,6 +2229,7 @@ fn gate_update_behaviors<H: Host>(
     installed: &Path,
     files: &[skilld_core::PreparedFile],
     allowed: &[String],
+    readings: &[run::BehaviorReading],
 ) -> Result<(), CommandError> {
     let (_, installed_files) = run::read_local(installed)?;
     gate_new_behaviors(
@@ -2228,6 +2239,7 @@ fn gate_update_behaviors<H: Host>(
         &skilld_core::detect_behaviors(files),
         &skilld_core::detect_behaviors(&installed_files),
         allowed,
+        readings,
     )
 }
 
@@ -2723,6 +2735,7 @@ impl LocalHost {
             &skilld_core::detect_behaviors(&prepared.files),
             &[],
             allowed,
+            &prepared.behavior_readings,
         )?;
         let name = self
             .store(scope)
@@ -2862,6 +2875,7 @@ impl LocalHost {
             source_status,
             revision: Some(revision.as_str().to_owned()),
             omitted_files: prepared.omitted_files,
+            behavior_readings: prepared.behavior_readings,
         })))
     }
 
@@ -2894,6 +2908,7 @@ impl LocalHost {
             source_status: "local",
             revision: None,
             omitted_files: Vec::new(),
+            behavior_readings: Vec::new(),
         })))
     }
 
@@ -2933,6 +2948,7 @@ impl LocalHost {
             source_status: "local",
             revision: None,
             omitted_files: Vec::new(),
+            behavior_readings: Vec::new(),
         })))
     }
 
@@ -3487,6 +3503,7 @@ impl Host for LocalHost {
                 &pending.view.canonical_path,
                 &prepared.files,
                 allowed,
+                &prepared.behavior_readings,
             )?;
             let targets = pending
                 .view
@@ -4053,6 +4070,7 @@ fn apply_update_selection(
             &pending.view.canonical_path,
             &prepared.files,
             allowed,
+            &prepared.behavior_readings,
         )?;
         let targets = pending
             .view
