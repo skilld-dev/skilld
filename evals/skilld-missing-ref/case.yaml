@@ -1,0 +1,13 @@
+schema_version: '1.0'
+name: skilld-missing-ref
+description: A run of a Skill the registry does not have reports the skilld error and invents nothing.
+tags: [skilld, failure]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    Use skilld to run the Agent Skill `skilld-dev/no-such-repo/no-such-skill`
+    for this session.
+
+    End with a short summary of what happened. Quote any error code you saw.

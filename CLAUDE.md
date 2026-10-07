@@ -38,6 +38,12 @@ Score the skilld-maintained Skills against scaffolded projects:
 Every case runs a real Agent session and costs money. Read `evals/README.md`
 before changing a case or a grader.
 
+Run the same cases with opencode on a flat-rate model:
+
+```sh
+pnpm eval:opencode
+```
+
 ## Product boundary
 
 The native `skilld` CLI searches, runs, installs, lists, views, removes, updates, and verifies Skills.
