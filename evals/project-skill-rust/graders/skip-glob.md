@@ -3,7 +3,7 @@ type: regex
 target:
   source: file
   path: skills/ledgerd/SKILL.md
-pattern: "(--glob|-g)[ =]['\"]?!"
+pattern: "--glob[ =]['\"]?!|-g[ =]['\"]?!"
 match: contains
 weight: 1
 ---
