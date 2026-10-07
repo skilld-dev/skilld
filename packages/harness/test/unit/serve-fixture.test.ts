@@ -12,6 +12,10 @@ import { writeFileSync } from 'node:fs'
 writeFileSync(process.argv[3], String(process.pid))
 process.on('SIGTERM', () => {})
 createServer((request, response) => {
+  if (request.url === '/echo') {
+    response.setHeader('x-robots-tag', 'noindex')
+    return response.end(request.headers.host + ' ' + request.headers['user-agent'])
+  }
   if (request.url === '/crash')
     return request.socket.destroy()
   if (request.url === '/logo.png') {
@@ -104,6 +108,23 @@ describe('serve-fixture script', () => {
     const [response] = JSON.parse(await readFile(join(out, 'responses.json'), 'utf8')) as Array<{ file: string }>
     expect(response).toMatchObject({ path: '/logo.png', status: 201, contentType: 'image/png', bytes: 7 })
     expect([...await readFile(join(out, response!.file))]).toEqual([0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF, 0xFE])
+  })
+
+  it('sends each --header, Host included, and records the response headers', async () => {
+    const out = join(dir, 'headers')
+    const run = await collect(spawn(process.execPath, [script, '--header', 'Host: staging.example.com', '--header', 'User-Agent: Googlebot/2.1', '--fetch', '/echo', '--out', out, '--', 'sh', wrapper, '{port}']))
+
+    expect(run.code).toBe(0)
+    const [response] = JSON.parse(await readFile(join(out, 'responses.json'), 'utf8')) as Array<{ file: string, headers: Record<string, string> }>
+    expect(await readFile(join(out, response!.file), 'utf8')).toBe('staging.example.com Googlebot/2.1')
+    expect(response!.headers['x-robots-tag']).toBe('noindex')
+  })
+
+  it('refuses a header without a name and value', async () => {
+    const run = await collect(spawn(process.execPath, [script, '--header', 'Host', '--fetch', '/', '--', 'sh', wrapper, '{port}']))
+
+    expect(run.code).toBe(2)
+    expect(run.stderr).toContain('--header needs')
   })
 
   it('refuses a raw fetch without an output directory', async () => {

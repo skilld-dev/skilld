@@ -4,7 +4,8 @@ Review the prepared Skill at `{{SOURCE_PATH}}`.
 Write the result to `{{OUTPUT_PATH}}/review.json`.
 
 Read this Skill fully before reviewing.
-Write no other output files.
+`{{OUTPUT_PATH}}` holds only `review.json`. Build fixtures in a scratch directory outside it.
+Start each `message` with the line it concerns, such as `Line 42:`.
 Use this JSON shape:
 
 ```json

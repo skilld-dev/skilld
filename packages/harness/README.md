@@ -48,11 +48,14 @@ Both `Ok` and `Err` carry a `report`, so a failed run still reports its cost.
 A token count is `undefined` when the adapter does not report it.
 If the run fails before the Agent starts, `steps` is 0.
 `report.warnings` names each source file the Harness left out for size, each `onEvent` failure, and each cleanup problem.
-An `InvalidSkill` error lists each failed output check in `issues`.
+If the output fails a check, the Harness sends the issues back to the Agent in the same session, up to two times.
+Each repair turn adds its steps and usage to the report, and a warning names the issues.
+An `InvalidSkill` error lists each check that still fails in `issues`.
 
 The Harness checks the rules that the generation Skills state:
 
 - The frontmatter contains only `name` and `description`.
+- The description is one plain YAML line without double quotes, backticks, or `%`.
 - `SKILL.md` links every file under `references/`, by a Markdown link or an inline code path.
 - A package Skill keeps `SKILL.md` under 500 lines and writes at most eight reference files.
 - A project Skill points only at project files and gives at least one search command.

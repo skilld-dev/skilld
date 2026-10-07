@@ -58,6 +58,49 @@ function linking(paths: ReadonlyArray<string>): string {
   return paths.map(path => `- [${path}](${path})`).join('\n')
 }
 
+const promptText = (prompt: unknown): string => typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
+
+/** Runs a package Skill whose Agent writes `outputs[n]` on its nth turn, repeating the last one. */
+async function runTurns(outputs: ReadonlyArray<Output>) {
+  const packageDir = await mkdtemp(join(tmpdir(), 'skilld-checks-'))
+  await writeFile(join(packageDir, 'package.json'), '{"name":"example-package"}\n')
+  const destinationRoot = await mkdtemp(join(tmpdir(), 'skilld-checks-out-'))
+  let turn = 0
+  const fake = createFakeHarness({
+    async onPrompt({ sandbox, workDir }) {
+      const output = outputs[Math.min(turn++, outputs.length - 1)]!
+      for (const [path, content] of Object.entries(output))
+        await sandbox.writeTextFile({ path: join(workDir, 'skilld-output/example-package', path), content })
+    },
+  })
+  const result = await createSkillHarness({ harness: fake.harness, sandbox: createFakeSandboxProvider() }).run({
+    _tag: 'PackageSkill',
+    source: { _tag: 'LocalPackage', rootDir: packageDir, packageDir: '.' },
+    destination: { rootDir: destinationRoot, name: 'example-package' },
+  })
+  return { result, prompts: fake.capture.prompts.map(prompt => promptText(prompt.prompt)) }
+}
+
+describe('output check feedback', () => {
+  const invalid = { 'SKILL.md': `${frontmatter('example-package', 'license: MIT\n')}# Example\n` }
+  const valid = { 'SKILL.md': `${frontmatter('example-package')}# Example\n` }
+
+  it('sends failed checks back to the Agent in the same session and promotes the repaired Skill', async () => {
+    const { result, prompts } = await runTurns([invalid, valid])
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('Frontmatter field is not supported: license')
+  })
+
+  it('returns the remaining issues after two repair turns', async () => {
+    const { result, prompts } = await runTurns([invalid])
+
+    expect(issues(result)).toContain('Frontmatter field is not supported: license')
+    expect(prompts).toHaveLength(3)
+  })
+})
+
 describe('generated Skill output checks', () => {
   it('promotes a package Skill that links eight references', async () => {
     const files = references(8)
@@ -113,6 +156,17 @@ describe('generated Skill output checks', () => {
     })
 
     expect(result).toMatchObject({ _tag: 'Ok' })
+  })
+
+  it.each([
+    ['Use it when a task reports "Nuxt not detected".', 'quotes'],
+    ['Use it when %siteName prints in the title.', 'percent'],
+    ['Use it when `useHead` throws.', 'backtick'],
+    ['>\n  Use it for head tags.', 'block'],
+  ])('rejects a description a Skill loader can misread (%s)', async (description) => {
+    const result = await runPackageSkill({ 'SKILL.md': `---\nname: example-package\ndescription: ${description}\n---\n\n# Example\n` })
+
+    expect(issues(result)).toContain('Frontmatter description must be one plain line without double quotes, backticks, or %. Name symptoms in plain words.')
   })
 
   it('applies the frontmatter and link rules to a project Skill', async () => {
