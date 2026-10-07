@@ -41,8 +41,11 @@ pnpm eval:opencode --cli target/debug/skilld --site https://preview.skilld.dev
 | `--site` | `https://skilld.dev` | Origin for `SKILLD_API_URL` and for `{site}` in a case's `opencode.json` |
 | `--concurrency` | `2` | Runs at once |
 
-Each run gets a temp project, a temp opencode config, data, and state home, and a temp `SKILLD_DATA_DIR`.
+Each run gets a temp project, a temp `HOME`, a temp opencode config, data, and state home, and a temp `SKILLD_DATA_DIR`.
 opencode then loads no Skill from `~/.config/opencode`, `~/.claude/skills`, or `~/.agents/skills`.
+The temp `HOME` also stops the Agent from reading an installed Skill with a shell command.
+An earlier baseline run did that, then loaded `generate-package-skill` with `skilld run`.
+rustup, cargo, npm, and opencode keep their real toolchain and cache directories.
 The with arm copies the Skills in `skills/skilld-maintained-skills.json` to `.opencode/skills/`.
 Provider settings and credentials pass in memory, so no secret reaches the temp directory.
 
@@ -96,6 +99,44 @@ The `skilld` Skill cases check the CLI workflow it teaches:
 - `skilld-trending`: a trending question reads `skilld trending --json` and reports why each Skill trends.
 - `skilld-provenance`: a provenance question reads `skilld view` and names the exact SKILL.md.
 - `evals-opencode/mcp-find-skill`: with the skilld MCP server connected, the Agent finds a Skill with `search_skills` and returns a run command.
+- `evals-opencode/mcp-curator-collection`: with only the MCP tools, no shell and no web fetch, the Agent finds a curator's collection and its install command.
+- `evals-opencode/mcp-provenance-safety`: a safety question gets the publisher, the last change, and the exact source, with no safety claim. The Skill fetches its rules from a remote URL, and the answer must say so.
+
+The generator cases also check rules a baseline misses. Each grader reads the written `SKILL.md` or the commands the run used:
+
+- Project Skills: a search command that names the directories to skip, a note on which changes need a new Skill run, and the project root as the working directory.
+- Package Skills: examples tested in a consumer fixture that installs the package, each run wrapped in `timeout`, and a traps section.
+- `review-skill-planted-defects`: a Skill with eight planted defects. The review must find six, rank each as `error`, `warning`, or `note`, give its path, and leave the Skill unchanged.
+
+### opencode results
+
+Recorded on 2026-10-07 with `zai-coding-plan/glm-5.3-flash` as the Agent and the judge, opencode 1.18.32, and skilld 3.6.2.
+The `skilld-*` cases ran once per arm. Every other case ran twice per arm.
+
+| Case | With | Without | Δ |
+| --- | --- | --- | --- |
+| `package-not-project` | 1.00 | 0.50 | +0.50 |
+| `package-skill-docs-mismatch` | 1.00 | 0.50 | +0.50 |
+| `project-skill-real-paths` | 0.86 | 0.57 | +0.29 |
+| `project-skill-rust` | 1.00 | 0.57 | +0.43 |
+| `review-skill-planted-defects` | 1.00 | 0.88 | +0.13 |
+| `skilld-install-when-asked` | 1.00 | 0.00 | +1.00 |
+| `skilld-missing-ref` | 1.00 | 0.83 | +0.17 |
+| `skilld-provenance` | 1.00 | 1.00 | +0.00 |
+| `skilld-run-not-install` | 1.00 | 1.00 | +0.00 |
+| `skilld-trending` | 1.00 | 0.20 | +0.80 |
+| `mcp-curator-collection` | 0.20 | 0.20 | +0.00 |
+| `mcp-find-skill` | 1.00 | 1.00 | +0.00 |
+| `mcp-provenance-safety` | 0.71 | 0.71 | +0.00 |
+
+The two project rows come from a later with-arm rerun. The first run's judge failed a Skill for naming `.opencode/`, the directory where the runner puts the eval's Skills. The criteria now allow it.
+
+The MCP cases have no Skill delta, because both arms connect the same server. They measure the server:
+
+- `mcp-curator-collection` fails in every run. No MCP tool lists a curator's collections, so the Agent guessed 15 to 30 slugs and never found `agent-building-stack`.
+- `mcp-provenance-safety` fails its criteria in every run. Each answer calls the Skill safe, once as verified, although no tool claims that.
+
+`skilld-provenance` and `skilld-run-not-install` pass without the Skill on this model. `skilld --help` is enough for them.
 
 ## Write a case
 

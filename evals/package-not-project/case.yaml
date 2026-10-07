@@ -13,5 +13,4 @@ execution:
     teaches an Agent to use `tinyfmt` in someone else's codebase. Write it to
     `skills/tinyfmt/SKILL.md`.
 
-    End with a short summary that says which skilld-maintained Skill you followed
-    and why.
+    End with a short summary of how you checked the examples in the Skill.
