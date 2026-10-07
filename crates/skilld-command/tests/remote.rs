@@ -5609,6 +5609,81 @@ To find more Skills, run skilld search skilld.\n"
     );
 }
 
+fn search_answer(refs: &[(&str, &str, &str)]) -> HttpResponse {
+    let items = refs
+        .iter()
+        .map(|(owner, repository, name)| {
+            json!({
+                "name": name,
+                "description": null,
+                "source": {
+                    "provider": "github",
+                    "owner": owner,
+                    "repository": repository,
+                    "selector": { "type": "named-skill", "name": name },
+                },
+                "stargazerCount": 0,
+            })
+        })
+        .collect::<Vec<_>>();
+    response(
+        200,
+        serde_json::to_vec(&json!({ "items": items, "total": refs.len() })).unwrap(),
+    )
+}
+
+#[test]
+fn a_missing_skill_never_suggests_unrelated_search_results() {
+    let remote = unpinned(vec![
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        registry_page(&[]),
+        search_answer(&[
+            ("suchet-kapoor", "sk-agentic-ai", "sk-coding"),
+            ("acme", "toolkit", "lint-rules"),
+        ]),
+    ]);
+
+    let (exit, _, stderr) = run_remote_cli(
+        remote,
+        &["skilld", "run", "skilld-dev/no-such-repo/no-such-skill"],
+    );
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "SOURCE_NOT_FOUND: skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name.\n\
+Next step: Do not retry this ref. Check the owner, Repository, and Skill name. \
+To find more Skills, run skilld search no such skill.\n"
+    );
+}
+
+#[test]
+fn a_missing_skill_suggests_a_search_result_with_a_near_name() {
+    let remote = unpinned(vec![
+        failed_resolution("SOURCE_NOT_FOUND", false, None),
+        registry_page(&[]),
+        search_answer(&[
+            ("suchet-kapoor", "sk-agentic-ai", "sk-coding"),
+            ("vercel-labs", "agent-skills", "web-design-guidelines"),
+            ("acme", "web", "web-design-guidelines-extended"),
+        ]),
+    ]);
+
+    let (exit, _, stderr) = run_remote_cli(
+        remote,
+        &["skilld", "run", "vercel/agent-skills/web-design-guideline"],
+    );
+
+    assert_eq!(exit, 1);
+    assert_eq!(
+        stderr,
+        "SOURCE_NOT_FOUND: skilld.dev found no Skill at this source. Check the owner, Repository, and Skill name.\n\
+Next step: Do not retry this ref. Did you mean one of these? vercel-labs/agent-skills/web-design-guidelines, \
+acme/web/web-design-guidelines-extended. \
+To find more Skills, run skilld search web design guideline.\n"
+    );
+}
+
 #[test]
 fn a_network_failure_says_the_skill_did_not_cause_it() {
     let remote = unpinned(vec![]);
