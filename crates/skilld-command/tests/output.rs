@@ -739,7 +739,7 @@ fn strip_ansi(value: &str) -> String {
         "\u{1b}[2m",
         "\u{1b}[36m",
         "\u{1b}[33m",
-        "\u{1b}[34m",
+        "\u{1b}[94m",
         "\u{1b}[0m",
     ]
     .into_iter()
