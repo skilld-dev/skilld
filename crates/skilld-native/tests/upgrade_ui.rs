@@ -1,4 +1,6 @@
-use skilld_native::upgrade_ui::{UpgradeChoice, UpgradeKey, UpgradePrompt, render_snapshot};
+use skilld_native::upgrade_ui::{
+    UpgradeChoice, UpgradeKey, UpgradePrompt, render_banner, render_snapshot,
+};
 
 #[test]
 fn the_prompt_accepts_defers_and_dismisses() {
@@ -33,8 +35,8 @@ fn the_prompt_shows_versions_action_and_choices_without_color() {
         "Run pnpm add --global skilld@3.7.0",
         80,
         16,
+        false,
     );
-    println!("{output}");
     assert!(
         output.contains("Upgrade available: 3.6.7 -> 3.7.0"),
         "{output}"
@@ -54,6 +56,27 @@ fn the_prompt_shows_versions_action_and_choices_without_color() {
 }
 
 #[test]
+fn color_output_resets_styles_and_plain_banners_have_no_escape_codes() {
+    let prompt = render_snapshot(
+        "3.6.7",
+        "3.7.0",
+        "Run pnpm add --global skilld@3.7.0",
+        80,
+        13,
+        true,
+    );
+    let banner = render_banner("3.6.7", "3.7.0", "Restart skilld to upgrade.", 80, true);
+    println!("COLOR_PREVIEW_START\n{prompt}\n\n{banner}\nCOLOR_PREVIEW_END");
+    for output in [&prompt, &banner] {
+        assert!(output.contains("\x1b[38;2;"), "{output}");
+        assert!(output.lines().all(|line| line.ends_with("\x1b[0m")));
+    }
+    let plain = render_banner("3.6.7", "3.7.0", "Restart skilld to upgrade.", 40, false);
+    assert!(plain.contains("Upgrade available: 3.6.7 -> 3.7.0"));
+    assert!(!plain.contains('\x1b'));
+}
+
+#[test]
 fn the_prompt_fits_a_narrow_terminal() {
     let output = render_snapshot(
         "3.6.7",
@@ -61,6 +84,7 @@ fn the_prompt_fits_a_narrow_terminal() {
         "Run pnpm add --global skilld@3.7.0",
         40,
         16,
+        false,
     );
     assert!(output.contains("Upgrade now"), "{output}");
     assert!(

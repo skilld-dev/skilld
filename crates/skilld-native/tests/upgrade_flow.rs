@@ -60,7 +60,6 @@ impl Fixture {
             .env("SKILLD_DATA_DIR", self.root.path())
             .env("SKILLD_LAUNCHER", "pnpm")
             .env("SKILLD_NO_WEEKLY", "1")
-            .env("NO_COLOR", "1")
             .env("TERM", "xterm-256color")
             .current_dir(self.root.path());
         command
@@ -144,6 +143,7 @@ fn restarting_with_a_cached_release_prompts_and_runs_the_package_manager() {
     let fixture = Fixture::new(0);
     let (success, output) = fixture.terminal(&["list", "--global"], Some(b"\r"), None);
     assert!(success, "{output}");
+    assert!(output.contains("\x1b[38;2;"), "{output}");
     assert!(
         output.contains("Upgrade complete. Run your command again."),
         "{output}"
@@ -159,9 +159,15 @@ fn restarting_with_a_cached_release_prompts_and_runs_the_package_manager() {
 #[test]
 fn not_now_runs_the_original_command_without_installing() {
     let fixture = Fixture::new(0);
-    let (success, output) = fixture.terminal(&["list", "--global"], Some(b"\x1b[B\r"), None);
+    let (success, output) = fixture.terminal(
+        &["list", "--global"],
+        Some(b"\x1b[B\r"),
+        Some(("NO_COLOR", "1")),
+    );
     assert!(success, "{output}");
     assert!(output.contains("Restart skilld to upgrade."), "{output}");
+    assert!(!output.contains("\x1b[38;"), "{output}");
+    assert!(!output.contains("\x1b[48;"), "{output}");
     assert!(!fixture.root.path().join("manager-args").exists());
     assert!(!fixture.root.path().join("upgrade-dismissed").exists());
 }

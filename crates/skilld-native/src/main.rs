@@ -415,7 +415,8 @@ fn print_upgrade_notice(session: Option<&UpgradeSession>) {
                 VERSION,
                 &notice.version,
                 guidance,
-                terminal_width()
+                terminal_width(),
+                !environment_present("NO_COLOR")
             )
         );
     }
