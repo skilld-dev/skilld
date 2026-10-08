@@ -73,6 +73,21 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/go/pkg/mod/**",
     "**/.gradle/caches/**",
     "**/.docker/**",
+    "**/.yarn/**",
+    "**/.intellijPlatform/**",
+    "**/.unlighthouse/**",
+    "**/kv-dump/**",
+    "**/*.trickplay/**",
+    "**/google-cloud-sdk/**",
+    "**/.gemini/tmp/**",
+    "**/.gemini/history/**",
+    "**/.gemini/antigravity-browser-profile/**",
+    "**/.config/*/User/History/**",
+    "**/.config/google-chrome-*/**",
+    "**/.config/cef_user_data/**",
+    "**/.config/JetBrains/**/chrome-user-data/**",
+    "**/.config/JetBrains/**/jdbc-drivers/**",
+    "**/.config/JetBrains/**/javascript/nodejs/**",
 ];
 
 #[derive(Clone, Debug, Args)]
@@ -116,6 +131,41 @@ pub struct ScanContext {
     pub global_store: PathBuf,
     pub global_targets: Vec<ResolvedTarget>,
     pub skills_sh_global_lock: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScanPhase {
+    Discover,
+    Fingerprint { completed: usize, total: usize },
+    Sources { completed: usize, total: usize },
+}
+
+#[derive(Clone, Debug)]
+pub struct ScanProgress {
+    pub phase: ScanPhase,
+    pub current_path: PathBuf,
+    pub visited_directories: usize,
+    pub skipped_directories: usize,
+    pub found_skills: usize,
+    pub problems: usize,
+}
+
+impl ScanProgress {
+    pub fn from_report(
+        report: &DoctorReport,
+        phase: ScanPhase,
+        current_path: PathBuf,
+        found_skills: usize,
+    ) -> Self {
+        Self {
+            phase,
+            current_path,
+            visited_directories: report.visited_directories,
+            skipped_directories: report.skipped_directories,
+            found_skills,
+            problems: report.problems.len(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -273,7 +323,20 @@ fn target_root(path: &Path, context: &ScanContext) -> bool {
 }
 
 pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorReport, CommandError> {
+    scan_with_progress(options, context, &mut |_| {})
+}
+
+pub fn scan_with_progress(
+    options: &DoctorOptions,
+    context: &ScanContext,
+    progress: &mut impl FnMut(ScanProgress),
+) -> Result<DoctorReport, CommandError> {
     let (patterns, excluded) = excludes(options)?;
+    let home_boundary = if options.roots.is_empty() {
+        Some(fs::canonicalize(&context.home).map_err(|e| io_error(&context.home, e))?)
+    } else {
+        None
+    };
     let roots = if options.roots.is_empty() {
         vec![context.home.clone()]
     } else {
@@ -296,16 +359,12 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
         skipped_directories: 0,
     };
     let mut pending = roots.iter().map(|p| (p.clone(), 0)).collect::<Vec<_>>();
-    // Explicit global target roots preserve environment-specific paths outside HOME.
-    if options.roots.is_empty() {
-        pending.extend(
-            context
-                .global_targets
-                .iter()
-                .filter(|t| t.root.is_dir())
-                .map(|t| (t.root.clone(), 0)),
-        );
-    }
+    progress(ScanProgress::from_report(
+        &report,
+        ScanPhase::Discover,
+        roots[0].clone(),
+        0,
+    ));
     let mut visited = BTreeSet::new();
     let mut found = BTreeSet::new();
     while let Some((path, depth)) = pending.pop() {
@@ -328,6 +387,14 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
             break;
         }
         report.visited_directories += 1;
+        if report.visited_directories.is_multiple_of(128) {
+            progress(ScanProgress::from_report(
+                &report,
+                ScanPhase::Discover,
+                path.clone(),
+                found.len(),
+            ));
+        }
         let entries = match fs::read_dir(&path) {
             Ok(entries) => entries,
             Err(e) => {
@@ -366,6 +433,17 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
                     continue;
                 }
             };
+            if kind.is_symlink()
+                && let Some(home) = &home_boundary
+                && let Ok(real) = fs::canonicalize(&child)
+                && !real.starts_with(home)
+            {
+                report.skipped_directories += 1;
+                if target_root(&path, context) || target_root(&child, context) {
+                    report.problems.push(ScanProblem { path: child, message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
+                }
+                continue;
+            }
             if entry.file_name() == "SKILL.md" && (kind.is_file() || kind.is_symlink()) {
                 is_skill = true;
             }
@@ -395,11 +473,18 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
                     Ok(entries) => {
                         for e in entries {
                             match e {
-                                Ok(e)
-                                    if !excluded.is_match(e.path())
-                                        && e.path().join("SKILL.md").is_file() =>
-                                {
-                                    found.insert(e.path());
+                                Ok(e) if !excluded.is_match(e.path()) => {
+                                    if let Some(home) = &home_boundary
+                                        && let Ok(real) = fs::canonicalize(e.path())
+                                        && !real.starts_with(home)
+                                    {
+                                        report.skipped_directories += 1;
+                                        report.problems.push(ScanProblem { path: e.path(), message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
+                                        continue;
+                                    }
+                                    if e.path().join("SKILL.md").is_file() {
+                                        found.insert(e.path());
+                                    }
                                 }
                                 Ok(_) => {}
                                 Err(e) => report.problems.push(ScanProblem {
@@ -437,6 +522,14 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
     let mut by_canonical: BTreeMap<PathBuf, Vec<SkillLocation>> = BTreeMap::new();
     for path in found {
         match fs::canonicalize(&path) {
+            Ok(canonical)
+                if home_boundary
+                    .as_ref()
+                    .is_some_and(|home| !canonical.starts_with(home)) =>
+            {
+                report.skipped_directories += 1;
+                report.problems.push(ScanProblem { path, message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
+            }
             Ok(canonical) => by_canonical
                 .entry(canonical)
                 .or_default()
@@ -448,7 +541,17 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
         }
     }
     let mut locks: BTreeMap<PathBuf, Vec<ForeignRecord>> = BTreeMap::new();
+    let total = by_canonical.len();
     for (canonical, mut paths) in by_canonical {
+        progress(ScanProgress::from_report(
+            &report,
+            ScanPhase::Fingerprint {
+                completed: report.skills.len(),
+                total,
+            },
+            canonical.clone(),
+            total,
+        ));
         paths.sort_by(|a, b| a.path.cmp(&b.path));
         let name = paths
             .iter()
@@ -470,6 +573,7 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
             &name,
             &paths,
             context,
+            home_boundary.as_deref(),
             &mut locks,
             &mut report.problems,
         );
@@ -525,6 +629,15 @@ pub fn scan(options: &DoctorOptions, context: &ScanContext) -> Result<DoctorRepo
     });
     report.claude_files.sort();
     report.claude_files.dedup();
+    progress(ScanProgress::from_report(
+        &report,
+        ScanPhase::Fingerprint {
+            completed: total,
+            total,
+        },
+        roots[0].clone(),
+        total,
+    ));
     Ok(report)
 }
 
@@ -533,6 +646,7 @@ fn owner(
     name: &str,
     paths: &[SkillLocation],
     context: &ScanContext,
+    home_boundary: Option<&Path>,
     locks: &mut BTreeMap<PathBuf, Vec<ForeignRecord>>,
     problems: &mut Vec<ScanProblem>,
 ) -> DoctorOwner {
@@ -554,6 +668,9 @@ fn owner(
         .collect::<BTreeSet<_>>();
     for store in stores {
         let lock = store.join("skilld-lock.yaml");
+        if let Some(owner) = outside_metadata(&lock, context, home_boundary, problems) {
+            return owner;
+        }
         if !lock.is_file() {
             continue;
         }
@@ -580,6 +697,9 @@ fn owner(
             || context.skills_sh_global_lock.clone(),
             |r| r.join("skills-lock.json"),
         );
+        if let Some(owner) = outside_metadata(&lock, context, home_boundary, problems) {
+            return owner;
+        }
         if !locks.contains_key(&lock) {
             let records = if fs::symlink_metadata(&lock).is_ok() {
                 match read_foreign_lock(&lock, global) {
@@ -609,6 +729,26 @@ fn owner(
     } else {
         DoctorOwner::Source
     }
+}
+
+fn outside_metadata(
+    path: &Path,
+    context: &ScanContext,
+    home_boundary: Option<&Path>,
+    problems: &mut Vec<ScanProblem>,
+) -> Option<DoctorOwner> {
+    let home = home_boundary?;
+    if path.starts_with(&context.home)
+        && fs::canonicalize(path).map_or(true, |real| real.starts_with(home))
+    {
+        return None;
+    }
+    let message = "Ownership metadata is outside the home directory. Pass scan roots explicitly to inspect it.".to_owned();
+    problems.push(ScanProblem {
+        path: path.to_owned(),
+        message: message.clone(),
+    });
+    Some(DoctorOwner::Unavailable { message })
 }
 
 pub fn render_plain(report: &DoctorReport) -> String {

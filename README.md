@@ -373,6 +373,9 @@ Use `--mode copy` or `--mode symlink` to control target writes.
 
 `skilld doctor` scans your home directory and opens a terminal UI.
 Pass roots to narrow the scan. Use `--json` or `--plain` for a read-only report.
+The default scan skips links and ownership metadata outside your home directory.
+Pass explicit roots when you need those locations.
+Progress shows the current phase, directory counts, and elapsed time.
 The scan includes hidden `.claude/skills` directories and lists `CLAUDE.md` and `.claude/commands` files separately.
 
 Default exclude globs prune dependencies, builds, caches, plugin staging, sessions, backups, and fixtures before reading their children.
@@ -383,6 +386,9 @@ Source and plugin files retain their owners.
 
 Press Tab to show skills.sh installs separately. Choose a Skill, then press `m` to migrate or `d` to remove.
 Review affected Agent targets before pressing Enter. Escape cancels.
+Press `/` to filter by name, owner, or path. Left and right switch focus between the list and details.
+Press `p` for scan problems, `n` for the full notice, or `?` for help.
+After cleanup, quitting prints the completed action and backup path to your shell.
 Migration keeps the scope and copy or link mode of each observed target.
 It verifies source contents, preserves recorded branches, and requests approval for Skill behaviors.
 When the recorded Git tree matches the installed files, migration can also replace them with the displayed source commit.
@@ -505,6 +511,7 @@ The skilld-maintained Skills:
 - [`update-package-skill`](./skills/update-package-skill): update that Skill after a release, testing only what changed
 - [`generate-project-skill`](./skills/generate-project-skill): draft a Skill from a project you maintain
 - [`review-skill`](./skills/review-skill): review a Skill before you publish it
+- [`skilld-tui-design`](./skills/skilld-tui-design): design and verify terminal output and interactive CLI flows
 
 When you run these Skills directly, you see every instruction and review every change.
 

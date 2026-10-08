@@ -5,7 +5,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::doctor::{
-    DoctorOptions, DoctorOwner, DoctorReport, DoctorSkill, ScanContext, SourceMatch,
+    DoctorOptions, DoctorOwner, DoctorReport, DoctorSkill, ScanContext, ScanPhase, ScanProgress,
+    SourceMatch,
 };
 use crate::doctor_metadata::{ForeignRecord, fingerprint, foreign_lock_without};
 use crate::{
@@ -102,17 +103,53 @@ impl LocalHost {
     }
 
     pub fn doctor_scan(&self, options: &DoctorOptions) -> Result<DoctorReport, CommandError> {
-        let mut report = crate::doctor::scan(options, &self.doctor_context()?)?;
+        self.doctor_scan_with_progress(options, &mut |_| {})
+    }
+
+    pub fn doctor_scan_with_progress(
+        &self,
+        options: &DoctorOptions,
+        progress: &mut impl FnMut(ScanProgress),
+    ) -> Result<DoctorReport, CommandError> {
+        let mut report =
+            crate::doctor::scan_with_progress(options, &self.doctor_context()?, progress)?;
         if options.check_sources {
             let mut checked = 0;
+            let total = report
+                .skills
+                .iter()
+                .filter(|s| matches!(s.owner, DoctorOwner::SkillsSh { .. } | DoctorOwner::Unknown))
+                .count()
+                .min(20);
+            let mut status = ScanProgress::from_report(
+                &report,
+                ScanPhase::Sources {
+                    completed: 0,
+                    total,
+                },
+                PathBuf::new(),
+                report.skills.len(),
+            );
             for skill in &mut report.skills {
                 if checked >= 20 {
                     break;
                 }
+                if !matches!(
+                    skill.owner,
+                    DoctorOwner::SkillsSh { .. } | DoctorOwner::Unknown
+                ) {
+                    continue;
+                }
+                status.phase = ScanPhase::Sources {
+                    completed: checked,
+                    total,
+                };
+                status.current_path = skill.canonical_path.clone();
+                progress(status.clone());
+                checked += 1;
                 let selector = match &skill.owner {
                     DoctorOwner::SkillsSh { record } => source_selector(record),
                     DoctorOwner::Unknown => {
-                        checked += 1;
                         let result = self
                             .remote_provider()?
                             .search(&skill.name, 5)
@@ -146,7 +183,6 @@ impl LocalHost {
                     }
                     _ => continue,
                 };
-                checked += 1;
                 let result = selector.and_then(|selector| {
                     let prepared = self
                         .remote_provider()?

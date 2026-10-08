@@ -70,6 +70,7 @@ describe('skilld-maintained Skills', () => {
       'generate-project-skill',
       'review-skill',
       'skilld',
+      'skilld-tui-design',
     ])
   })
 })

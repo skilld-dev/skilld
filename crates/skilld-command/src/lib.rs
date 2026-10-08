@@ -26,6 +26,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
@@ -1096,7 +1097,7 @@ where
                     )
                 }
             } else if display || matches!(requested_mode, OutputMode::Human { .. }) {
-                terminal_safe_clap_text(&args, error.kind()).into_bytes()
+                terminal_safe_clap_text(&args, error.kind(), requested_mode).into_bytes()
             } else {
                 let message = error
                     .to_string()
@@ -1321,10 +1322,33 @@ fn v2_command(mut args: Vec<OsString>) -> V2Command {
     V2Command::Current(args)
 }
 
-fn terminal_safe_clap_text(args: &[OsString], expected_kind: ErrorKind) -> String {
+fn terminal_safe_clap_text(
+    args: &[OsString],
+    expected_kind: ErrorKind,
+    mode: OutputMode,
+) -> String {
+    let styles = Styles::styled()
+        .header(AnsiColor::Cyan.on_default().bold())
+        .usage(AnsiColor::Cyan.on_default().bold())
+        .literal(AnsiColor::Cyan.on_default().bold())
+        .error(AnsiColor::Red.on_default().bold())
+        .invalid(AnsiColor::Yellow.on_default())
+        .valid(AnsiColor::Green.on_default());
+    let mut command = Cli::command().styles(styles);
+    let color = matches!(mode, OutputMode::Human { color: true, .. });
+    if let OutputMode::Human { width, .. } = mode {
+        command = command.term_width(usize::from(width));
+    }
     let safe_args = args.iter().map(terminal_safe_argument);
-    let text = match Cli::try_parse_from(safe_args) {
-        Err(error) if error.kind() == expected_kind => error.to_string(),
+    let text = match command.try_get_matches_from(safe_args) {
+        Err(error) if error.kind() == expected_kind => {
+            if color {
+                // Arguments are escaped before Clap formats them. Only Clap's
+                // own styles may contain terminal control sequences here.
+                return error.render().ansi().to_string();
+            }
+            error.to_string()
+        }
         _ => "error: invalid command arguments\n\nFor more information, try '--help'.\n".to_owned(),
     };
     let mut safe = String::new();
