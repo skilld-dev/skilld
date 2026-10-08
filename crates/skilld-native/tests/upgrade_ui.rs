@@ -67,8 +67,20 @@ fn color_output_resets_styles_and_plain_banners_have_no_escape_codes() {
     );
     let banner = render_banner("3.6.7", "3.7.0", "Restart skilld to upgrade.", 80, true);
     println!("COLOR_PREVIEW_START\n{prompt}\n\n{banner}\nCOLOR_PREVIEW_END");
+    assert!(
+        prompt.contains("\x1b[7m"),
+        "The selection must reverse inherited colors."
+    );
+    assert!(
+        prompt.contains("\x1b[2m"),
+        "Secondary text must dim the inherited foreground."
+    );
     for output in [&prompt, &banner] {
-        assert!(output.contains("\x1b[38;2;"), "{output}");
+        assert!(
+            !output.contains(";2;"),
+            "RGB overrides the terminal palette: {output}"
+        );
+        assert!(output.contains("\x1b[38;5;6m"), "{output}");
         assert!(output.lines().all(|line| line.ends_with("\x1b[0m")));
     }
     let plain = render_banner("3.6.7", "3.7.0", "Restart skilld to upgrade.", 40, false);

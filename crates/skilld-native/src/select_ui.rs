@@ -6,11 +6,12 @@
 
 use std::io;
 
+use crate::terminal_theme::{selection, tone};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use skilld_command::{CommandError, SkillChooser};
@@ -307,12 +308,9 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
                     } else {
                         "No Skill matches "
                     },
-                    Style::default().fg(theme(color, Color::DarkGray)),
+                    tone(color, Color::DarkGray),
                 ),
-                Span::styled(
-                    sanitize(model.filter()),
-                    Style::default().fg(theme(color, Color::Yellow)),
-                ),
+                Span::styled(sanitize(model.filter()), tone(color, Color::Yellow)),
             ])),
             areas[1],
         );
@@ -335,7 +333,7 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
     frame.render_stateful_widget(
         List::new(items)
             .highlight_symbol(CURSOR)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD)),
+            .highlight_style(selection()),
         areas[1],
         &mut state,
     );
@@ -346,30 +344,26 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
 fn header(model: &PickerModel, color: bool) -> Paragraph<'static> {
     let (chosen, total) = model.counts();
     let chosen_style = if chosen == 0 {
-        Style::default().fg(theme(color, Color::DarkGray))
+        tone(color, Color::DarkGray)
     } else {
-        Style::default()
-            .fg(theme(color, Color::Green))
-            .add_modifier(Modifier::BOLD)
+        tone(color, Color::Green).add_modifier(Modifier::BOLD)
     };
     let shown = model.visible().len();
     let mut counts = vec![
         Span::styled(
             sanitize(model.reference()),
-            Style::default()
-                .fg(theme(color, Color::Cyan))
-                .add_modifier(Modifier::BOLD),
+            tone(color, Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" names {total} Skills. "),
-            Style::default().fg(theme(color, Color::Reset)),
+            tone(color, Color::Reset),
         ),
         Span::styled(format!("{chosen} chosen"), chosen_style),
     ];
     if shown != total {
         counts.push(Span::styled(
             format!(", {shown} shown"),
-            Style::default().fg(theme(color, Color::DarkGray)),
+            tone(color, Color::DarkGray),
         ));
     }
     Paragraph::new(vec![Line::from(counts), filter_line(model, color)])
@@ -381,22 +375,14 @@ fn filter_line(model: &PickerModel, color: bool) -> Line<'static> {
         return Line::from(String::new());
     }
     let mut spans = vec![
-        Span::styled(
-            "filter ",
-            Style::default().fg(theme(color, Color::DarkGray)),
-        ),
+        Span::styled("filter ", tone(color, Color::DarkGray)),
         Span::styled(
             sanitize(model.filter()),
-            Style::default()
-                .fg(theme(color, Color::Yellow))
-                .add_modifier(Modifier::BOLD),
+            tone(color, Color::Yellow).add_modifier(Modifier::BOLD),
         ),
     ];
     if model.filtering() {
-        spans.push(Span::styled(
-            "\u{2588}",
-            Style::default().fg(theme(color, Color::Yellow)),
-        ));
+        spans.push(Span::styled("\u{2588}", tone(color, Color::Yellow)));
     }
     Line::from(spans)
 }
@@ -406,21 +392,16 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
     let mark = if choice.selected {
         Span::styled(
             MARK_CHOSEN,
-            Style::default()
-                .fg(theme(color, Color::Green))
-                .add_modifier(Modifier::BOLD),
+            tone(color, Color::Green).add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled(
-            MARK_FREE,
-            Style::default().fg(theme(color, Color::DarkGray)),
-        )
+        Span::styled(MARK_FREE, tone(color, Color::DarkGray))
     };
     let name = truncate(&sanitize(&choice.label), name_width);
     let name_style = if choice.selected {
-        Style::default().fg(theme(color, Color::Reset))
+        tone(color, Color::Reset)
     } else {
-        Style::default().fg(theme(color, Color::Gray))
+        tone(color, Color::Gray)
     };
     let padding = name_width.saturating_sub(UnicodeWidthStr::width(name.as_str()));
     let mut spans = vec![
@@ -439,7 +420,7 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
         if room > 1 {
             spans.push(Span::styled(
                 truncate(&clean(description), room),
-                Style::default().fg(theme(color, Color::DarkGray)),
+                tone(color, Color::DarkGray),
             ));
         }
     }
@@ -450,10 +431,8 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
 ///
 /// Typing a filter takes the letter keys, so the hints say what is left.
 fn footer(model: &PickerModel, color: bool, width: u16) -> Paragraph<'static> {
-    let key = Style::default()
-        .fg(theme(color, Color::Cyan))
-        .add_modifier(Modifier::BOLD);
-    let text = Style::default().fg(theme(color, Color::DarkGray));
+    let key = tone(color, Color::Cyan).add_modifier(Modifier::BOLD);
+    let text = tone(color, Color::DarkGray);
     if width < 50 {
         let lines = if model.choices().is_empty() {
             ["No Skills to install", "Esc cancel"]
@@ -515,22 +494,6 @@ fn footer(model: &PickerModel, color: bool, width: u16) -> Paragraph<'static> {
         ),
         Line::from(spans),
     ])
-}
-
-/// Colors are off under NO_COLOR, so every style falls back to the default.
-const fn theme(color: bool, value: Color) -> Color {
-    if !color {
-        return Color::Reset;
-    }
-    let rgb = match value {
-        Color::Cyan => skilld_ui::theme::BRAND,
-        Color::Green => skilld_ui::theme::SUCCESS,
-        Color::Yellow => skilld_ui::theme::WARN,
-        Color::Red => skilld_ui::theme::ERROR,
-        Color::DarkGray | Color::Gray => skilld_ui::theme::DIM,
-        _ => return value,
-    };
-    Color::Rgb(rgb.0, rgb.1, rgb.2)
 }
 
 /// One line of text, with runs of whitespace collapsed.

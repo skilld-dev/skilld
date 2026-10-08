@@ -7,45 +7,17 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::terminal_theme::{selection, tone};
 use crate::update_ui::{InteractiveUpdateError, NativeTerminalLifecycle, with_restored_terminal};
 
-const ACCENT: Color = Color::Rgb(
-    skilld_ui::theme::BRAND.0,
-    skilld_ui::theme::BRAND.1,
-    skilld_ui::theme::BRAND.2,
-);
-const SUCCESS: Color = Color::Rgb(
-    skilld_ui::theme::SUCCESS.0,
-    skilld_ui::theme::SUCCESS.1,
-    skilld_ui::theme::SUCCESS.2,
-);
-const MUTED: Color = Color::Rgb(
-    skilld_ui::theme::DIM.0,
-    skilld_ui::theme::DIM.1,
-    skilld_ui::theme::DIM.2,
-);
-const COMMAND: Color = Color::Rgb(
-    skilld_ui::theme::WARN.0,
-    skilld_ui::theme::WARN.1,
-    skilld_ui::theme::WARN.2,
-);
-const SELECTED: Color = Color::Rgb(
-    skilld_ui::theme::SELECTED.0,
-    skilld_ui::theme::SELECTED.1,
-    skilld_ui::theme::SELECTED.2,
-);
-
-fn tone(color: bool, foreground: Color) -> Style {
-    if color {
-        Style::default().fg(foreground)
-    } else {
-        Style::default()
-    }
-}
+const ACCENT: Color = Color::Cyan;
+const SUCCESS: Color = Color::Green;
+const MUTED: Color = Color::DarkGray;
+const COMMAND: Color = Color::Cyan;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UpgradeChoice {
@@ -201,9 +173,7 @@ fn view(
         frame.render_stateful_widget(
             List::new(["Upgrade now", "Not now", "Don't remind me for this version"])
                 .highlight_symbol("> ")
-                .highlight_style(
-                    Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
-                ),
+                .highlight_style(selection()),
             areas[2],
             &mut ListState::default().with_selected(Some(model.cursor)),
         );
@@ -258,14 +228,7 @@ fn view(
         ListItem::new("Don't remind me for this version"),
     ])
     .highlight_symbol("> ")
-    .highlight_style(if color {
-        Style::default()
-            .fg(ACCENT)
-            .bg(SELECTED)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().add_modifier(Modifier::BOLD)
-    });
+    .highlight_style(selection());
     frame.render_stateful_widget(
         options,
         areas[1],
@@ -328,6 +291,12 @@ fn snapshot_text(terminal: &Terminal<TestBackend>, color: bool) -> String {
                         line.push_str("\x1b[0m");
                         line.push_str(&ansi_color(cell.fg, false));
                         line.push_str(&ansi_color(cell.bg, true));
+                        if cell.modifier.contains(Modifier::DIM) {
+                            line.push_str("\x1b[2m");
+                        }
+                        if cell.modifier.contains(Modifier::REVERSED) {
+                            line.push_str("\x1b[7m");
+                        }
                         if cell.modifier.contains(Modifier::BOLD) {
                             line.push_str("\x1b[1m");
                         }
