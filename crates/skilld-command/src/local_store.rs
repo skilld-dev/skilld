@@ -1847,7 +1847,12 @@ fn reject_symlink_ancestors(path: &Path) -> io::Result<()> {
 }
 
 fn remove_path(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    use std::os::windows::fs::FileTypeExt;
+
     match fs::symlink_metadata(path) {
+        #[cfg(windows)]
+        Ok(metadata) if metadata.file_type().is_symlink_dir() => fs::remove_dir(path),
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
             fs::remove_dir_all(path)
         }

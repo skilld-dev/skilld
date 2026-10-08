@@ -28,6 +28,8 @@ jobs:
         run: cargo test --locked -p skilld-native --test install_copy
       - name: Store transactions and Windows file locks
         run: cargo test --locked -p skilld-command --test local_store
+      - name: Artifact paths and Windows filenames
+        run: cargo test --locked -p skilld-core --test remote
       - name: Authorization URL browser routing
         run: cargo test --locked -p skilld-native --test browser
 
