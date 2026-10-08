@@ -2036,6 +2036,7 @@ dependencies = [
  "base64",
  "crossterm",
  "ed25519-dalek",
+ "fs4",
  "gethostname",
  "nix",
  "opener",

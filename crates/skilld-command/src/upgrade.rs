@@ -7,8 +7,6 @@ use skilld_core::is_release_version;
 
 /// How long a latest-version check stays fresh.
 pub const CHECK_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
-/// How long a failed standalone upgrade waits before it retries the same version.
-pub const RETRY_INTERVAL_SECONDS: u64 = 60 * 60;
 /// The largest release binary skilld downloads.
 pub const MAX_BINARY_BYTES: usize = 64 * 1024 * 1024;
 pub const RELEASE_MANIFEST_ASSET: &str = "skilld-release.txt";
@@ -49,16 +47,6 @@ impl PackageRunner {
             _ => None,
         }
     }
-
-    const fn upgrade_command(self) -> &'static str {
-        match self {
-            Self::Npx => "npx skilld@latest",
-            Self::Npm => "npm install --global skilld",
-            Self::Pnpm => "pnpm add --global skilld",
-            Self::Yarn => "yarn global add skilld",
-            Self::Bun => "bun add --global skilld",
-        }
-    }
 }
 
 /// The upgrade state skilld keeps in its data directory.
@@ -71,11 +59,7 @@ pub struct UpgradeState {
     #[serde(default)]
     pub latest: Option<String>,
     #[serde(default)]
-    pub attempted_version: Option<String>,
-    #[serde(default)]
-    pub attempted_at: Option<u64>,
-    /// The error code of the last failed check or upgrade, for diagnosis.
-    #[serde(default)]
+    /// The error code of the last failed check, for diagnosis.
     pub last_error: Option<String>,
 }
 
@@ -89,42 +73,11 @@ impl UpgradeState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpgradeWorker {
     Check,
-    Install { version: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UpgradeNotice {
-    Available {
-        version: String,
-        command: String,
-    },
-    Installing {
-        version: String,
-        last_error: Option<String>,
-    },
-}
-
-impl UpgradeNotice {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Available { version, command } => {
-                format!("skilld {version} is available. Run {command} to upgrade.")
-            }
-            Self::Installing {
-                version,
-                last_error: Some(code),
-            } => format!(
-                "The last upgrade attempt failed: {code}. \
-                 Retrying skilld {version} in the background. Restart skilld to use it."
-            ),
-            Self::Installing {
-                version,
-                last_error: None,
-            } => format!(
-                "Upgrading skilld to {version} in the background. Restart skilld to use it."
-            ),
-        }
-    }
+pub struct UpgradeNotice {
+    pub version: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -155,38 +108,11 @@ pub fn plan_upgrade(
     else {
         return check;
     };
-    match channel {
-        InstallChannel::Npm(runner) => UpgradePlan {
-            worker: check.worker,
-            notice: Some(UpgradeNotice::Available {
-                version: latest.to_owned(),
-                command: runner.upgrade_command().to_owned(),
-            }),
-        },
-        InstallChannel::Standalone => {
-            let retry = state.attempted_version.as_deref() == Some(latest);
-            let waiting = retry
-                && state.attempted_at.is_some_and(|attempted| {
-                    attempted <= now && now - attempted < RETRY_INTERVAL_SECONDS
-                });
-            if waiting {
-                return check;
-            }
-            UpgradePlan {
-                worker: Some(UpgradeWorker::Install {
-                    version: latest.to_owned(),
-                }),
-                notice: Some(UpgradeNotice::Installing {
-                    version: latest.to_owned(),
-                    last_error: if retry {
-                        state.last_error.clone()
-                    } else {
-                        None
-                    },
-                }),
-            }
-        }
-        InstallChannel::Unmanaged => UpgradePlan::default(),
+    UpgradePlan {
+        worker: check.worker,
+        notice: Some(UpgradeNotice {
+            version: latest.to_owned(),
+        }),
     }
 }
 

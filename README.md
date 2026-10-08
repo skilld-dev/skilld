@@ -166,9 +166,14 @@ The script installs one native binary to `~/.skilld/bin`.
 It adds that directory to PATH: in your shell profile on macOS and Linux, in your user PATH on Windows.
 On macOS and Linux, set `SKILLD_NO_MODIFY_PATH=1` to leave your shell profile alone.
 
-The script install upgrades itself in the background after it verifies the signed release manifest.
+skilld checks for CLI upgrades in the background once a day.
+If a newer release is cached, the next terminal invocation offers to upgrade.
+Choose `Upgrade now`, `Not now`, or `Don't remind me for this version`.
+The script install verifies the signed release manifest before replacing the executable.
 Restart skilld to use the new version.
-An npm install prints the upgrade command instead.
+Recognized global npm, pnpm, Yarn, and Bun installs run their package manager after you confirm.
+Local and transient installs show upgrade guidance instead.
+After an upgrade, run your command again.
 Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
 See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
 

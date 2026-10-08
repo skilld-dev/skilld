@@ -32,7 +32,8 @@ The release manifest names the CLI version and the SHA-256 digest of each releas
 The public release key is compiled into the CLI.
 The private release key exists only as a GitHub Actions secret, in the one step that signs.
 
-A standalone install upgrades itself in the background. Before it replaces the executable, the CLI checks:
+A standalone install checks for releases in the background and asks before upgrading.
+Before it replaces the executable, the CLI checks:
 
 - the release manifest signature against the compiled release key
 - that the signed version is the requested version and is newer than the running version
@@ -45,7 +46,9 @@ Set `SKILLD_NO_UPGRADE=1` to turn off upgrade checks.
 
 `install.sh` checks the same signature when OpenSSL supports Ed25519.
 Otherwise, `install.sh` and `install.ps1` trust the HTTPS download and the SHA-256 digest for the first install.
-npm installs never upgrade themselves. They print the upgrade command instead.
+Recognized global package installations run their package manager only after you confirm the displayed command.
+The command installs the exact version shown in the prompt.
+Local and transient package installations show upgrade guidance instead.
 
 ## Account credentials
 
