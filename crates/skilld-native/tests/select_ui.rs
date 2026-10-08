@@ -123,7 +123,7 @@ fn the_picker_aligns_names_and_cuts_a_description_that_does_not_fit() {
             "  \u{25cb} pinia-skilld            Intuitive, type safe and flexible Store for\u{2026}",
             "",
             "",
-            "",
+            "↑/↓ move  j/k move  q cancel  Ctrl+C cancel",
             "space choose   a all   / filter   enter install   esc cancel",
         ]
         .join("\n")
@@ -226,9 +226,38 @@ fn a_filter_that_matches_nothing_says_so() {
             "No Skill matches zz",
             "",
             "",
-            "",
+            "↑/↓ move  Ctrl+C cancel",
             "type to filter   enter keep it   esc clear",
         ]
         .join("\n")
     );
+}
+
+#[test]
+fn a_long_skill_name_leaves_a_visible_cut_marker() {
+    let model = named(&["a-very-long-skill-name-that-does-not-fit-the-terminal"]);
+    let frame = render_snapshot(&model, 24, 7, false);
+    assert!(frame.lines().nth(2).unwrap().contains('…'), "{frame}");
+}
+
+#[test]
+fn an_empty_listing_is_distinct_from_a_filter_without_matches() {
+    let model = named(&[]);
+    let frame = render_snapshot(&model, 60, 7, false);
+    assert!(frame.contains("No Skills in this ref."), "{frame}");
+    assert!(!frame.contains("enter install"), "{frame}");
+}
+
+#[test]
+fn an_unusable_picker_explains_how_to_recover() {
+    let frame = render_snapshot(&model(), 12, 3, false);
+    assert!(frame.contains("Resize"), "{frame}");
+}
+
+#[test]
+fn quitting_a_filter_cancels_the_whole_picker() {
+    let mut model = model();
+    typing(&mut model, "alpha");
+    model.update(PickerKey::Quit);
+    assert_eq!(model.outcome(), Some(&PickerOutcome::Cancelled));
 }

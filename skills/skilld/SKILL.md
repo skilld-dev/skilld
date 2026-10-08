@@ -16,6 +16,7 @@ Use `--json` with `search`, `run`, and `update --check`.
 Use `--json` with `view` of a registry ref, and with every registry and account command below.
 Their `data` is the skilld.dev answer. A command whose answer has no body returns `data: null`.
 Use `--json` with `sync` and `sync --check` for declared Skills.
+Use `doctor --json` for read-only Skill discovery and cleanup findings.
 The remaining commands do not support JSON output.
 Use `--plain` when another command needs stable text.
 
@@ -420,6 +421,26 @@ skilld outdated --all --plain
 Use `outdated` for stale, unverified, local, and unmanaged Skill reports.
 Read every proposed command before using it.
 Never delete an unmanaged Skill unless the user names it for removal.
+
+## Review Skill files across projects
+
+Run `skilld doctor --json` to scan the user's home directory.
+Pass explicit roots to narrow the scan or inspect files outside home.
+The default scan excludes dependencies, caches, generated files, backups, and Git worktrees.
+Use `--exclude GLOB` to prune more paths.
+Use `--include-excluded` or `--include-worktrees` only when those files matter to the task.
+
+Read owner labels, duplicate paths, source matches, and scan problems separately.
+Exit code `1` with success data means some files could not be checked.
+Use `--check-sources` for up to 20 source candidates through skilld.dev.
+A name match alone never establishes provenance.
+
+The interactive `skilld doctor` separates skills.sh installs with Tab.
+The user can review migration with `m` or removal with `d`.
+Each action shows affected paths and requires confirmation.
+Backups include original files, lock metadata, and recovery instructions.
+Use the existing update workflow for skilld installs.
+Historical commit searches and project-to-global deduplication are outside Doctor's current actions.
 
 ## Manage account authentication
 

@@ -7,25 +7,17 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::terminal_theme::{selection, tone};
 use crate::update_ui::{InteractiveUpdateError, NativeTerminalLifecycle, with_restored_terminal};
 
-const ACCENT: Color = Color::Rgb(103, 232, 249);
-const SUCCESS: Color = Color::Rgb(134, 239, 172);
-const MUTED: Color = Color::Rgb(148, 163, 184);
-const COMMAND: Color = Color::Rgb(253, 224, 71);
-const SELECTED: Color = Color::Rgb(22, 78, 99);
-
-fn tone(color: bool, foreground: Color) -> Style {
-    if color {
-        Style::default().fg(foreground)
-    } else {
-        Style::default()
-    }
-}
+const ACCENT: Color = Color::Cyan;
+const SUCCESS: Color = Color::Green;
+const MUTED: Color = Color::DarkGray;
+const COMMAND: Color = Color::Cyan;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UpgradeChoice {
@@ -143,6 +135,10 @@ pub fn ask(
                 }
                 _ => continue,
             };
+            let area = terminal.size().map_err(terminal_error)?;
+            if (area.width < 20 || area.height < 8) && key != UpgradeKey::Cancel {
+                continue;
+            }
             if let Some(choice) = model.update(key) {
                 return Ok(choice);
             }
@@ -158,6 +154,41 @@ fn view(
     action: &str,
     color: bool,
 ) {
+    if frame.area().width < 20 || frame.area().height < 8 {
+        frame.render_widget(Paragraph::new("Resize to 20x8\nEsc continue"), frame.area());
+        return;
+    }
+    if frame.area().width < 50 || frame.area().height < 12 {
+        let areas = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(2),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+        frame.render_widget(
+            Paragraph::new(format!("Upgrade: {current} -> {latest}")).style(tone(color, ACCENT)),
+            areas[0],
+        );
+        frame.render_stateful_widget(
+            List::new(["Upgrade now", "Not now", "Don't remind me for this version"])
+                .highlight_symbol("> ")
+                .highlight_style(selection()),
+            areas[2],
+            &mut ListState::default().with_selected(Some(model.cursor)),
+        );
+        frame.render_widget(
+            Paragraph::new(action)
+                .wrap(Wrap { trim: true })
+                .style(tone(color, COMMAND)),
+            areas[1],
+        );
+        frame.render_widget(
+            Paragraph::new("↑/↓ choose  Enter confirm\nEsc continue  q/Ctrl+C continue"),
+            areas[3],
+        );
+        return;
+    }
     let areas = Layout::vertical([
         Constraint::Length(7),
         Constraint::Length(3),
@@ -197,14 +228,7 @@ fn view(
         ListItem::new("Don't remind me for this version"),
     ])
     .highlight_symbol("> ")
-    .highlight_style(if color {
-        Style::default()
-            .fg(ACCENT)
-            .bg(SELECTED)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().add_modifier(Modifier::BOLD)
-    });
+    .highlight_style(selection());
     frame.render_stateful_widget(
         options,
         areas[1],
@@ -267,6 +291,12 @@ fn snapshot_text(terminal: &Terminal<TestBackend>, color: bool) -> String {
                         line.push_str("\x1b[0m");
                         line.push_str(&ansi_color(cell.fg, false));
                         line.push_str(&ansi_color(cell.bg, true));
+                        if cell.modifier.contains(Modifier::DIM) {
+                            line.push_str("\x1b[2m");
+                        }
+                        if cell.modifier.contains(Modifier::REVERSED) {
+                            line.push_str("\x1b[7m");
+                        }
                         if cell.modifier.contains(Modifier::BOLD) {
                             line.push_str("\x1b[1m");
                         }

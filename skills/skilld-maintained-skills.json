@@ -3,5 +3,6 @@
   "update-package-skill",
   "generate-project-skill",
   "review-skill",
-  "skilld"
+  "skilld",
+  "skilld-tui-design"
 ]

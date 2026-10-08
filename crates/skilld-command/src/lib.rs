@@ -2,6 +2,9 @@ mod account;
 mod config;
 mod dependencies;
 mod discover;
+pub mod doctor;
+pub mod doctor_actions;
+pub mod doctor_metadata;
 pub use dependencies::{ExternalReference, external_references};
 mod local_store;
 mod outdated;
@@ -23,6 +26,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
@@ -62,7 +66,7 @@ use output::{
 
 /// An Agent without the skilld Skill reads `--help` first. It names every command
 /// that answers in JSON; a test keeps it in step with `supports_json`.
-const JSON_COMMANDS_HELP: &str = "Agents: add --json to sync, search, run, update --check, view with a registry ref,\nbrowse, trending, tracks, index, curators, account, like, unlike, likes, watch,\nunwatch, watches, changes, stars, collection, and tokens. Read data when _tag is Success.\nOther commands answer in text. Add --plain to them for stable text.";
+const JSON_COMMANDS_HELP: &str = "Agents: add --json to doctor, sync, search, run, update --check, view with a registry ref,\nbrowse, trending, tracks, index, curators, account, like, unlike, likes, watch,\nunwatch, watches, changes, stars, collection, and tokens. Read data when _tag is Success.\nOther commands answer in text. Add --plain to them for stable text.";
 
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
 
@@ -87,6 +91,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Sweep Skill files and review source ownership, copies, and cleanup actions.
+    Doctor {
+        #[command(flatten)]
+        options: doctor::DoctorOptions,
+    },
     /// Sync declared Skills and their required Skills to Agent targets.
     Sync {
         /// Read declarations from this JSON file.
@@ -565,6 +574,14 @@ pub struct InstalledSkill {
 }
 
 pub trait Host {
+    fn doctor(
+        &self,
+        _options: &doctor::DoctorOptions,
+    ) -> Result<doctor::DoctorReport, CommandError> {
+        Err(CommandError::unsupported_host(
+            "Skill discovery is unavailable on this host",
+        ))
+    }
     fn sync(&self, _request: SyncRequest) -> Result<SyncReport, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill sync is unavailable on this host",
@@ -974,7 +991,21 @@ where
     })
 }
 
+pub fn interactive_doctor_requested<I, T>(
+    args: I,
+) -> Result<Option<doctor::DoctorOptions>, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    Cli::try_parse_from(args).map(|cli| match cli.command {
+        Command::Doctor { options } if !cli.json && !cli.plain => Some(options),
+        _ => None,
+    })
+}
+
 enum CommandOutput {
+    Doctor(doctor::DoctorReport),
     Sync(SyncReport),
     Screen(Screen),
     /// One public API answer: JSON carries the answer, text carries the screen.
@@ -1066,7 +1097,7 @@ where
                     )
                 }
             } else if display || matches!(requested_mode, OutputMode::Human { .. }) {
-                terminal_safe_clap_text(&args, error.kind()).into_bytes()
+                terminal_safe_clap_text(&args, error.kind(), requested_mode).into_bytes()
             } else {
                 let message = error
                     .to_string()
@@ -1109,9 +1140,32 @@ where
     }
 
     match dispatch(cli.command, host, context.platform()) {
+        Ok(CommandOutput::Doctor(report)) => {
+            let bytes = if mode == OutputMode::JsonV1 {
+                output::render_api(
+                    "doctor",
+                    &serde_json::to_value(&report).expect("serializable report"),
+                )
+            } else {
+                Ok(doctor::render_plain(&report).into_bytes())
+            };
+            match bytes {
+                Ok(bytes) => write_success_with_exit(
+                    &bytes,
+                    mode,
+                    stdout,
+                    stderr,
+                    u8::from(!report.problems.is_empty()),
+                ),
+                Err(error) => {
+                    let _ = stderr.write_all(&render_error(&error, mode));
+                    CommandResult { exit_code: 2 }
+                }
+            }
+        }
         Ok(CommandOutput::Screen(screen)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Human { color, width, .. } => screen.render_human_width(color, width),
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
@@ -1119,7 +1173,9 @@ where
         Ok(CommandOutput::Sync(report)) => {
             let screen = Screen::new(report.lines());
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color).into_bytes(),
+                OutputMode::Human { color, width, .. } => {
+                    screen.render_human_width(color, width).into_bytes()
+                }
                 OutputMode::Plain { .. } => screen.render_plain().into_bytes(),
                 OutputMode::JsonV1 => {
                     match output::render_api("sync", &serde_json::json!(report)) {
@@ -1137,7 +1193,9 @@ where
         }
         Ok(CommandOutput::Api(output)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => output.human.render_human(color).into_bytes(),
+                OutputMode::Human { color, width, .. } => {
+                    output.human.render_human_width(color, width).into_bytes()
+                }
                 OutputMode::Plain { .. } => output.plain.into_bytes(),
                 OutputMode::JsonV1 => match output::render_api(output.command, &output.data) {
                     Ok(bytes) => bytes,
@@ -1153,7 +1211,7 @@ where
         }
         Ok(CommandOutput::IncompleteScreen(screen)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Human { color, width, .. } => screen.render_human_width(color, width),
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success_with_exit(bytes.as_bytes(), mode, stdout, stderr, 1)
@@ -1264,10 +1322,33 @@ fn v2_command(mut args: Vec<OsString>) -> V2Command {
     V2Command::Current(args)
 }
 
-fn terminal_safe_clap_text(args: &[OsString], expected_kind: ErrorKind) -> String {
+fn terminal_safe_clap_text(
+    args: &[OsString],
+    expected_kind: ErrorKind,
+    mode: OutputMode,
+) -> String {
+    let styles = Styles::styled()
+        .header(AnsiColor::Cyan.on_default().bold())
+        .usage(AnsiColor::Cyan.on_default().bold())
+        .literal(AnsiColor::Cyan.on_default().bold())
+        .error(AnsiColor::Red.on_default().bold())
+        .invalid(AnsiColor::Yellow.on_default())
+        .valid(AnsiColor::Green.on_default());
+    let mut command = Cli::command().styles(styles);
+    let color = matches!(mode, OutputMode::Human { color: true, .. });
+    if let OutputMode::Human { width, .. } = mode {
+        command = command.term_width(usize::from(width));
+    }
     let safe_args = args.iter().map(terminal_safe_argument);
-    let text = match Cli::try_parse_from(safe_args) {
-        Err(error) if error.kind() == expected_kind => error.to_string(),
+    let text = match command.try_get_matches_from(safe_args) {
+        Err(error) if error.kind() == expected_kind => {
+            if color {
+                // Arguments are escaped before Clap formats them. Only Clap's
+                // own styles may contain terminal control sequences here.
+                return error.render().ansi().to_string();
+            }
+            error.to_string()
+        }
         _ => "error: invalid command arguments\n\nFor more information, try '--help'.\n".to_owned(),
     };
     let mut safe = String::new();
@@ -1319,7 +1400,8 @@ fn requested_output(args: &[OsString]) -> (bool, bool) {
 /// Whether one command can answer `--json`.
 fn supports_json(command: &Command) -> bool {
     match command {
-        Command::Sync { .. }
+        Command::Doctor { .. }
+        | Command::Sync { .. }
         | Command::Search { .. }
         | Command::Run { .. }
         | Command::Update { check: true, .. }
@@ -1448,6 +1530,7 @@ fn dispatch<H: Host>(
     platform: CommandPlatform,
 ) -> Result<CommandOutput, CommandError> {
     match command {
+        Command::Doctor { options } => host.doctor(&options).map(CommandOutput::Doctor),
         Command::Sync {
             manifest,
             check,
@@ -1642,7 +1725,16 @@ fn dispatch<H: Host>(
             Ok(CommandOutput::Run(outcome))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
-            CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
+            let label = if global { "global" } else { "project" };
+            CommandOutput::Screen(
+                Screen::with_header(
+                    format!("Installed Skills · {label} · {}", names.len()),
+                    names.into_iter().map(Line::item).collect(),
+                )
+                .with_empty_hint(
+                    "No Skills installed here. Find Skills with skilld search <query>.",
+                ),
+            )
         }),
         Command::View { skill, global } => match discover::registry_ref(&skill)? {
             None => render_view(host.view(&skill, scope(global))?)
@@ -3165,6 +3257,12 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn doctor(
+        &self,
+        options: &doctor::DoctorOptions,
+    ) -> Result<doctor::DoctorReport, CommandError> {
+        self.doctor_scan(options)
+    }
     fn sync(&self, request: SyncRequest) -> Result<SyncReport, CommandError> {
         sync::sync(self, request)
     }

@@ -55,6 +55,15 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let args = env::args_os().collect::<Vec<_>>();
+    let doctor = skilld_command::interactive_doctor_requested(args.clone())
+        .ok()
+        .flatten()
+        .filter(|_| {
+            std::io::stdin().is_terminal()
+                && std::io::stdout().is_terminal()
+                && !active_agent_detected()
+                && !environment_enabled("CI")
+        });
     let upgrade_session = match start_upgrade(&args) {
         UpgradeStartup::Continue(session) => session,
         UpgradeStartup::Exit(exit) => return exit,
@@ -89,7 +98,7 @@ fn main() -> ExitCode {
         terminal_width(),
         CommandPlatform::current(),
     );
-    let label = if interactive {
+    let label = if interactive || doctor.is_some() {
         None
     } else {
         status::status_label(args.iter().map(|arg| arg.to_string_lossy()))
@@ -170,6 +179,16 @@ fn main() -> ExitCode {
         host
     };
     let host = Arc::new(host);
+
+    if let Some(options) = doctor {
+        return match skilld_native::doctor_ui::run_doctor(host, options) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     if interactive {
         let interactive_host = Arc::new(CommandInteractiveUpdateHost::new(host));

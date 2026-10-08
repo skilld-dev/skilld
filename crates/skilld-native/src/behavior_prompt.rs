@@ -4,13 +4,13 @@
 //! Only a person at a terminal sees it. An Agent, a pipe, or CI gets the
 //! stopped run and its `--allow` command instead.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use skilld_command::{
     BEHAVIOR_CAVEAT, BehaviorConfirmer, BehaviorDecision, CommandError, describe_behavior,
 };
 use skilld_core::Behavior;
-use skilld_ui::text::sanitize;
+use skilld_ui::{Role, text::sanitize, theme::paint};
 
 /// Asks on standard error and reads one answer from standard input.
 pub struct TtyBehaviorConfirmer {
@@ -33,11 +33,15 @@ impl BehaviorConfirmer for TtyBehaviorConfirmer {
         behaviors: &[&Behavior],
     ) -> Result<BehaviorDecision, CommandError> {
         (self.before_ask)();
-        ask(
+        let color = io::stderr().is_terminal()
+            && std::env::var_os("NO_COLOR").is_none()
+            && std::env::var("TERM").is_ok_and(|term| term != "dumb");
+        ask_styled(
             &mut io::stdin().lock(),
             &mut io::stderr().lock(),
             skill,
             behaviors,
+            color,
         )
     }
 }
@@ -49,15 +53,41 @@ pub fn ask(
     skill: &str,
     behaviors: &[&Behavior],
 ) -> Result<BehaviorDecision, CommandError> {
-    let mut question = format!(
-        "The Skill {} needs your approval for these behaviors:\n",
-        sanitize(skill)
+    ask_styled(input, output, skill, behaviors, false)
+}
+
+/// Ask the same approval question with optional terminal styles.
+pub fn ask_styled(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    skill: &str,
+    behaviors: &[&Behavior],
+    color: bool,
+) -> Result<BehaviorDecision, CommandError> {
+    let mut question = paint(
+        &format!(
+            "The Skill {} needs your approval for these behaviors:",
+            sanitize(skill)
+        ),
+        Role::Warn,
+        color,
     );
+    question.push('\n');
     for behavior in behaviors {
-        question.push_str(&format!("  {}\n", sanitize(&describe_behavior(behavior))));
+        question.push_str(&paint(
+            &format!("  {}", sanitize(&describe_behavior(behavior))),
+            Role::Emphasis,
+            color,
+        ));
+        question.push('\n');
     }
     question.push_str(BEHAVIOR_CAVEAT);
-    question.push_str("\nContinue with this Skill? [y/N] ");
+    question.push('\n');
+    question.push_str(&paint(
+        "Continue with this Skill? [y/N] ",
+        Role::Brand,
+        color,
+    ));
     output
         .write_all(question.as_bytes())
         .and_then(|()| output.flush())
@@ -116,5 +146,25 @@ mod tests {
         let (_, question) = answer("n\n");
         assert!(question.contains("Runs code downloaded from the network: SKILL.md:7"));
         assert!(question.ends_with("[y/N] "));
+    }
+
+    #[test]
+    fn styled_approval_preserves_the_default_and_cleans_remote_text() {
+        let behavior = remote_code();
+        let mut output = Vec::new();
+        let decision = ask_styled(
+            &mut "\n".as_bytes(),
+            &mut output,
+            "demo\u{1b}[2J",
+            &[&behavior],
+            true,
+        )
+        .unwrap();
+        let question = String::from_utf8(output).unwrap();
+        assert_eq!(decision, BehaviorDecision::Declined);
+        assert!(question.contains("Runs code downloaded from the network: SKILL.md:7"));
+        assert!(question.contains("[y/N]"));
+        assert!(!question.contains("demo\u{1b}[2J"));
+        assert!(question.ends_with(skilld_ui::theme::RESET));
     }
 }

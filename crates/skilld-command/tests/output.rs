@@ -15,7 +15,7 @@ struct SearchHost {
 
 impl Host for SearchHost {
     fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
-        unreachable!("list is outside this test")
+        Ok(Vec::new())
     }
 
     fn install(
@@ -76,6 +76,58 @@ fn run(args: &[&str], context: OutputContext) -> (u8, String, String) {
 const PLAIN: OutputContext = OutputContext::Plain {
     platform: CommandPlatform::Unix,
 };
+
+#[test]
+fn empty_installed_list_explains_scope_and_discovery_without_machine_records() {
+    let context = OutputContext::HumanTerminal {
+        width: 80,
+        color: false,
+        platform: CommandPlatform::Unix,
+    };
+    let (exit, human, errors) = run(&["skilld", "list", "--global"], context);
+    assert_eq!(exit, 0);
+    assert!(errors.is_empty());
+    assert!(human.contains("Installed Skills · global · 0"));
+    assert!(human.contains("No Skills installed here."));
+    assert!(human.contains("skilld search <query>"));
+    let (_, plain, _) = run(&["skilld", "list", "--global", "--plain"], context);
+    assert!(plain.is_empty());
+}
+
+#[test]
+fn narrow_errors_keep_diagnostics_and_action_on_stderr() {
+    let host = SearchHost {
+        response: Err(CommandError {
+            kind: skilld_command::CommandErrorKind::Operation,
+            code: "SERVICE_UNAVAILABLE",
+            message: "The registry did not answer the Skill search request.".to_owned(),
+            next_step: Some("Check your connection. Try the search again.".to_owned()),
+        }),
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run_with_output(
+        ["skilld", "search", "design"],
+        &host,
+        OutputContext::HumanTerminal {
+            width: 24,
+            color: false,
+            platform: CommandPlatform::Unix,
+        },
+        &mut stdout,
+        &mut stderr,
+    );
+    let stderr = String::from_utf8(stderr).unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("SERVICE_UNAVAILABLE"));
+    assert!(stderr.contains("Next step"));
+    assert!(
+        stderr
+            .lines()
+            .all(|line| UnicodeWidthStr::width(line) <= 24)
+    );
+}
 
 fn auto(
     stdout_is_terminal: bool,
@@ -687,6 +739,7 @@ fn strip_ansi(value: &str) -> String {
         "\u{1b}[2m",
         "\u{1b}[36m",
         "\u{1b}[33m",
+        "\u{1b}[94m",
         "\u{1b}[0m",
     ]
     .into_iter()

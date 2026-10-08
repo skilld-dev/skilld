@@ -11,7 +11,10 @@ use url::Url;
 
 pub mod behavior_prompt;
 #[cfg(not(target_os = "wasi"))]
+pub mod doctor_ui;
+#[cfg(not(target_os = "wasi"))]
 pub mod select_ui;
+mod terminal_theme;
 pub mod update_ui;
 #[cfg(not(target_os = "wasi"))]
 pub mod upgrade;

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::terminal_theme::{selection, tone};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -16,7 +17,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Tabs};
 use skilld_command::{CommandError, Host};
@@ -893,6 +894,9 @@ fn update_key(model: &mut Model, key: KeyInput, effects: &mut Vec<Effect>) {
         model.expanded_help = !model.expanded_help;
         return;
     }
+    if model.width < 20 || model.height < 7 {
+        return;
+    }
     if let Phase::FailedLoad(_) = &model.phase {
         if key == KeyInput::Retry {
             model.phase = Phase::LoadingCandidates;
@@ -1004,6 +1008,10 @@ fn update_key(model: &mut Model, key: KeyInput, effects: &mut Vec<Effect>) {
 }
 
 pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool) {
+    if frame.area().width < 20 || frame.area().height < 7 {
+        frame.render_widget(Paragraph::new("Resize to 20x7\nq cancel"), frame.area());
+        return;
+    }
     let help_height = if model.expanded_help { 3 } else { 1 };
     let areas = Layout::vertical([
         Constraint::Length(1),
@@ -1015,23 +1023,20 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool) {
     .split(frame.area());
 
     frame.render_widget(
-        Paragraph::new("skilld update").style(
-            Style::default()
-                .fg(theme(color, Color::Cyan))
-                .add_modifier(Modifier::BOLD),
-        ),
+        Paragraph::new("skilld update")
+            .style(tone(color, Color::Cyan).add_modifier(Modifier::BOLD)),
         areas[0],
     );
-    render_tabs(frame, model, color, areas[1]);
+    render_tabs(frame, model, areas[1]);
     render_body(frame, model, color, areas[2]);
     frame.render_widget(Paragraph::new(status_text(model)), areas[3]);
     frame.render_widget(
-        Paragraph::new(help_text(model)).style(Style::default().fg(theme(color, Color::DarkGray))),
+        Paragraph::new(help_text(model)).style(tone(color, Color::DarkGray)),
         areas[4],
     );
 }
 
-fn render_tabs(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, area: Rect) {
+fn render_tabs(frame: &mut ratatui::Frame<'_>, model: &Model, area: Rect) {
     let outdated = format!(
         "Outdated {}",
         model
@@ -1050,11 +1055,7 @@ fn render_tabs(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, area:
             Tab::Outdated => 0,
             Tab::Commits => 1,
         })
-        .highlight_style(
-            Style::default()
-                .fg(theme(color, Color::Cyan))
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(selection());
     frame.render_widget(tabs, area);
 }
 
@@ -1075,7 +1076,7 @@ fn render_body(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, area:
                     Line::from("The update plan could not load."),
                     Line::from(format!("{}: {}", error.code, error.message)),
                 ]))
-                .style(Style::default().fg(theme(color, Color::Red))),
+                .style(tone(color, Color::Red)),
                 area,
             );
         }
@@ -1136,7 +1137,7 @@ fn render_outdated(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, a
                         Line::from(truncate(&format!("⚠ {name}: {}", error.code), width)),
                         Line::from(truncate(&format!("    {}", error.message), width)),
                     ]))
-                    .style(Style::default().fg(theme(color, Color::Red)))
+                    .style(tone(color, Color::Red))
                 }
             }
         })
@@ -1144,11 +1145,7 @@ fn render_outdated(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, a
     let list = List::new(items)
         .block(Block::bordered().title("Select Skills to update"))
         .highlight_symbol("> ")
-        .highlight_style(
-            Style::default()
-                .fg(theme(color, Color::Cyan))
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(selection());
     let mut state = ListState::default().with_selected(
         (!model.rows.is_empty()).then_some(model.cursor.saturating_sub(model.viewport)),
     );
@@ -1183,9 +1180,7 @@ fn render_commits(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, ar
                 ),
                 width,
             ),
-            Style::default()
-                .fg(theme(color, Color::Cyan))
-                .add_modifier(Modifier::BOLD),
+            tone(color, Color::Cyan).add_modifier(Modifier::BOLD),
         ));
         match model.commits.get(id) {
             Some(CommitState::NotRequested) => {
@@ -1200,7 +1195,7 @@ fn render_commits(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, ar
             Some(CommitState::Failed(error)) => {
                 lines.push(Line::styled(
                     truncate(&format!("  {}: {}", error.code, error.message), width),
-                    Style::default().fg(theme(color, Color::Red)),
+                    tone(color, Color::Red),
                 ));
             }
             Some(CommitState::Ready(page)) => {
@@ -1232,7 +1227,7 @@ fn render_commits(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool, ar
                             ),
                             width,
                         ),
-                        Style::default().fg(theme(color, Color::Yellow)),
+                        tone(color, Color::Yellow),
                     ));
                 }
             }
@@ -1372,7 +1367,11 @@ fn bindings(model: &Model) -> Vec<Binding> {
         },
         Binding {
             keys: "q",
-            action: "cancel",
+            action: if matches!(model.phase, Phase::Applying) {
+                "exit after update"
+            } else {
+                "cancel"
+            },
         },
     ]);
     bindings
@@ -1389,10 +1388,6 @@ fn help_text(model: &Model) -> String {
     } else {
         concise
     }
-}
-
-fn theme(color: bool, value: Color) -> Color {
-    if color { value } else { Color::Reset }
 }
 
 fn short_sha(value: &str) -> &str {

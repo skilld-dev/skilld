@@ -356,6 +356,11 @@ skilld update --check --json
 skilld update <skill>
 skilld verify <skill>
 
+# Sweep Skill files and review cleanup actions
+skilld doctor
+skilld doctor ./apps --json
+skilld doctor --exclude '**/archive/**'
+
 # Remove a Skill
 skilld remove <skill>
 ```
@@ -363,6 +368,55 @@ skilld remove <skill>
 Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
 Use `--global` (or `-g`) for account-level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
+
+### Review Skill files
+
+`skilld doctor` scans your home directory and opens a terminal UI.
+Pass roots to narrow the scan. Use `--json` or `--plain` for a read-only report.
+The default scan skips links and ownership metadata outside your home directory.
+Pass explicit roots when you need those locations.
+Progress shows the current phase, directory counts, and elapsed time.
+The scan includes hidden `.claude/skills` directories and lists `CLAUDE.md` and `.claude/commands` files separately.
+
+Default exclude globs prune dependencies, builds, caches, plugin staging, sessions, backups, and fixtures before reading their children.
+The scan skips general `~/.local` discovery, including worker homes and cached bundles.
+Configured Agent Skill directories and the configured skilld store remain included within the requested scan roots.
+Skill symlinks can still resolve into `~/.local`. Their neighboring directories are not scanned.
+Configured roots still honor exclude globs. Use `--include-excluded` for a broad `.local` scan.
+Git worktrees are skipped, including explicit roots and links into worktrees.
+Main checkouts and submodules remain included.
+Use `--include-excluded` or `--include-worktrees` when you need those files.
+Repeat `--exclude GLOB` to add exclusions. Git internals remain excluded.
+Source and plugin files retain their owners.
+
+The first screen recommends reviewing skills.sh migration, unknown installs, ownership problems, and duplicate copies.
+Open a recommendation with Enter, choose a project or folder, then choose a Skill. Escape goes back.
+Managed installs, plugin Skills, and source directories have separate groups.
+Press Tab to cycle through all paths, symlinks, and directories.
+Details show symlink destinations and the paths of identical copies. Symlinks are not duplicate copies.
+The Symlinks view includes Skills reached through linked parent folders and identifies the folder link.
+Counts distinguish physical Skills from linked paths. One Skill can appear in both path views.
+Filters only change the view. Cleanup reviews all targets for the selected install.
+Choose a Skill, then press `m` to migrate or `d` to remove.
+Review affected Agent targets before pressing Enter. Escape cancels.
+Press `/` to filter by name, owner, or path. Left and right switch focus between the list and details.
+Press `p` for scan problems, `n` for the full notice, or `?` for help.
+After cleanup, quitting prints the completed action and backup path to your shell.
+Migration keeps the scope and copy or link mode of each observed target.
+It verifies source contents, preserves recorded branches, and requests approval for Skill behaviors.
+When the recorded Git tree matches the installed files, migration can also replace them with the displayed source commit.
+If provenance cannot establish the replacement, migration stops before changing files.
+
+Removal backs up the selected targets and removes only their skills.sh lockfile entry.
+Original targets, lock metadata, and `recovery.json` remain under `.skilld-doctor-backups` beside the skilld store.
+Unknown Agent targets can also be removed after review.
+Declared skilld installs, plugin files, and source directories require their existing owner's workflow.
+
+`--check-sources` checks up to 20 source candidates through skilld.dev.
+An exact directory match includes supporting files and executable modes.
+A name match alone never establishes provenance.
+The report retains scan problems. Exit code 1 means some files could not be checked.
+Historical commit searches and project-to-global deduplication are outside this command's current actions.
 
 ### Read the registry
 
@@ -470,6 +524,7 @@ The skilld-maintained Skills:
 - [`update-package-skill`](./skills/update-package-skill): update that Skill after a release, testing only what changed
 - [`generate-project-skill`](./skills/generate-project-skill): draft a Skill from a project you maintain
 - [`review-skill`](./skills/review-skill): review a Skill before you publish it
+- [`skilld-tui-design`](./skills/skilld-tui-design): design and verify terminal output and interactive CLI flows
 
 When you run these Skills directly, you see every instruction and review every change.
 

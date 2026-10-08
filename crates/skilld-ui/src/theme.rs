@@ -13,6 +13,8 @@ pub enum Role {
     Brand,
     /// Bold. Emphasis inside body text.
     Emphasis,
+    /// Bright blue. Informational values and links, without a status implication.
+    Accent,
     /// Green. Completed work.
     Success,
     /// Yellow. Attention: outdated or degraded results.
@@ -29,6 +31,7 @@ impl Role {
         match self {
             Self::Brand => "\u{1b}[1m\u{1b}[36m",
             Self::Emphasis => "\u{1b}[1m",
+            Self::Accent => "\u{1b}[94m",
             Self::Success => "\u{1b}[32m",
             Self::Warn => "\u{1b}[33m",
             Self::Error => "\u{1b}[31m",
