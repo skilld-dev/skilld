@@ -474,3 +474,153 @@ fn source_check_reports_exact_contents_and_resolved_commit_without_mutation() {
     );
     assert!(!root.path().join(".skilld/skills").exists());
 }
+
+#[cfg(unix)]
+fn linked_source_fixture() -> (tempfile::TempDir, LocalHost) {
+    let (root, host) = fixture();
+    fs::remove_file(root.path().join(".agents/.skill-lock.json")).unwrap();
+    fs::create_dir_all(root.path().join("source")).unwrap();
+    fs::rename(
+        root.path().join(".agents/skills/example"),
+        root.path().join("source/example"),
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../source/example",
+        root.path().join(".claude/skills/example"),
+    )
+    .unwrap();
+    (root, host)
+}
+
+#[cfg(unix)]
+#[test]
+fn removing_only_an_agent_link_preserves_its_source_directory() {
+    let (root, host) = linked_source_fixture();
+    let source = root.path().join("source/example");
+    let link = root.path().join(".claude/skills/example");
+    let report = host
+        .doctor_scan(&DoctorOptions::for_root(root.path()))
+        .unwrap();
+    let index = report
+        .skills
+        .iter()
+        .position(|s| s.canonical_path == source)
+        .unwrap();
+    let plan = host
+        .doctor_plan(&report, index, DoctorAction::Remove)
+        .unwrap();
+    assert_eq!(plan.preview.paths, vec![link.clone()]);
+    let done = plan.apply().unwrap();
+    assert!(fs::symlink_metadata(&link).is_err());
+    assert_eq!(fs::read_to_string(source.join("SKILL.md")).unwrap(), TEXT);
+    assert_eq!(
+        fs::read_link(done.backup.join("target-0")).unwrap(),
+        Path::new("../../source/example")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn retargeting_a_direct_skill_link_rejects_the_reviewed_removal() {
+    let (root, host) = linked_source_fixture();
+    let source = root.path().join("source/example");
+    let link = root.path().join(".claude/skills/example");
+    let other = root.path().join("source/other");
+    fs::create_dir(&other).unwrap();
+    fs::write(other.join("SKILL.md"), TEXT).unwrap();
+    let report = host
+        .doctor_scan(&DoctorOptions::for_root(root.path()))
+        .unwrap();
+    let index = report
+        .skills
+        .iter()
+        .position(|s| s.canonical_path == source)
+        .unwrap();
+    let plan = host
+        .doctor_plan(&report, index, DoctorAction::Remove)
+        .unwrap();
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink("../../source/other", &link).unwrap();
+    let error = plan.apply().unwrap_err();
+    assert!(error.to_string().contains("link changed after review"));
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        Path::new("../../source/other")
+    );
+    assert_eq!(fs::read_to_string(source.join("SKILL.md")).unwrap(), TEXT);
+    assert_eq!(fs::read_to_string(other.join("SKILL.md")).unwrap(), TEXT);
+}
+
+#[cfg(unix)]
+#[test]
+fn agent_root_aliases_backup_the_same_physical_skill_only_once() {
+    let (root, host) = fixture();
+    fs::create_dir_all(root.path().join(".claude")).unwrap();
+    std::os::unix::fs::symlink("../.agents/skills", root.path().join(".claude/skills")).unwrap();
+    let physical = root.path().join(".agents/skills/example");
+    let report = host
+        .doctor_scan(&DoctorOptions::for_root(root.path()))
+        .unwrap();
+    let index = report
+        .skills
+        .iter()
+        .position(|s| s.canonical_path == physical)
+        .unwrap();
+    let plan = host
+        .doctor_plan(&report, index, DoctorAction::Remove)
+        .unwrap();
+    assert_eq!(plan.preview.paths, vec![physical.clone()]);
+    let done = plan.apply().unwrap();
+    assert!(fs::symlink_metadata(physical).is_err());
+    assert_eq!(
+        fs::read_to_string(done.backup.join("target-0/SKILL.md")).unwrap(),
+        TEXT
+    );
+    assert!(fs::symlink_metadata(done.backup.join("target-1")).is_err());
+    assert_eq!(
+        fs::read_link(root.path().join(".claude/skills")).unwrap(),
+        Path::new("../.agents/skills")
+    );
+    assert!(lock(root.path())["skills"].get("example").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn removing_a_child_through_a_linked_root_preserves_the_root_link() {
+    let (root, host) = fixture();
+    fs::remove_file(root.path().join(".agents/.skill-lock.json")).unwrap();
+    fs::remove_dir_all(root.path().join(".agents/skills/example")).unwrap();
+    let shared = root.path().join("shared");
+    let physical = shared.join("example");
+    fs::create_dir_all(&physical).unwrap();
+    fs::write(physical.join("SKILL.md"), TEXT).unwrap();
+    fs::write(shared.join("keep.md"), "Keep this sibling").unwrap();
+    fs::create_dir_all(root.path().join(".claude")).unwrap();
+    let linked_root = root.path().join(".claude/skills");
+    std::os::unix::fs::symlink("../shared", &linked_root).unwrap();
+    let report = host
+        .doctor_scan(&DoctorOptions::for_root(root.path()))
+        .unwrap();
+    let index = report
+        .skills
+        .iter()
+        .position(|s| s.canonical_path == physical)
+        .unwrap();
+    let plan = host
+        .doctor_plan(&report, index, DoctorAction::Remove)
+        .unwrap();
+    assert_eq!(plan.preview.paths, vec![physical.clone()]);
+    let done = plan.apply().unwrap();
+    assert!(fs::symlink_metadata(physical).is_err());
+    assert_eq!(fs::read_link(&linked_root).unwrap(), Path::new("../shared"));
+    assert_eq!(
+        fs::read_to_string(shared.join("keep.md")).unwrap(),
+        "Keep this sibling"
+    );
+    assert_eq!(
+        fs::read_to_string(done.backup.join("target-0/SKILL.md")).unwrap(),
+        TEXT
+    );
+}
