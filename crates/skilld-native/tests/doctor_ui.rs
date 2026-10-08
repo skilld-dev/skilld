@@ -378,3 +378,32 @@ fn symlink_filter_keeps_alias_scope_and_duplicate_details_name_real_copies() {
     assert_eq!(model.visible().len(), 2);
     assert_eq!(model.browse, Browse::Owners);
 }
+
+#[cfg(unix)]
+#[test]
+fn linked_parent_paths_are_in_the_symlink_view_and_explain_the_parent_link() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("catalog/example");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), "# Example\nRead files.\n").unwrap();
+    let agent = root.path().join("project/.claude");
+    fs::create_dir_all(&agent).unwrap();
+    std::os::unix::fs::symlink(root.path().join("catalog"), agent.join("skills")).unwrap();
+    let mut model = Model {
+        report: Some(scan_fixture(root.path())),
+        work: WorkState::Ready,
+        ..Model::default()
+    };
+    model.toggle_group();
+    assert_eq!(model.visible().len(), 1);
+    model.open_group();
+    model.open_group();
+    let snapshot = render_snapshot(&model, 180, 60);
+    assert!(snapshot.contains("Via linked folder:"));
+    assert!(snapshot.contains(&agent.join("skills").display().to_string()));
+    assert!(snapshot.contains(&format!("-> {}", root.path().join("catalog").display())));
+    model.toggle_group();
+    model.open_group();
+    let directories = render_snapshot(&model, 180, 60);
+    assert!(!directories.contains("project/.claude"));
+}

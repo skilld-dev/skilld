@@ -390,6 +390,8 @@ Open a recommendation with Enter, choose a project or folder, then choose a Skil
 Managed installs, plugin Skills, and source directories have separate groups.
 Press Tab to cycle through all paths, symlinks, and directories.
 Details show symlink destinations and the paths of identical copies. Symlinks are not duplicate copies.
+The Symlinks view includes Skills reached through linked parent folders and identifies the folder link.
+Counts distinguish physical Skills from linked paths. One Skill can appear in both path views.
 Filters only change the view. Cleanup reviews all targets for the selected install.
 Choose a Skill, then press `m` to migrate or `d` to remove.
 Review affected Agent targets before pressing Enter. Escape cancels.

@@ -30,7 +30,11 @@ fn in_group(skill: &DoctorSkill, owner: &str) -> bool {
 }
 
 fn skill_count(count: usize) -> String {
-    format!("{count} {}", if count == 1 { "Skill" } else { "Skills" })
+    count_label(count, "Skill")
+}
+
+fn count_label(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,8 +98,8 @@ fn locations(skill: &DoctorSkill, filter: PathFilter) -> BTreeSet<Option<PathBuf
         .iter()
         .filter(|p| match filter {
             PathFilter::All => true,
-            PathFilter::Symlinks => p.symlink_target.is_some(),
-            PathFilter::Directories => p.symlink_target.is_none(),
+            PathFilter::Symlinks => p.is_linked(),
+            PathFilter::Directories => !p.is_linked(),
         })
         .map(|p| {
             p.project_root.clone().or_else(|| {
@@ -358,11 +362,17 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
         .as_ref()
         .map(|r| {
             format!(
-                "{} Skills · {} directories scanned · {} excluded · {} problems",
-                r.skills.len(),
-                r.visited_directories,
-                r.skipped_directories,
-                r.problems.len()
+                "{} · {} · {}",
+                skill_count(r.skills.len()),
+                count_label(
+                    r.skills
+                        .iter()
+                        .flat_map(|s| &s.paths)
+                        .filter(|p| p.is_linked())
+                        .count(),
+                    "linked path"
+                ),
+                count_label(r.problems.len(), "problem")
             )
         })
         .unwrap_or_default();
@@ -520,7 +530,9 @@ p: scan problems; n: full notice; ?: help; Esc: back
 r: scan again; q or Ctrl-C: quit
 
 Actions always require a separate review.
-While applying, wait for the result."
+While applying, wait for the result.
+A Skill can appear in both path views.
+Linked paths include links in parent folders."
                 .into(),
         )
     } else if model.screen == Screen::Notice {
@@ -585,13 +597,14 @@ While applying, wait for the result."
             .count();
         let linked_count = skills
             .iter()
-            .filter(|&&i| {
-                report.skills[i]
-                    .paths
-                    .iter()
-                    .any(|p| p.symlink_target.is_some())
-            })
+            .filter(|&&i| report.skills[i].paths.iter().any(|p| p.is_linked()))
             .count();
+        let linked_paths = skills
+            .iter()
+            .flat_map(|&i| &report.skills[i].paths)
+            .filter(|p| p.is_linked())
+            .count();
+        let linked_skills = skill_count(linked_count);
         let description = match next {
             Browse::Locations { owner: "skills.sh" } => {
                 "Installed through skills.sh. Review migration or removal for each Skill."
@@ -621,7 +634,7 @@ While applying, wait for the result."
         (
             "Recommended next step",
             format!(
-                "{label}\n\n{description}\n\nEnter opens this group.\n\n{}\n{linked_count} with symlinks\n{duplicate_count} with identical copies\n\nFilters only change this view.\nActions review all targets for the install.\nRecommendations can include the same Skill.\n\nScan: {scope}",
+                "{label}\n\n{description}\n\nEnter opens this group.\n\n{}\n{linked_paths} linked paths across {linked_skills}\n{duplicate_count} with identical copies\n\nFilters only change this view.\nActions review all targets for the install.\nRecommendations can include the same Skill.\n\nScan: {scope}",
                 skill_count(skills.len())
             ),
         )
@@ -642,23 +655,35 @@ While applying, wait for the result."
         }
         if let Some(f) = &s.fingerprint {
             text.push_str(&format!(
-                "\n{} files · {} bytes\nGit tree: {}\n",
-                f.files, f.bytes, f.git_tree
+                "\n{} · {} bytes\nGit tree: {}\n",
+                count_label(f.files, "file"),
+                f.bytes,
+                f.git_tree
             ));
         }
         text.push_str("\nDirectories:\n");
-        for p in s.paths.iter().filter(|p| p.symlink_target.is_none()) {
+        if !s.paths.iter().any(|p| !p.is_linked()) {
+            text.push_str("None observed\n");
+        }
+        for p in s.paths.iter().filter(|p| !p.is_linked()) {
             text.push_str(&format!("{}\n", p.path.display()));
         }
         text.push_str("\nSymlinks:\n");
         let mut links = 0;
         for p in &s.paths {
+            if !p.is_linked() {
+                continue;
+            }
+            links += 1;
+            text.push_str(&format!("{}\n", p.path.display()));
             if let Some(target) = &p.symlink_target {
-                links += 1;
+                text.push_str(&format!("  -> {}\n", target.display()));
+            }
+            if let Some(parent) = &p.linked_parent {
                 text.push_str(&format!(
-                    "{}\n  -> {}\n",
-                    p.path.display(),
-                    target.display()
+                    "Via linked folder:\n{}\n  -> {}\n",
+                    parent.path.display(),
+                    parent.target.display()
                 ));
             }
         }
@@ -972,8 +997,8 @@ pub fn run_doctor(
                                     "Choose a recommendation to review.".into()
                                 } else {
                                     format!(
-                                        "{} scan problems. Press p for paths and reasons.",
-                                        report.problems.len()
+                                        "{}. Press p for paths and reasons.",
+                                        count_label(report.problems.len(), "scan problem")
                                     )
                                 };
                                 model.report = Some(report);

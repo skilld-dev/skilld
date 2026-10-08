@@ -176,9 +176,23 @@ pub struct SkillLocation {
     pub path: PathBuf,
     /// The direct link destination, as written. A linked parent does not make this path a link.
     pub symlink_target: Option<PathBuf>,
+    /// The nearest linked parent, stopping at home when it is an ancestor.
+    pub linked_parent: Option<LinkedParent>,
     pub agent: Option<AgentTargetId>,
     /// None means global scope. Source directories have no Agent target.
     pub project_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LinkedParent {
+    pub path: PathBuf,
+    pub target: PathBuf,
+}
+
+impl SkillLocation {
+    pub fn is_linked(&self) -> bool {
+        self.symlink_target.is_some() || self.linked_parent.is_some()
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -292,10 +306,24 @@ fn location(path: &Path, context: &ScanContext) -> std::io::Result<SkillLocation
         None
     };
     let parent = path.parent().unwrap_or(path);
+    let mut linked_parent = None;
+    for ancestor in parent.ancestors() {
+        if fs::symlink_metadata(ancestor)?.file_type().is_symlink() {
+            linked_parent = Some(LinkedParent {
+                path: ancestor.to_owned(),
+                target: fs::read_link(ancestor)?,
+            });
+            break;
+        }
+        if ancestor == context.home {
+            break;
+        }
+    }
     if let Some(target) = context.global_targets.iter().find(|t| t.root == parent) {
         return Ok(SkillLocation {
             path: path.to_owned(),
             symlink_target,
+            linked_parent,
             agent: Some(target.agent),
             project_root: None,
         });
@@ -304,6 +332,7 @@ fn location(path: &Path, context: &ScanContext) -> std::io::Result<SkillLocation
         return Ok(SkillLocation {
             path: path.to_owned(),
             symlink_target,
+            linked_parent,
             agent: Some(AgentTargetId::Codex),
             project_root: None,
         });
@@ -321,6 +350,7 @@ fn location(path: &Path, context: &ScanContext) -> std::io::Result<SkillLocation
             return Ok(SkillLocation {
                 path: path.to_owned(),
                 symlink_target,
+                linked_parent,
                 agent: Some(target.id),
                 project_root: Some(root.to_owned()),
             });
@@ -329,6 +359,7 @@ fn location(path: &Path, context: &ScanContext) -> std::io::Result<SkillLocation
     Ok(SkillLocation {
         path: path.to_owned(),
         symlink_target,
+        linked_parent,
         agent: None,
         project_root: None,
     })
@@ -556,13 +587,18 @@ pub fn scan_with_progress(
                 }
             } else if kind.is_symlink() && target_root(&child, context) {
                 // A target root can itself be a symlink. Only inspect this known boundary.
+                let real = match fs::canonicalize(&child) {
+                    Ok(real) => real,
+                    Err(error) => {
+                        report.problems.push(ScanProblem {
+                            path: child,
+                            message: format!("Broken Agent target root: {error}"),
+                        });
+                        continue;
+                    }
+                };
                 if !options.include_worktrees
-                    && prune_worktree(
-                        fs::canonicalize(&child)
-                            .and_then(|canonical| worktree_ancestor(&canonical)),
-                        &child,
-                        &mut report,
-                    )
+                    && prune_worktree(worktree_ancestor(&real), &child, &mut report)
                 {
                     continue;
                 }
@@ -571,8 +607,17 @@ pub fn scan_with_progress(
                         for e in entries {
                             match e {
                                 Ok(e) if !excluded.is_match(e.path()) => {
+                                    let real = match fs::canonicalize(e.path()) {
+                                        Ok(real) => real,
+                                        Err(error) => {
+                                            report.problems.push(ScanProblem {
+                                                path: e.path(),
+                                                message: format!("Broken Agent target: {error}"),
+                                            });
+                                            continue;
+                                        }
+                                    };
                                     if let Some(home) = &home_boundary
-                                        && let Ok(real) = fs::canonicalize(e.path())
                                         && !real.starts_with(home)
                                     {
                                         report.skipped_directories += 1;
@@ -581,9 +626,7 @@ pub fn scan_with_progress(
                                     }
                                     if !options.include_worktrees
                                         && prune_worktree(
-                                            fs::canonicalize(e.path()).and_then(|canonical| {
-                                                worktree_ancestor(&canonical)
-                                            }),
+                                            worktree_ancestor(&real),
                                             &e.path(),
                                             &mut report,
                                         )

@@ -468,6 +468,32 @@ fn a_relative_git_admin_path_still_identifies_a_linked_worktree() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn broken_links_under_linked_roots_are_reported_even_when_worktrees_are_included() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir_all(home.path().join("source")).unwrap();
+    fs::create_dir_all(home.path().join(".claude")).unwrap();
+    std::os::unix::fs::symlink(
+        home.path().join("source"),
+        home.path().join(".claude/skills"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("missing", home.path().join("source/broken")).unwrap();
+    for include_worktrees in [false, true] {
+        let mut options = DoctorOptions::for_root(home.path());
+        options.include_worktrees = include_worktrees;
+        let report = scan(&options, &context(home.path())).unwrap();
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|p| p.path == home.path().join(".claude/skills/broken")
+                    && p.message.contains("Broken Agent target"))
+        );
+    }
+}
+
 #[test]
 fn unreadable_git_metadata_is_reported_before_reading_skill_contents() {
     let home = tempfile::tempdir().unwrap();
