@@ -11,7 +11,7 @@ use std::sync::Arc;
 use embedded_skill::EmbeddedSkilld;
 use native_auth::NativeAccount;
 use skilld_command::AccountProvider;
-use skilld_command::upgrade::{InstallChannel, UpgradeNotice};
+use skilld_command::upgrade::InstallChannel;
 use skilld_command::weekly::{self, NoticeContext};
 use skilld_command::{
     CommandError, CommandPlatform, DetectionEnvironment, Host, InstalledSkill, LocalHost,
@@ -54,9 +54,11 @@ fn main() -> ExitCode {
         run_upgrade_worker(&worker);
         return ExitCode::SUCCESS;
     }
-    let upgrade_notice = start_upgrade();
-
     let args = env::args_os().collect::<Vec<_>>();
+    let upgrade_session = match start_upgrade(&args) {
+        UpgradeStartup::Continue(session) => session,
+        UpgradeStartup::Exit(exit) => return exit,
+    };
     let interactive = interactive_update_requested(args.clone()).is_ok_and(|requested| requested);
     if interactive
         && let Err(error) = require_interactive_tty(
@@ -193,7 +195,7 @@ fn main() -> ExitCode {
                     {
                         eprintln!("{notice}");
                     }
-                    print_upgrade_notice(upgrade_notice.as_ref());
+                    print_upgrade_notice(upgrade_session.as_ref());
                     print_weekly_notice(
                         &notice_root,
                         account.as_ref(),
@@ -219,7 +221,7 @@ fn main() -> ExitCode {
     {
         eprintln!("{notice}");
     }
-    print_upgrade_notice(upgrade_notice.as_ref());
+    print_upgrade_notice(upgrade_session.as_ref());
     print_weekly_notice(
         &notice_root,
         account.as_ref(),
@@ -247,29 +249,128 @@ fn upgrade_channel(executable: &std::path::Path) -> InstallChannel {
     }
 }
 
-/// Starts background upgrade work for a person at a terminal.
-fn start_upgrade() -> Option<UpgradeNotice> {
+struct UpgradeSession {
+    root: PathBuf,
+    channel: InstallChannel,
+    executable: PathBuf,
+}
+
+enum UpgradeStartup {
+    Continue(Option<UpgradeSession>),
+    Exit(ExitCode),
+}
+
+/// Offer the cached release first, then check asynchronously for the next run.
+fn start_upgrade(args: &[std::ffi::OsString]) -> UpgradeStartup {
     if environment_enabled("CI")
         || environment_present("SKILLD_NO_UPGRADE")
         || active_agent_detected()
+        || !std::io::stdin().is_terminal()
+        || !std::io::stdout().is_terminal()
         || !std::io::stderr().is_terminal()
+        || args.iter().any(|arg| {
+            matches!(
+                arg.to_str(),
+                Some("--json" | "--plain" | "--help" | "-h" | "--version" | "-V")
+            )
+        })
     {
-        return None;
+        return UpgradeStartup::Continue(None);
     }
-    let executable = env::current_exe().ok()?;
+    let Ok(executable) = env::current_exe() else {
+        return UpgradeStartup::Continue(None);
+    };
     let channel = upgrade_channel(&executable);
+    if channel == InstallChannel::Unmanaged {
+        return UpgradeStartup::Continue(None);
+    }
+    let root = global_root();
     #[cfg(windows)]
     if channel == InstallChannel::Standalone {
         // An earlier upgrade left the replaced executable here; it is safe to lose.
         let _ = std::fs::remove_file(cli_upgrade::previous_executable(&executable));
     }
+    if let Some(notice) = cli_upgrade::available_upgrade(&root, channel, VERSION)
+        && !cli_upgrade::version_dismissed(&root, &notice.version)
+    {
+        let package = match channel {
+            InstallChannel::Npm(runner) => {
+                cli_upgrade::package_upgrade_args(runner, &executable, &notice.version)
+            }
+            _ => None,
+        };
+        let action = match (&channel, &package) {
+            (InstallChannel::Standalone, _) => {
+                Some("Download and verify the signed release, then upgrade skilld.".to_owned())
+            }
+            (_, Some((program, args))) => Some(format!("Run {} {}", program, args.join(" "))),
+            _ => None,
+        };
+        if let Some(action) = action {
+            use skilld_native::upgrade_ui::{self, UpgradeChoice};
+            match upgrade_ui::ask(
+                VERSION,
+                &notice.version,
+                &action,
+                !environment_present("NO_COLOR"),
+            ) {
+                Ok(UpgradeChoice::Later) => {}
+                Ok(UpgradeChoice::Dismiss) => {
+                    if let Err(error) = cli_upgrade::dismiss_version(&root, &notice.version) {
+                        eprintln!("UPGRADE_STATE_FAILED: Cannot save the upgrade choice: {error}");
+                    }
+                }
+                Ok(UpgradeChoice::Upgrade) => {
+                    eprintln!("Upgrading skilld to {}...", notice.version);
+                    let result = if let Some((program, args)) = package {
+                        eprintln!("Running {program} {}", args.join(" "));
+                        cli_upgrade::run_package_upgrade(program, &args)
+                    } else if let (Some(pin), Some(asset)) =
+                        (release_pin(), cli_upgrade::current_release_asset())
+                    {
+                        cli_upgrade::install_release(
+                            &InstallTarget {
+                                executable: &executable,
+                                current_version: VERSION,
+                                asset,
+                                pin: &pin,
+                            },
+                            &NativeReleaseFetcher::new(VERSION),
+                            &notice.version,
+                        )
+                    } else {
+                        unreachable!("standalone upgrades require a release key and asset")
+                    };
+                    return UpgradeStartup::Exit(match result {
+                        Ok(()) => {
+                            eprintln!("Upgrade complete. Run your command again.");
+                            ExitCode::SUCCESS
+                        }
+                        Err(error) => {
+                            eprintln!("{}: {}", error.code, error.message);
+                            ExitCode::from(2)
+                        }
+                    });
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    return UpgradeStartup::Exit(ExitCode::from(2));
+                }
+            }
+        }
+    }
     cli_upgrade::before_command(
-        &global_root(),
+        &root,
         &executable,
         channel,
         VERSION,
         cli_upgrade::unix_now(),
-    )
+    );
+    UpgradeStartup::Continue(Some(UpgradeSession {
+        root,
+        channel,
+        executable,
+    }))
 }
 
 fn run_upgrade_worker(value: &str) {
@@ -277,29 +378,47 @@ fn run_upgrade_worker(value: &str) {
         return;
     };
     let channel = upgrade_channel(&executable);
-    let pin = release_pin();
-    let target = match (channel, &pin, cli_upgrade::current_release_asset()) {
-        (InstallChannel::Standalone, Some(pin), Some(asset)) => Some(InstallTarget {
-            executable: &executable,
-            current_version: VERSION,
-            asset,
-            pin,
-        }),
-        _ => None,
-    };
     cli_upgrade::run_worker(
         value,
         &global_root(),
         channel,
         &NativeReleaseFetcher::new(VERSION),
-        target,
         cli_upgrade::unix_now(),
     );
 }
 
-fn print_upgrade_notice(notice: Option<&UpgradeNotice>) {
-    if let Some(notice) = notice {
-        eprintln!("{}", notice.message());
+fn print_upgrade_notice(session: Option<&UpgradeSession>) {
+    if let Some(session) = session
+        && let Some(notice) =
+            cli_upgrade::available_upgrade(&session.root, session.channel, VERSION)
+    {
+        let guidance = match session.channel {
+            InstallChannel::Npm(runner)
+                if cli_upgrade::package_upgrade_args(
+                    runner,
+                    &session.executable,
+                    &notice.version,
+                )
+                .is_none() =>
+            {
+                if runner == skilld_command::upgrade::PackageRunner::Npx {
+                    "Run npx skilld@latest to upgrade."
+                } else {
+                    "Use your package manager to upgrade this skilld installation."
+                }
+            }
+            _ => "Restart skilld to upgrade.",
+        };
+        eprintln!(
+            "\n{}",
+            skilld_native::upgrade_ui::render_banner(
+                VERSION,
+                &notice.version,
+                guidance,
+                terminal_width(),
+                !environment_present("NO_COLOR")
+            )
+        );
     }
 }
 

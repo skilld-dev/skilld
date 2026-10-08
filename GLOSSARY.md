@@ -456,7 +456,7 @@ The digest reports changes in watched Repositories.
 
 **Is:** replacing the skilld CLI executable with a newer release of the skilld CLI.
 
-**Use for:** the upgrade notice, the standalone background upgrade, and `SKILLD_NO_UPGRADE`.
+**Use for:** the upgrade banner, the upgrade prompt, executable replacement, and `SKILLD_NO_UPGRADE`.
 
 **Never:** update, self-update. `update` means a Skill update.
 
