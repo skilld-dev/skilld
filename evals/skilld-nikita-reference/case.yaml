@@ -1,0 +1,18 @@
+schema_version: '1.0'
+name: skilld-nikita-reference
+description: A one-off source lookup reads a root Skill reference at the loaded commit and installs nothing.
+tags: [skilld, run, references, provenance]
+runs: 1
+execution:
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+  prompt: |
+    Use the Agent Skill `heyimjames/nikita-bier-consumer-apps/nikita-bier-consumer-apps`
+    once for a source lookup. Do not install it.
+
+    Which four alternatives to full contact access does its `onboarding.md`
+    reference list for iOS 18+? Read that reference from the same commit
+    as the Skill. This is a source lookup, so no product advice is needed.
+
+    End with the four alternatives, the source commit, and the exact command
+    that read the reference. State whether any Skill files were written.

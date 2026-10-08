@@ -98,6 +98,7 @@ The `skilld` Skill cases check the CLI workflow it teaches:
 - `skilld-missing-ref`: a missing Skill reports the skilld error code and invents nothing.
 - `skilld-trending`: a trending question reads `skilld trending --json` and reports why each Skill trends.
 - `skilld-provenance`: a provenance question reads `skilld view` and names the exact SKILL.md.
+- `skilld-nikita-reference`: a root Skill reference uses the loaded commit and installs nothing.
 - `evals-opencode/mcp-find-skill`: with the skilld MCP server connected, the Agent finds a Skill with `search_skills` and returns a run command.
 - `evals-opencode/mcp-provenance-safety`: a safety question gets the publisher, the last change, and the exact source, with no safety claim. The Skill fetches its rules from a remote URL, and the answer must say so.
 
