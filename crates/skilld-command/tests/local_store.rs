@@ -185,7 +185,7 @@ fn multi_skill_batch_rolls_every_skill_back_when_the_lock_write_fails() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn multi_skill_batch_rolls_symlink_targets_back_when_the_lock_write_fails() {
     let temporary = tempfile::tempdir().unwrap();
@@ -576,9 +576,9 @@ fn copy_install_lists_views_and_removes_managed_state() {
     assert!(!target.root.join("example").exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
-fn symlink_install_points_at_the_canonical_skill() {
+fn symlink_install_replaces_and_removes_the_canonical_skill() {
     let temporary = tempfile::tempdir().unwrap();
     let skill = source(temporary.path(), "source", "linked");
     let store = LocalStore::new(temporary.path().join("project/.skills"));
@@ -609,6 +609,31 @@ fn symlink_install_points_at_the_canonical_skill() {
     assert_eq!(
         fs::read_to_string(destination.join("SKILL.md")).unwrap(),
         skill_text("linked")
+    );
+
+    let replacement = source(temporary.path(), "replacement", "updated");
+    let name = store
+        .install_from(
+            &replacement,
+            local_source(&replacement),
+            &[TargetInstall {
+                target: target.clone(),
+                mode: InstallMode::Symlink,
+            }],
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+        skill_text("updated")
+    );
+
+    store.remove(&name, std::slice::from_ref(&target)).unwrap();
+    assert!(fs::symlink_metadata(&destination).is_err());
+    assert!(!store.root().join("example").exists());
+    assert_eq!(
+        fs::read_to_string(replacement.join("SKILL.md")).unwrap(),
+        skill_text("updated")
     );
 }
 

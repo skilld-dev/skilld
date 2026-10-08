@@ -478,6 +478,51 @@ fn rejects_a_hash_in_the_attested_skill_path_but_allows_it_in_supporting_files()
 }
 
 #[test]
+fn unverified_files_reject_paths_that_differ_only_by_case() {
+    let result = prepare_unverified_files(vec![
+        PreparedFile {
+            path: "SKILL.md".to_owned(),
+            mode: 0o644,
+            bytes: b"---\nname: example\n---\n".to_vec(),
+        },
+        PreparedFile {
+            path: "skill.md".to_owned(),
+            mode: 0o644,
+            bytes: b"different instructions".to_vec(),
+        },
+    ]);
+    assert_eq!(result.unwrap_err().code, "INVALID_ARTIFACT_ARCHIVE");
+}
+
+#[test]
+fn unverified_files_reject_windows_reserved_names_and_characters() {
+    for path in [
+        "references/api<draft>.md",
+        "references/api|draft.md",
+        "references/api\"draft.md",
+        "references/api?.md",
+        "references/api*.md",
+        "references/COM¹.md",
+        "references/com².md",
+        "references/LPT³.md",
+    ] {
+        let result = prepare_unverified_files(vec![
+            PreparedFile {
+                path: "SKILL.md".to_owned(),
+                mode: 0o644,
+                bytes: b"---\nname: example\n---\n".to_vec(),
+            },
+            PreparedFile {
+                path: path.to_owned(),
+                mode: 0o644,
+                bytes: b"reference".to_vec(),
+            },
+        ]);
+        assert_eq!(result.unwrap_err().code, "INVALID_PATH", "{path}");
+    }
+}
+
+#[test]
 fn unverified_files_reject_c1_control_characters_in_paths() {
     let files = vec![
         PreparedFile {

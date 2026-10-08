@@ -646,8 +646,8 @@ pub fn prepare_unverified_files(
     let mut paths = BTreeSet::new();
     let mut total = 0_usize;
     for file in &files {
-        validate_relative_path(&file.path, 1024)?;
-        if !paths.insert(file.path.clone()) || !matches!(file.mode, 0o644 | 0o755) {
+        validate_artifact_path(&file.path)?;
+        if !paths.insert(file.path.to_ascii_lowercase()) || !matches!(file.mode, 0o644 | 0o755) {
             return Err(archive_error(
                 "the Skill contains an invalid file declaration",
             ));
@@ -907,7 +907,7 @@ fn validate_attestation_shape(attestation: &ArtifactAttestation) -> Result<(), R
     let mut folded_paths = BTreeSet::new();
     let mut content_size = 0_u64;
     for file in &attestation.files {
-        validate_relative_path(&file.path, 1024)?;
+        validate_artifact_path(&file.path)?;
         if !paths.insert(file.path.clone())
             || !folded_paths.insert(file.path.to_ascii_lowercase())
             || !matches!(file.mode, 0o644 | 0o755)
@@ -924,7 +924,7 @@ fn validate_attestation_shape(attestation: &ArtifactAttestation) -> Result<(), R
     }
     let mut linked_size = 0_u64;
     for file in &attestation.linked_files {
-        validate_relative_path(&file.path, 1024)?;
+        validate_artifact_path(&file.path)?;
         if !paths.insert(file.path.clone())
             || !folded_paths.insert(file.path.to_ascii_lowercase())
             || !matches!(file.mode, 0o644 | 0o755)
@@ -1159,7 +1159,7 @@ fn tar_path(header: &[u8]) -> Result<String, RemoteError> {
     } else {
         format!("{prefix}/{name}")
     };
-    validate_relative_path(path.trim_end_matches('/'), 1024)?;
+    validate_artifact_path(path.trim_end_matches('/'))?;
     Ok(path.trim_end_matches('/').to_owned())
 }
 
@@ -1314,6 +1314,18 @@ fn installed_digest(files: &[PreparedFile]) -> String {
     hex(&hasher.finalize())
 }
 
+fn validate_artifact_path(value: &str) -> Result<(), RemoteError> {
+    // Source paths stay on GitHub. Artifact paths become local filenames.
+    validate_relative_path(value, 1024)?;
+    if value.contains(['<', '>', '"', '|', '?', '*']) {
+        return Err(RemoteError::new(
+            "INVALID_PATH",
+            "the Skill path must stay inside the Artifact root",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_relative_path(value: &str, maximum: usize) -> Result<(), RemoteError> {
     let path = Path::new(value);
     let valid = !value.is_empty()
@@ -1354,9 +1366,15 @@ fn valid_path_part(part: &str) -> bool {
         .unwrap_or_default()
         .to_ascii_uppercase();
     !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        && !(stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+        && !stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
 }
 
 fn compare_timestamp(left: &str, right: &str) -> Result<i8, RemoteError> {
