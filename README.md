@@ -379,6 +379,10 @@ Progress shows the current phase, directory counts, and elapsed time.
 The scan includes hidden `.claude/skills` directories and lists `CLAUDE.md` and `.claude/commands` files separately.
 
 Default exclude globs prune dependencies, builds, caches, plugin staging, sessions, backups, and fixtures before reading their children.
+The scan skips general `~/.local` discovery, including worker homes and cached bundles.
+Configured Agent Skill directories and the configured skilld store remain included within the requested scan roots.
+Skill symlinks can still resolve into `~/.local`. Their neighboring directories are not scanned.
+Configured roots still honor exclude globs. Use `--include-excluded` for a broad `.local` scan.
 Git worktrees are skipped, including explicit roots and links into worktrees.
 Main checkouts and submodules remain included.
 Use `--include-excluded` or `--include-worktrees` when you need those files.

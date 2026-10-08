@@ -495,6 +495,143 @@ fn broken_links_under_linked_roots_are_reported_even_when_worktrees_are_included
 }
 
 #[test]
+fn local_app_data_is_pruned_but_configured_skill_roots_are_scanned() {
+    let home = tempfile::tempdir().unwrap();
+    skill(home.path(), ".local/share/cache/noise", "Cache");
+    skill(
+        home.path(),
+        ".local/share/worker-home/.agents/skills/worker",
+        "Worker",
+    );
+    skill(home.path(), ".local/share/skilld/skills/managed", "Managed");
+    skill(
+        home.path(),
+        ".local/share/custom-agent/skills/installed",
+        "Installed",
+    );
+    skill(
+        home.path(),
+        ".local/share/custom-agent/skills/node_modules/ignored",
+        "Dependency",
+    );
+    let mut ctx = context(home.path());
+    ctx.global_store = home.path().join(".local/share/skilld/skills");
+    ctx.global_targets.push(
+        ResolvedTarget::new(
+            AgentTargetId::Cursor,
+            home.path().join(".local/share/custom-agent/skills"),
+        )
+        .unwrap(),
+    );
+    let mut options = DoctorOptions::for_root(home.path());
+    options.roots.clear();
+    let report = scan(&options, &ctx).unwrap();
+    let mut names: Vec<_> = report.skills.iter().map(|s| s.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["installed", "managed"]);
+    assert!(
+        report
+            .skills
+            .iter()
+            .find(|s| s.name == "installed")
+            .unwrap()
+            .paths
+            .iter()
+            .any(|p| p.agent == Some(AgentTargetId::Cursor))
+    );
+    options.exclude.push("**/custom-agent/**".into());
+    let excluded = scan(&options, &ctx).unwrap();
+    assert_eq!(
+        excluded
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["managed"]
+    );
+    options.exclude.clear();
+    options.exclude.push(
+        home.path()
+            .join(".local/share/custom-agent")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+    );
+    let excluded_parent = scan(&options, &ctx).unwrap();
+    assert_eq!(
+        excluded_parent
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["managed"]
+    );
+    options.exclude.clear();
+    options.include_excluded = true;
+    let all = scan(&options, &ctx).unwrap();
+    for name in ["noise", "worker", "managed", "installed", "ignored"] {
+        assert!(all.skills.iter().any(|s| s.name == name), "{name}");
+    }
+    skill(home.path(), "project/.claude/skills/project", "Project");
+    options = DoctorOptions::for_root(&home.path().join("project"));
+    let narrow = scan(&options, &ctx).unwrap();
+    assert_eq!(
+        narrow
+            .skills
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["project"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_links_keep_local_referents_without_sweeping_their_neighbors() {
+    let home = tempfile::tempdir().unwrap();
+    skill(home.path(), ".local/share/bundle/active", "Active");
+    skill(home.path(), ".local/share/bundle/unused", "Unused");
+    fs::create_dir_all(home.path().join(".claude/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../.local/share/bundle/active",
+        home.path().join(".claude/skills/active"),
+    )
+    .unwrap();
+    let report = scan(&DoctorOptions::for_root(home.path()), &context(home.path())).unwrap();
+    assert_eq!(report.skills.len(), 1);
+    assert_eq!(report.skills[0].name, "active");
+    assert_eq!(
+        report.skills[0].canonical_path,
+        home.path().join(".local/share/bundle/active")
+    );
+    assert!(report.skills[0].paths[0].is_linked());
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_local_root_cannot_traverse_outside_home() {
+    let home = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    skill(outside.path(), "external", "Outside");
+    fs::create_dir_all(home.path().join(".local/share")).unwrap();
+    let linked = home.path().join(".local/share/agent");
+    std::os::unix::fs::symlink(outside.path(), &linked).unwrap();
+    let mut ctx = context(home.path());
+    ctx.global_targets
+        .push(ResolvedTarget::new(AgentTargetId::Cursor, linked).unwrap());
+    let mut options = DoctorOptions::for_root(home.path());
+    options.roots.clear();
+    let report = scan(&options, &ctx).unwrap();
+    assert!(report.skills.is_empty());
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|p| p.message.contains("outside the home directory"))
+    );
+}
+
+#[test]
 fn unreadable_git_metadata_is_reported_before_reading_skill_contents() {
     let home = tempfile::tempdir().unwrap();
     skill(home.path(), "feature/.claude/skills/feature", "Feature");

@@ -458,6 +458,20 @@ pub fn scan_with_progress(
             std::path::absolute(&p).map_err(|e| io_error(&p, e))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let local_root = context.home.join(".local");
+    let known_local_roots: BTreeSet<PathBuf> = context
+        .global_targets
+        .iter()
+        .map(|target| target.root.clone())
+        .chain(std::iter::once(context.global_store.clone()))
+        .filter(|path| path.starts_with(&local_root))
+        .collect();
+    // Only the configured roots bypass broad app-data pruning. All glob exclusions still apply.
+    let skip_local = |path: &Path| {
+        !options.include_excluded
+            && path.starts_with(&local_root)
+            && !known_local_roots.iter().any(|root| path.starts_with(root))
+    };
     let mut report = DoctorReport {
         roots: roots.clone(),
         excludes: patterns,
@@ -468,6 +482,30 @@ pub fn scan_with_progress(
         skipped_directories: 0,
     };
     let mut pending = roots.iter().map(|p| (p.clone(), 0)).collect::<Vec<_>>();
+    if !options.include_excluded {
+        report.excludes.push(format!(
+            "{}/**",
+            local_root.to_string_lossy().replace('\\', "/")
+        ));
+        for path in &known_local_roots {
+            // Do not expand an explicitly narrowed scan into another scope.
+            if !roots.iter().any(|root| path.starts_with(root)) {
+                continue;
+            }
+            if path.ancestors().any(|ancestor| excluded.is_match(ancestor)) {
+                report.skipped_directories += 1;
+                continue;
+            }
+            match fs::symlink_metadata(path) {
+                Ok(_) => pending.push((path.clone(), 0)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => report.problems.push(ScanProblem {
+                    path: path.clone(),
+                    message: format!("Cannot inspect configured Skill root: {error}"),
+                }),
+            }
+        }
+    }
     progress(ScanProgress::from_report(
         &report,
         ScanPhase::Discover,
@@ -477,9 +515,28 @@ pub fn scan_with_progress(
     let mut visited = BTreeSet::new();
     let mut found = BTreeSet::new();
     while let Some((path, depth)) = pending.pop() {
-        if excluded.is_match(&path) {
+        if excluded.is_match(&path) || skip_local(&path) {
             report.skipped_directories += 1;
             continue;
+        }
+        if depth == 0
+            && let Some(home) = &home_boundary
+        {
+            match fs::canonicalize(&path) {
+                Ok(real) if real.starts_with(home) => {}
+                Ok(_) => {
+                    report.skipped_directories += 1;
+                    report.problems.push(ScanProblem { path, message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
+                    continue;
+                }
+                Err(error) => {
+                    report.problems.push(ScanProblem {
+                        path,
+                        message: format!("Cannot resolve scan root: {error}"),
+                    });
+                    continue;
+                }
+            }
         }
         if !options.include_worktrees {
             let worktree = if depth == 0 {
@@ -534,7 +591,7 @@ pub fn scan_with_progress(
                 }
             };
             let child = entry.path();
-            if excluded.is_match(&child) {
+            if excluded.is_match(&child) || skip_local(&child) {
                 report.skipped_directories += 1;
                 continue;
             }
