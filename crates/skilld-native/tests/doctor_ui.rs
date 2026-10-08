@@ -2,7 +2,7 @@ use skilld_command::ResolvedTarget;
 use skilld_command::doctor::{DoctorOptions, ScanContext, ScanPhase, ScanProgress, scan};
 use skilld_command::doctor_actions::ActionPreview;
 use skilld_core::AgentTargetId;
-use skilld_native::doctor_ui::{Model, Screen, WorkState, render_snapshot};
+use skilld_native::doctor_ui::{Browse, Model, PathFilter, Screen, WorkState, render_snapshot};
 use std::fs;
 
 #[test]
@@ -93,9 +93,13 @@ fn doctor_groups_skills_sh_and_previews_removal_without_changing_files() {
         work: WorkState::Ready,
         ..Model::default()
     };
-    model.toggle_group();
+    let overview = render_snapshot(&model, 110, 26);
+    assert!(overview.contains("Review skills.sh migration"));
+    assert!(!model.can_review_action(110, 26));
+    model.open_group();
+    assert!(render_snapshot(&model, 110, 26).contains("Global Agent targets"));
+    model.open_group();
     let snapshot = render_snapshot(&model, 110, 26);
-    assert!(snapshot.contains("skills.sh installs"));
     assert!(snapshot.contains("example"));
     assert!(snapshot.contains("m migrate"));
     assert!(snapshot.contains("d remove"));
@@ -190,7 +194,7 @@ fn actions_are_unavailable_while_working_filtering_or_outside_skill_view() {
         work: WorkState::Ready,
         ..Model::default()
     };
-    assert!(model.can_review_action(80, 24));
+    assert!(!model.can_review_action(80, 24));
     assert!(!model.can_review_action(59, 24));
     assert!(!model.can_review_action(80, 17));
     for work in [
@@ -278,4 +282,99 @@ fn full_notice_keeps_long_errors_and_recovery_paths_reachable() {
         model.move_selection(true);
     }
     assert!(render_snapshot(&model, 80, 24).contains("recovery.json"));
+}
+
+fn scan_fixture(root: &std::path::Path) -> skilld_command::doctor::DoctorReport {
+    scan(
+        &DoctorOptions::for_root(root),
+        &ScanContext {
+            home: root.into(),
+            global_store: root.join(".skilld/skills"),
+            global_targets: vec![],
+            skills_sh_global_lock: root.join(".agents/.skill-lock.json"),
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn recommendations_reduce_large_results_and_require_drilldown_before_actions() {
+    let root = tempfile::tempdir().unwrap();
+    for project in ["first", "second"] {
+        for index in 0..40 {
+            let path = root
+                .path()
+                .join(format!("{project}/.claude/skills/skill-{index}"));
+            fs::create_dir_all(&path).unwrap();
+            fs::write(
+                path.join("SKILL.md"),
+                format!("# Skill {index}\nRead {project}.\n"),
+            )
+            .unwrap();
+        }
+    }
+    let mut model = Model {
+        report: Some(scan_fixture(root.path())),
+        work: WorkState::Ready,
+        ..Model::default()
+    };
+    assert_eq!(model.visible().len(), 80);
+    assert_eq!(model.entries().len(), 1);
+    assert!(render_snapshot(&model, 100, 26).contains("Inspect unknown installs"));
+    assert!(!model.can_review_action(100, 26));
+    model.open_group();
+    assert_eq!(model.entries().len(), 2);
+    assert!(!model.can_review_action(100, 26));
+    model.move_selection(true);
+    model.open_group();
+    assert_eq!(model.entries().len(), 40);
+    assert!(model.can_review_action(100, 26));
+    let selected = model.selected_skill().unwrap();
+    assert!(
+        model.report.as_ref().unwrap().skills[selected]
+            .canonical_path
+            .starts_with(root.path().join("second"))
+    );
+    model.back();
+    assert_eq!(model.entries().len(), 2);
+    model.back();
+    assert_eq!(model.entries().len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_filter_keeps_alias_scope_and_duplicate_details_name_real_copies() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("catalog/example");
+    let copy = root.path().join("project/.claude/skills/copied");
+    let alias = root.path().join("project/.claude/skills/alias-only-name");
+    for path in [&source, &copy] {
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("SKILL.md"), "# Example\nRead files.\n").unwrap();
+    }
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let mut model = Model {
+        report: Some(scan_fixture(root.path())),
+        work: WorkState::Ready,
+        ..Model::default()
+    };
+    assert_eq!(model.visible().len(), 2);
+    model.toggle_group();
+    assert_eq!(model.path_filter, PathFilter::Symlinks);
+    assert_eq!(model.visible().len(), 1);
+    model.filter = "alias-only-name".into();
+    assert_eq!(model.visible().len(), 1);
+    model.open_group();
+    model.open_group();
+    let snapshot = render_snapshot(&model, 180, 60);
+    assert!(snapshot.contains("Symlinks:"));
+    assert!(snapshot.contains("alias-only-name"));
+    assert!(snapshot.contains(&format!("-> {}", source.display())));
+    assert!(snapshot.contains("Duplicate: 1 identical directory copies."));
+    assert!(snapshot.contains(&copy.display().to_string()));
+    model.filter.clear();
+    model.toggle_group();
+    assert_eq!(model.path_filter, PathFilter::Directories);
+    assert_eq!(model.visible().len(), 2);
+    assert_eq!(model.browse, Browse::Owners);
 }

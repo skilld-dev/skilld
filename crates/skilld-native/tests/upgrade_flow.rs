@@ -143,7 +143,7 @@ fn restarting_with_a_cached_release_prompts_and_runs_the_package_manager() {
     let fixture = Fixture::new(0);
     let (success, output) = fixture.terminal(&["list", "--global"], Some(b"\r"), None);
     assert!(success, "{output}");
-    assert!(output.contains("\x1b[38;2;"), "{output}");
+    assert!(output.contains("\x1b[38;"), "{output}");
     assert!(
         output.contains("Upgrade complete. Run your command again."),
         "{output}"

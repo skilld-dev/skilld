@@ -6,11 +6,14 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap};
-use skilld_command::doctor::{DoctorOptions, DoctorOwner, DoctorReport, ScanPhase, ScanProgress};
+use skilld_command::doctor::{
+    DoctorOptions, DoctorOwner, DoctorReport, DoctorSkill, ScanPhase, ScanProgress,
+};
 use skilld_command::doctor_actions::{ActionPreview, DoctorAction, DoctorApplied, DoctorPlan};
 use skilld_command::{CommandError, LocalHost};
 use skilld_ui::text::sanitize;
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
@@ -18,11 +21,16 @@ use std::time::{Duration, Instant};
 
 const ACCENT: Color = Color::Cyan;
 const MUTED: Color = Color::Reset;
-fn owner_color(owner: &DoctorOwner) -> Color {
-    match owner {
-        DoctorOwner::Unavailable { .. } => Color::Red,
-        _ => Color::Reset,
+fn in_group(skill: &DoctorSkill, owner: &str) -> bool {
+    if owner == "Duplicates" {
+        !skill.duplicates.is_empty()
+    } else {
+        skill.owner.label() == owner
     }
+}
+
+fn skill_count(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "Skill" } else { "Skills" })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,10 +48,72 @@ pub enum Screen {
     Notice,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Browse {
+    #[default]
+    Owners,
+    Locations {
+        owner: &'static str,
+    },
+    Skills {
+        owner: &'static str,
+        location: Option<PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PathFilter {
+    #[default]
+    All,
+    Symlinks,
+    Directories,
+}
+
+impl PathFilter {
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All paths",
+            Self::Symlinks => "Symlinks",
+            Self::Directories => "Directories",
+        }
+    }
+}
+
+pub enum Entry {
+    Group {
+        label: String,
+        skills: Vec<usize>,
+        next: Browse,
+    },
+    Skill(usize),
+}
+
+fn locations(skill: &DoctorSkill, filter: PathFilter) -> BTreeSet<Option<PathBuf>> {
+    skill
+        .paths
+        .iter()
+        .filter(|p| match filter {
+            PathFilter::All => true,
+            PathFilter::Symlinks => p.symlink_target.is_some(),
+            PathFilter::Directories => p.symlink_target.is_none(),
+        })
+        .map(|p| {
+            p.project_root.clone().or_else(|| {
+                if p.agent.is_some() {
+                    None
+                } else {
+                    p.path.parent().map(PathBuf::from)
+                }
+            })
+        })
+        .collect()
+}
+
 pub struct Model {
     pub report: Option<DoctorReport>,
     pub selected: usize,
-    pub skills_sh_only: bool,
+    pub browse: Browse,
+    pub path_filter: PathFilter,
     pub preview: Option<ActionPreview>,
     pub message: String,
     pub work: WorkState,
@@ -57,6 +127,7 @@ pub struct Model {
     pub filter: String,
     pub editing_filter: bool,
     pub details_focused: bool,
+    pub history: Vec<usize>,
 }
 
 impl Default for Model {
@@ -64,7 +135,8 @@ impl Default for Model {
         Self {
             report: None,
             selected: 0,
-            skills_sh_only: false,
+            browse: Browse::default(),
+            path_filter: PathFilter::default(),
             preview: None,
             message: "Scanning Skill files. Press q to cancel.".into(),
             work: WorkState::Scanning,
@@ -78,6 +150,7 @@ impl Default for Model {
             filter: String::new(),
             editing_filter: false,
             details_focused: false,
+            history: vec![],
         }
     }
 }
@@ -91,13 +164,26 @@ impl Model {
                     .iter()
                     .enumerate()
                     .filter(|(_, s)| {
-                        (!self.skills_sh_only || matches!(s.owner, DoctorOwner::SkillsSh { .. }))
+                        let scopes = locations(s, self.path_filter);
+                        !scopes.is_empty()
+                            && match &self.browse {
+                                Browse::Owners => true,
+                                Browse::Locations { owner } => in_group(s, owner),
+                                Browse::Skills { owner, location } => {
+                                    in_group(s, owner) && scopes.contains(location)
+                                }
+                            }
                             && (self.filter.is_empty()
                                 || format!(
-                                    "{} {} {}",
+                                    "{} {} {} {}",
                                     s.name,
                                     s.owner.label(),
-                                    s.canonical_path.display()
+                                    s.canonical_path.display(),
+                                    s.paths
+                                        .iter()
+                                        .map(|p| p.path.display().to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
                                 )
                                 .to_lowercase()
                                 .contains(&self.filter.to_lowercase()))
@@ -106,6 +192,103 @@ impl Model {
                     .collect()
             })
             .unwrap_or_default()
+    }
+    pub fn entries(&self) -> Vec<Entry> {
+        let visible = self.visible();
+        let Some(report) = &self.report else {
+            return vec![];
+        };
+        match &self.browse {
+            Browse::Owners => [
+                ("skills.sh", "Review skills.sh migration"),
+                ("Unknown", "Inspect unknown installs"),
+                ("Unavailable", "Resolve ownership problems"),
+                ("Duplicates", "Review duplicate copies"),
+                ("skilld", "Browse skilld installs"),
+                ("Plugin", "Browse plugin Skills"),
+                ("Source", "Browse source directories"),
+            ]
+            .into_iter()
+            .filter_map(|(owner, label)| {
+                let skills: Vec<_> = visible
+                    .iter()
+                    .copied()
+                    .filter(|&i| in_group(&report.skills[i], owner))
+                    .collect();
+                (!skills.is_empty()).then(|| Entry::Group {
+                    label: label.into(),
+                    skills,
+                    next: Browse::Locations { owner },
+                })
+            })
+            .collect(),
+            Browse::Locations { owner } => {
+                let scopes: BTreeSet<_> = visible
+                    .iter()
+                    .flat_map(|&i| locations(&report.skills[i], self.path_filter))
+                    .collect();
+                scopes
+                    .into_iter()
+                    .map(|location| Entry::Group {
+                        label: location.as_ref().map_or_else(
+                            || "Global Agent targets".into(),
+                            |p| p.display().to_string(),
+                        ),
+                        skills: visible
+                            .iter()
+                            .copied()
+                            .filter(|&i| {
+                                locations(&report.skills[i], self.path_filter).contains(&location)
+                            })
+                            .collect(),
+                        next: Browse::Skills { owner, location },
+                    })
+                    .collect()
+            }
+            Browse::Skills { .. } => visible.into_iter().map(Entry::Skill).collect(),
+        }
+    }
+    pub fn selected_skill(&self) -> Option<usize> {
+        match self.entries().get(self.selected) {
+            Some(Entry::Skill(i)) => Some(*i),
+            _ => None,
+        }
+    }
+    pub fn open_group(&mut self) {
+        if self.work != WorkState::Ready || self.preview.is_some() {
+            return;
+        }
+        if let Some(Entry::Group { next, .. }) = self.entries().into_iter().nth(self.selected) {
+            self.history.push(self.selected);
+            self.browse = next;
+            self.reset_selection();
+        }
+    }
+    pub fn back(&mut self) {
+        if self.screen != Screen::Skills {
+            self.screen = Screen::Skills;
+        } else if self.preview.take().is_some() {
+            // Keep the Skill selected after cancelling its action review.
+        } else if !self.filter.is_empty() {
+            self.filter.clear();
+        } else {
+            self.browse = match self.browse {
+                Browse::Skills { owner, .. } => Browse::Locations { owner },
+                _ => Browse::Owners,
+            };
+            self.reset_selection();
+            self.selected = self
+                .history
+                .pop()
+                .unwrap_or(0)
+                .min(self.entries().len().saturating_sub(1));
+        }
+        self.detail_scroll = 0;
+    }
+    fn reset_selection(&mut self) {
+        self.selected = 0;
+        self.detail_scroll = 0;
+        self.details_focused = false;
     }
     pub fn move_selection(&mut self, down: bool) {
         if self.preview.is_some() || self.details_focused || self.screen != Screen::Skills {
@@ -118,7 +301,7 @@ impl Model {
             };
             return;
         }
-        let len = self.visible().len();
+        let len = self.entries().len();
         if len > 0 {
             self.selected = if down {
                 (self.selected + 1) % len
@@ -135,12 +318,18 @@ impl Model {
             && self.screen == Screen::Skills
             && self.preview.is_none()
             && !self.editing_filter
+            && self.selected_skill().is_some()
     }
     pub fn toggle_group(&mut self) {
         if self.work == WorkState::Ready && self.preview.is_none() {
-            self.skills_sh_only = !self.skills_sh_only;
-            self.selected = 0;
-            self.detail_scroll = 0;
+            self.path_filter = match self.path_filter {
+                PathFilter::All => PathFilter::Symlinks,
+                PathFilter::Symlinks => PathFilter::Directories,
+                PathFilter::Directories => PathFilter::All,
+            };
+            self.browse = Browse::Owners;
+            self.history.clear();
+            self.reset_selection();
         }
     }
 }
@@ -192,7 +381,25 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
                 ),
                 Span::raw(format!("  {counts}")),
             ]),
-            Line::styled(format!("Scan: {scope}"), tone(model.color, MUTED)),
+            Line::styled(
+                if model.work == WorkState::Scanning {
+                    format!("Scan: {scope}")
+                } else {
+                    let trail = match &model.browse {
+                        Browse::Owners => "Overview".into(),
+                        Browse::Locations { owner } => format!("Overview > {owner}"),
+                        Browse::Skills { owner, location } => format!(
+                            "Overview > {owner} > {}",
+                            location.as_ref().map_or_else(
+                                || "Global Agent targets".into(),
+                                |p| p.display().to_string()
+                            )
+                        ),
+                    };
+                    format!("{} | {trail}", model.path_filter.label())
+                },
+                tone(model.color, MUTED),
+            ),
         ]),
         rows[0],
     );
@@ -214,32 +421,59 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
             .split(rows[1])
             .to_vec()
     } else {
-        Layout::horizontal([Constraint::Percentage(38), Constraint::Percentage(62)])
+        Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
             .split(rows[1])
             .to_vec()
     };
     let visible = model.visible();
-    let items = visible
+    let entries = model.entries();
+    let items = entries
         .iter()
-        .map(|&i| {
-            let s = &model.report.as_ref().expect("visible report").skills[i];
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<10} ", s.owner.label()),
-                    tone(model.color, owner_color(&s.owner)),
-                ),
-                Span::raw(sanitize(&s.name)),
-                Span::styled(
-                    if s.duplicates.is_empty() { "" } else { "  =" },
-                    tone(model.color, ACCENT),
-                ),
-            ]))
+        .map(|entry| match entry {
+            Entry::Group {
+                label,
+                skills,
+                next,
+            } => {
+                let short = match next {
+                    Browse::Skills {
+                        location: Some(p), ..
+                    } => p
+                        .file_name()
+                        .map_or_else(|| label.clone(), |n| n.to_string_lossy().into_owned()),
+                    _ => label.clone(),
+                };
+                ListItem::new(vec![
+                    Line::styled(
+                        sanitize(&short),
+                        tone(model.color, ACCENT).add_modifier(Modifier::BOLD),
+                    ),
+                    Line::styled(
+                        format!("  {} · Enter to review", skill_count(skills.len())),
+                        tone(model.color, MUTED),
+                    ),
+                ])
+            }
+            Entry::Skill(i) => {
+                let s = &model.report.as_ref().expect("visible report").skills[*i];
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if s.duplicates.is_empty() {
+                            ""
+                        } else {
+                            "Duplicate · "
+                        },
+                        tone(model.color, Color::Yellow),
+                    ),
+                    Span::raw(sanitize(&s.name)),
+                ]))
+            }
         })
         .collect::<Vec<_>>();
-    let mut state = ListState::default().with_selected(if visible.is_empty() {
+    let mut state = ListState::default().with_selected(if entries.is_empty() {
         None
     } else {
-        Some(model.selected.min(visible.len() - 1))
+        Some(model.selected.min(entries.len() - 1))
     });
     frame.render_stateful_widget(
         List::new(items)
@@ -257,12 +491,12 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
                         } else {
                             ""
                         },
-                        if model.skills_sh_only {
-                            "skills.sh installs"
-                        } else {
-                            "All Skills"
+                        match model.browse {
+                            Browse::Owners => "Recommendations",
+                            Browse::Locations { .. } => "Projects / folders",
+                            Browse::Skills { .. } => "Skills",
                         },
-                        visible.len()
+                        entries.len()
                     )),
             )
             .highlight_symbol("> ")
@@ -273,11 +507,12 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
     let (title, details) = if model.screen == Screen::Help {
         (
             "Help",
-            "Choose a Skill to inspect its files and Agent targets.
+            "Open a recommendation, then a folder, then a Skill.
 
 Up/down or j/k: select or scroll
 Left/right: focus list or details
-Tab: switch All Skills and skills.sh installs
+Enter: open group; Esc: back
+Tab: All paths / Symlinks / Directories
 /: filter Skills; Enter: finish; Esc: clear
 PgUp/PgDn: scroll details
 m: review migration; d: review removal
@@ -337,10 +572,63 @@ While applying, wait for the result."
         }
         text.push_str("\nOriginal files and lock metadata will be backed up.\nEnter applies this action. Esc cancels.\nUp/down scroll all affected paths.");
         ("Review action", text)
-    } else if let Some(&i) = visible.get(model.selected) {
+    } else if let Some(Entry::Group {
+        label,
+        skills,
+        next,
+    }) = entries.get(model.selected)
+    {
+        let report = model.report.as_ref().expect("group report");
+        let duplicate_count = skills
+            .iter()
+            .filter(|&&i| !report.skills[i].duplicates.is_empty())
+            .count();
+        let linked_count = skills
+            .iter()
+            .filter(|&&i| {
+                report.skills[i]
+                    .paths
+                    .iter()
+                    .any(|p| p.symlink_target.is_some())
+            })
+            .count();
+        let description = match next {
+            Browse::Locations { owner: "skills.sh" } => {
+                "Installed through skills.sh. Review migration or removal for each Skill."
+            }
+            Browse::Locations { owner: "Unknown" } => {
+                "No installation record found. Inspect each Skill before removing it."
+            }
+            Browse::Locations {
+                owner: "Unavailable",
+            } => "Ownership could not be checked. Press p to inspect scan problems.",
+            Browse::Locations {
+                owner: "Duplicates",
+            } => {
+                "These directories contain identical files. Compare paths, then use each owner's removal workflow. Doctor reviews all targets for an install."
+            }
+            Browse::Locations { owner: "skilld" } => {
+                "Managed by skilld. Use skilld update or remove for these Skills."
+            }
+            Browse::Locations { owner: "Plugin" } => {
+                "Managed by plugins. Use the plugin manager to make changes."
+            }
+            Browse::Locations { owner: "Source" } => {
+                "Source directories. No cleanup action applies here."
+            }
+            _ => "Skills found in this project or folder. A Skill may appear in several locations.",
+        };
+        (
+            "Recommended next step",
+            format!(
+                "{label}\n\n{description}\n\nEnter opens this group.\n\n{}\n{linked_count} with symlinks\n{duplicate_count} with identical copies\n\nFilters only change this view.\nActions review all targets for the install.\nRecommendations can include the same Skill.\n\nScan: {scope}",
+                skill_count(skills.len())
+            ),
+        )
+    } else if let Some(i) = model.selected_skill() {
         let s = &model.report.as_ref().expect("visible report").skills[i];
         let mut text = format!(
-            "{}\nOwner: {}\n{}\n",
+            "{}\nOwner: {}\n\nFilters only change this view.\nActions review all targets for the install.\n\n{}\n",
             s.name,
             s.owner.label(),
             s.canonical_path.display()
@@ -358,17 +646,34 @@ While applying, wait for the result."
                 f.files, f.bytes, f.git_tree
             ));
         }
-        text.push_str("\nAgent paths:\n");
+        text.push_str("\nDirectories:\n");
+        for p in s.paths.iter().filter(|p| p.symlink_target.is_none()) {
+            text.push_str(&format!("{}\n", p.path.display()));
+        }
+        text.push_str("\nSymlinks:\n");
+        let mut links = 0;
         for p in &s.paths {
-            if p.agent.is_some() {
-                text.push_str(&format!("{}\n", p.path.display()));
+            if let Some(target) = &p.symlink_target {
+                links += 1;
+                text.push_str(&format!(
+                    "{}\n  -> {}\n",
+                    p.path.display(),
+                    target.display()
+                ));
             }
+        }
+        if links == 0 {
+            text.push_str("None\n");
         }
         if !s.duplicates.is_empty() {
             text.push_str(&format!(
-                "\n{} identical directory copies.\n",
+                "\nDuplicate: {} identical directory copies.\n",
                 s.duplicates.len()
             ));
+            for path in &s.duplicates {
+                text.push_str(&format!("{}\n", path.display()));
+            }
+            text.push_str("Symlinks to this Skill are not duplicate copies.\n");
         }
         if let Some(m) = &s.source_match {
             text.push_str(&format!(
@@ -435,9 +740,9 @@ While applying, wait for the result."
             .scroll((model.detail_scroll.min(limit), 0)),
         cols[1],
     );
-    let actions = visible
-        .get(model.selected)
-        .map(|&i| &model.report.as_ref().expect("visible report").skills[i].owner);
+    let actions = model
+        .selected_skill()
+        .map(|i| &model.report.as_ref().expect("visible report").skills[i].owner);
     let help = if model.editing_filter {
         "type to filter  enter done  esc clear"
     } else if model.work == WorkState::Applying {
@@ -448,13 +753,15 @@ While applying, wait for the result."
         "↑/↓ scroll  esc back  q quit"
     } else if model.preview.is_some() {
         "enter apply  esc cancel  ↑/↓ scroll"
+    } else if !matches!(model.browse, Browse::Skills { .. }) {
+        "enter open  esc back  / filter  tab paths  ? help  q quit"
     } else {
         match actions {
             Some(DoctorOwner::SkillsSh { .. }) => {
-                "m migrate  d remove  / filter  tab group  ? help  q quit"
+                "m migrate  d remove  esc back  / filter  ? help  q quit"
             }
-            Some(DoctorOwner::Unknown) => "d remove  / filter  tab group  ? help  q quit",
-            _ => "/ filter  tab group  ? help  q quit",
+            Some(DoctorOwner::Unknown) => "d remove  esc back  / filter  ? help  q quit",
+            _ => "esc back  / filter  tab paths  ? help  q quit",
         }
     };
     frame.render_widget(
@@ -466,7 +773,7 @@ While applying, wait for the result."
                     if model.editing_filter {
                         ACCENT
                     } else {
-                        Color::Yellow
+                        Color::Reset
                     },
                 ),
             ),
@@ -662,7 +969,7 @@ pub fn run_doctor(
                                 model.message = if let Some(message) = completed_message.take() {
                                     message
                                 } else if report.problems.is_empty() {
-                                    "Choose a Skill to review.".into()
+                                    "Choose a recommendation to review.".into()
                                 } else {
                                     format!(
                                         "{} scan problems. Press p for paths and reasons.",
@@ -822,17 +1129,14 @@ pub fn run_doctor(
                     model.detail_scroll = 0;
                 }
                 KeyCode::Esc => {
-                    model.screen = Screen::Skills;
-                    model.filter.clear();
                     plan = None;
-                    model.preview = None;
-                    model.detail_scroll = 0;
+                    model.back();
                 }
                 KeyCode::Enter
                     if model.work == WorkState::Ready && model.screen == Screen::Skills =>
                 {
                     if let Some(p) = plan.take() {
-                        previous_path = model.visible().get(model.selected).map(|&i| {
+                        previous_path = model.selected_skill().map(|i| {
                             model.report.as_ref().unwrap().skills[i]
                                 .canonical_path
                                 .clone()
@@ -844,10 +1148,12 @@ pub fn run_doctor(
                         std::thread::spawn(move || {
                             let _ = tx.send(Job::Applied(p.apply()));
                         });
+                    } else {
+                        model.open_group();
                     }
                 }
                 KeyCode::Char('r') if model.preview.is_none() => {
-                    previous_path = model.visible().get(model.selected).map(|&i| {
+                    previous_path = model.selected_skill().map(|i| {
                         model.report.as_ref().unwrap().skills[i]
                             .canonical_path
                             .clone()
@@ -857,8 +1163,8 @@ pub fn run_doctor(
                     start_scan(host.clone(), options.clone(), tx.clone());
                 }
                 KeyCode::Char('m' | 'd') if model.can_review_action(size.width, size.height) => {
-                    if let (Some(report), Some(&index)) =
-                        (model.report.clone(), model.visible().get(model.selected))
+                    if let (Some(report), Some(index)) =
+                        (model.report.clone(), model.selected_skill())
                     {
                         let owner = &report.skills[index].owner;
                         if !matches!(owner, DoctorOwner::SkillsSh { .. } | DoctorOwner::Unknown)

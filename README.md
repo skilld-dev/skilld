@@ -379,12 +379,19 @@ Progress shows the current phase, directory counts, and elapsed time.
 The scan includes hidden `.claude/skills` directories and lists `CLAUDE.md` and `.claude/commands` files separately.
 
 Default exclude globs prune dependencies, builds, caches, plugin staging, sessions, backups, and fixtures before reading their children.
-Git worktrees are skipped beneath scan roots.
+Git worktrees are skipped, including explicit roots and links into worktrees.
+Main checkouts and submodules remain included.
 Use `--include-excluded` or `--include-worktrees` when you need those files.
 Repeat `--exclude GLOB` to add exclusions. Git internals remain excluded.
 Source and plugin files retain their owners.
 
-Press Tab to show skills.sh installs separately. Choose a Skill, then press `m` to migrate or `d` to remove.
+The first screen recommends reviewing skills.sh migration, unknown installs, ownership problems, and duplicate copies.
+Open a recommendation with Enter, choose a project or folder, then choose a Skill. Escape goes back.
+Managed installs, plugin Skills, and source directories have separate groups.
+Press Tab to cycle through all paths, symlinks, and directories.
+Details show symlink destinations and the paths of identical copies. Symlinks are not duplicate copies.
+Filters only change the view. Cleanup reviews all targets for the selected install.
+Choose a Skill, then press `m` to migrate or `d` to remove.
 Review affected Agent targets before pressing Enter. Escape cancels.
 Press `/` to filter by name, owner, or path. Left and right switch focus between the list and details.
 Press `p` for scan problems, `n` for the full notice, or `?` for help.

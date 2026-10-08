@@ -35,6 +35,9 @@ Give empty results a useful next action based on available commands.
 
 Pickers show the question, query, matching count, selected item, and valid keys.
 Full-screen views keep scope and current state visible.
+For large inventories, start with recommendations and counts. Open projects or folders before listing individual Skills.
+Use words for findings. Label identical copies as duplicates and show their paths; separate symlinks from directory copies.
+State when a filter changes only the view. An action review must still list every affected target.
 Spend rows on the user's decision. Do not reserve space for decorative panels.
 If a pane cannot show complete content, provide reachable scrolling or a detail view.
 At smaller sizes, simplify the layout before hiding required information.
