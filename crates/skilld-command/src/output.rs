@@ -237,7 +237,11 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
         .unwrap_or_else(|_| b"OUTPUT_RENDER_FAILED: error output could not be encoded\n".to_vec());
     }
     match mode {
-        OutputMode::Human { color, .. } => {
+        OutputMode::Human {
+            color,
+            width: columns,
+            ..
+        } => {
             let message = sanitize(&error.message);
             let code = sanitize(error.code);
             let mut out = format!(
@@ -246,8 +250,28 @@ pub(crate) fn render_error(error: &CommandError, mode: OutputMode) -> Vec<u8> {
                 skilld_ui::paint(&message, skilld_ui::Role::Emphasis, color),
                 skilld_ui::paint(&format!("({code})"), skilld_ui::Role::Dim, color),
             );
+            if width(&message) + width(&code) + 5 > usize::from(columns) {
+                out.clear();
+                for (index, line) in wrap(&message, usize::from(columns).saturating_sub(2))
+                    .iter()
+                    .enumerate()
+                {
+                    let prefix = if index == 0 {
+                        paint("✗ ", Role::Error, color)
+                    } else {
+                        "  ".to_owned()
+                    };
+                    out.push_str(&format!("{prefix}{}\n", paint(line, Role::Emphasis, color)));
+                }
+                for line in wrap(&format!("({code})"), usize::from(columns).saturating_sub(2)) {
+                    out.push_str(&format!("  {}\n", paint(&line, Role::Dim, color)));
+                }
+            }
             if let Some(next_step) = &error.next_step {
-                out.push_str(&format!("  Next step: {}\n", sanitize(next_step)));
+                out.push_str(&format!("\n  {}\n", paint("Next step", Role::Brand, color)));
+                for line in wrap(&sanitize(next_step), usize::from(columns).saturating_sub(2)) {
+                    out.push_str(&format!("  {line}\n"));
+                }
             }
             out.into_bytes()
         }
@@ -308,16 +332,21 @@ fn render_human(
         output.push('\n');
     }
     let shown = outcome.items.len();
-    output.push_str(&format!(
-        "{} of {} {}\n",
-        shown,
-        outcome.total,
-        if outcome.total == 1 {
-            "Skill"
-        } else {
-            "Skills"
-        }
+    output.push_str(&paint(
+        &format!(
+            "{} of {} {}",
+            shown,
+            outcome.total,
+            if outcome.total == 1 {
+                "Skill"
+            } else {
+                "Skills"
+            }
+        ),
+        Role::Dim,
+        color,
     ));
+    output.push('\n');
 
     if outcome.items.is_empty() {
         output.push('\n');
@@ -343,7 +372,7 @@ fn render_human(
         let meta = format!(
             "{} · {}",
             paint(&slug, Role::Dim, color),
-            paint(&stars, Role::Warn, color)
+            paint(&stars, Role::Accent, color)
         );
         let meta_width = width(&slug) + 3 + width(&stars);
         if 2 + width(&name) + 2 + meta_width <= columns {
@@ -486,8 +515,8 @@ pub(crate) fn render_run(outcome: &RunOutcome, mode: OutputMode) -> Result<Vec<u
         (RunOutcome::Index(listing), OutputMode::Plain { .. }) => {
             Ok(render_index_plain(listing).into_bytes())
         }
-        (RunOutcome::Index(listing), OutputMode::Human { color, .. }) => {
-            Ok(render_index(listing, color).into_bytes())
+        (RunOutcome::Index(listing), OutputMode::Human { color, width, .. }) => {
+            Ok(render_index(listing, color, width).into_bytes())
         }
         (RunOutcome::Load(skill), _) => {
             Ok(render_load(skill, colored(mode), command_platform(mode)).into_bytes())
@@ -525,22 +554,29 @@ const fn command_platform(mode: OutputMode) -> CommandPlatform {
 }
 
 /// One line per Skill: the run command, then the description.
-fn render_index(listing: &SkillListing, color: bool) -> String {
+fn render_index(listing: &SkillListing, color: bool, columns: u16) -> String {
     let reference = sanitize(&listing.reference.canonical());
     let count = listing.items.len();
     let noun = if count == 1 { "Skill" } else { "Skills" };
     let mut out = String::new();
     out.push_str(&paint(
         &format!("{reference} names {count} {noun}. skilld loaded none of them."),
-        Role::Emphasis,
+        Role::Brand,
         color,
     ));
     out.push_str("\n\n");
     for item in &listing.items {
-        out.push_str(&paint(&run_command(item), Role::Emphasis, color));
+        out.push_str(&skilld_ui::paint_command(&run_command(item), color));
+        out.push('\n');
         if let Some(description) = &item.description {
-            out.push_str("  ");
-            out.push_str(&paint(&sanitize(description), Role::Dim, color));
+            for line in wrap(
+                &sanitize(description),
+                usize::from(columns).saturating_sub(2),
+            ) {
+                out.push_str("  ");
+                out.push_str(&paint(&line, Role::Dim, color));
+                out.push('\n');
+            }
         }
         out.push('\n');
     }
@@ -548,11 +584,7 @@ fn render_index(listing: &SkillListing, color: bool) -> String {
     out.push_str("Run one command above to load that Skill for this session.\n");
     out.push_str(&format!(
         "Install every Skill listed here with {}.\n",
-        paint(
-            &format!("npx skilld add {reference}"),
-            Role::Emphasis,
-            color
-        )
+        paint(&format!("npx skilld add {reference}"), Role::Brand, color)
     ));
     out
 }
@@ -683,14 +715,14 @@ fn render_load(skill: &TransientSkill, color: bool, platform: CommandPlatform) -
     }
 
     out.push('\n');
-    out.push_str(&paint("--- SKILL.md ---", Role::Dim, color));
+    out.push_str(&paint("--- SKILL.md ---", Role::Brand, color));
     out.push('\n');
     let instructions = safe_terminal_text(&skill.instructions);
     out.push_str(&instructions);
     if !instructions.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(&paint("--- end of SKILL.md ---", Role::Dim, color));
+    out.push_str(&paint("--- end of SKILL.md ---", Role::Brand, color));
     out.push('\n');
 
     out.push('\n');

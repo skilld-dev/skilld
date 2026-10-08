@@ -80,7 +80,32 @@ fn span_text(span: &Span) -> &str {
 
 /// Paint a command string in one step.
 pub fn paint_command(command: &str, color: bool) -> String {
-    paint_spans(&command_spans(command), color)
+    if !color {
+        return command.to_owned();
+    }
+    let spans = command_spans(command);
+    let mut spans = spans.iter();
+    let mut output = String::new();
+    let mut cursor = 0;
+    while cursor < command.len() {
+        let rest = &command[cursor..];
+        let whitespace = rest.starts_with(char::is_whitespace);
+        let end = rest
+            .char_indices()
+            .find(|(_, character)| character.is_whitespace() != whitespace)
+            .map_or(rest.len(), |(index, _)| index);
+        let text = &rest[..end];
+        if whitespace {
+            output.push_str(text);
+        } else {
+            match spans.next() {
+                Some(Span::Styled(_, role)) => output.push_str(&paint(text, *role, true)),
+                _ => output.push_str(text),
+            }
+        }
+        cursor += end;
+    }
+    output
 }
 
 #[cfg(test)]
@@ -115,6 +140,10 @@ mod tests {
         assert_eq!(
             paint_command("skilld install foo --agent codex", false),
             "skilld install foo --agent codex"
+        );
+        assert_eq!(
+            paint_command("skilld install 'my  skill' --agent codex", false),
+            "skilld install 'my  skill' --agent codex"
         );
     }
 

@@ -6,6 +6,16 @@
 /// The escape sequence that clears every style.
 pub const RESET: &str = "\u{1b}[0m";
 
+/// RGB accents for full-screen panels with an explicit dark background.
+/// Inline output uses the terminal's own palette for light-theme contrast.
+pub const BRAND: (u8, u8, u8) = (103, 232, 249);
+pub const SUCCESS: (u8, u8, u8) = (134, 239, 172);
+pub const WARN: (u8, u8, u8) = (253, 224, 71);
+pub const ERROR: (u8, u8, u8) = (252, 165, 165);
+pub const DIM: (u8, u8, u8) = (148, 163, 184);
+pub const SELECTED: (u8, u8, u8) = (22, 78, 99);
+pub const ACCENT: (u8, u8, u8) = (147, 197, 253);
+
 /// A semantic slot in the skilld theme.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -13,6 +23,8 @@ pub enum Role {
     Brand,
     /// Bold. Emphasis inside body text.
     Emphasis,
+    /// Blue. Informational values and links, without a status implication.
+    Accent,
     /// Green. Completed work.
     Success,
     /// Yellow. Attention: outdated or degraded results.
@@ -29,6 +41,7 @@ impl Role {
         match self {
             Self::Brand => "\u{1b}[1m\u{1b}[36m",
             Self::Emphasis => "\u{1b}[1m",
+            Self::Accent => "\u{1b}[34m",
             Self::Success => "\u{1b}[32m",
             Self::Warn => "\u{1b}[33m",
             Self::Error => "\u{1b}[31m",

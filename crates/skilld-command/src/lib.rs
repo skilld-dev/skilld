@@ -1164,7 +1164,7 @@ where
         }
         Ok(CommandOutput::Screen(screen)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Human { color, width, .. } => screen.render_human_width(color, width),
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success(bytes.as_bytes(), mode, stdout, stderr)
@@ -1172,7 +1172,9 @@ where
         Ok(CommandOutput::Sync(report)) => {
             let screen = Screen::new(report.lines());
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color).into_bytes(),
+                OutputMode::Human { color, width, .. } => {
+                    screen.render_human_width(color, width).into_bytes()
+                }
                 OutputMode::Plain { .. } => screen.render_plain().into_bytes(),
                 OutputMode::JsonV1 => {
                     match output::render_api("sync", &serde_json::json!(report)) {
@@ -1190,7 +1192,9 @@ where
         }
         Ok(CommandOutput::Api(output)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => output.human.render_human(color).into_bytes(),
+                OutputMode::Human { color, width, .. } => {
+                    output.human.render_human_width(color, width).into_bytes()
+                }
                 OutputMode::Plain { .. } => output.plain.into_bytes(),
                 OutputMode::JsonV1 => match output::render_api(output.command, &output.data) {
                     Ok(bytes) => bytes,
@@ -1206,7 +1210,7 @@ where
         }
         Ok(CommandOutput::IncompleteScreen(screen)) => {
             let bytes = match mode {
-                OutputMode::Human { color, .. } => screen.render_human(color),
+                OutputMode::Human { color, width, .. } => screen.render_human_width(color, width),
                 OutputMode::Plain { .. } | OutputMode::JsonV1 => screen.render_plain(),
             };
             write_success_with_exit(bytes.as_bytes(), mode, stdout, stderr, 1)
@@ -1697,7 +1701,16 @@ fn dispatch<H: Host>(
             Ok(CommandOutput::Run(outcome))
         }
         Command::List { global } => host.list(scope(global)).map(|names| {
-            CommandOutput::Screen(Screen::new(names.into_iter().map(Line::item).collect()))
+            let label = if global { "global" } else { "project" };
+            CommandOutput::Screen(
+                Screen::with_header(
+                    format!("Installed Skills · {label} · {}", names.len()),
+                    names.into_iter().map(Line::item).collect(),
+                )
+                .with_empty_hint(
+                    "No Skills installed here. Find Skills with skilld search <query>.",
+                ),
+            )
         }),
         Command::View { skill, global } => match discover::registry_ref(&skill)? {
             None => render_view(host.view(&skill, scope(global))?)

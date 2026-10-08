@@ -411,8 +411,11 @@ fn skill_detail_lines(
         lines.push(Line::linked_field("Skill page", page.clone(), page));
     }
     if let Some(selector) = skill_selector(&summary.owner, &summary.repository, &summary.name) {
-        lines.push(Line::field("Run", run_command(&selector, platform)));
-        lines.push(Line::field("Install", install_command(&selector, platform)));
+        lines.push(Line::command_field("Run", run_command(&selector, platform)));
+        lines.push(Line::command_field(
+            "Install",
+            install_command(&selector, platform),
+        ));
     }
     Ok(lines)
 }
