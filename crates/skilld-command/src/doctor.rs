@@ -90,6 +90,8 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/.config/JetBrains/**/javascript/nodejs/**",
 ];
 
+const WORKTREE_EXCLUDES: &[&str] = &["**/.claude/worktrees/**", "**/.worktrees/**"];
+
 #[derive(Clone, Debug, Args)]
 pub struct DoctorOptions {
     /// Scan these roots. The default is your home directory.
@@ -101,7 +103,7 @@ pub struct DoctorOptions {
     /// Include dependency, cache, staging, and backup directories.
     #[arg(long)]
     pub include_excluded: bool,
-    /// Include Git worktrees found beneath scan roots.
+    /// Include Git worktrees and their staging directories, including explicit roots.
     #[arg(long)]
     pub include_worktrees: bool,
     /// Stop descending after this many directories.
@@ -172,6 +174,8 @@ impl ScanProgress {
 #[serde(rename_all = "camelCase")]
 pub struct SkillLocation {
     pub path: PathBuf,
+    /// The direct link destination, as written. A linked parent does not make this path a link.
+    pub symlink_target: Option<PathBuf>,
     pub agent: Option<AgentTargetId>,
     /// None means global scope. Source directories have no Agent target.
     pub project_root: Option<PathBuf>,
@@ -253,6 +257,13 @@ fn excludes(options: &DoctorOptions) -> Result<(Vec<String>, GlobSet), CommandEr
     } else {
         DEFAULT_EXCLUDES.iter().map(|s| (*s).to_owned()).collect()
     };
+    if !options.include_worktrees {
+        patterns.extend(
+            WORKTREE_EXCLUDES
+                .iter()
+                .map(|pattern| (*pattern).to_owned()),
+        );
+    }
     patterns.extend(options.exclude.clone());
     let mut builder = GlobSetBuilder::new();
     for pattern in &patterns {
@@ -274,21 +285,28 @@ fn excludes(options: &DoctorOptions) -> Result<(Vec<String>, GlobSet), CommandEr
     ))
 }
 
-fn location(path: &Path, context: &ScanContext) -> SkillLocation {
+fn location(path: &Path, context: &ScanContext) -> std::io::Result<SkillLocation> {
+    let symlink_target = if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        Some(fs::read_link(path)?)
+    } else {
+        None
+    };
     let parent = path.parent().unwrap_or(path);
     if let Some(target) = context.global_targets.iter().find(|t| t.root == parent) {
-        return SkillLocation {
+        return Ok(SkillLocation {
             path: path.to_owned(),
+            symlink_target,
             agent: Some(target.agent),
             project_root: None,
-        };
+        });
     }
     if parent == context.home.join(".codex/skills") {
-        return SkillLocation {
+        return Ok(SkillLocation {
             path: path.to_owned(),
+            symlink_target,
             agent: Some(AgentTargetId::Codex),
             project_root: None,
-        };
+        });
     }
     for target in AGENT_TARGETS {
         // Unprefixed source directories are not evidence of an Agent installation.
@@ -300,17 +318,77 @@ fn location(path: &Path, context: &ScanContext) -> SkillLocation {
             for _ in Path::new(target.project_skills_dir).components() {
                 root = root.parent().unwrap_or(root);
             }
-            return SkillLocation {
+            return Ok(SkillLocation {
                 path: path.to_owned(),
+                symlink_target,
                 agent: Some(target.id),
                 project_root: Some(root.to_owned()),
-            };
+            });
         }
     }
-    SkillLocation {
+    Ok(SkillLocation {
         path: path.to_owned(),
+        symlink_target,
         agent: None,
         project_root: None,
+    })
+}
+
+/// A Git file alone can also name a submodule or a separate Git directory.
+/// Linked worktrees have a shared repository recorded in their admin directory.
+fn linked_worktree(path: &Path) -> std::io::Result<bool> {
+    let marker = path.join(".git");
+    match fs::metadata(&marker) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    }
+    let marker = fs::read_to_string(marker)?;
+    let Some(directory) = marker.trim().strip_prefix("gitdir: ") else {
+        return Ok(false);
+    };
+    let admin = path.join(directory);
+    match fs::metadata(admin.join("commondir")) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn worktree_ancestor(path: &Path) -> std::io::Result<bool> {
+    for parent in path.ancestors() {
+        if parent.file_name().is_some_and(|name| name == ".worktrees")
+            || (parent.file_name().is_some_and(|name| name == "worktrees")
+                && parent
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == ".claude"))
+        {
+            return Ok(true);
+        }
+        if linked_worktree(parent)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn prune_worktree(result: std::io::Result<bool>, path: &Path, report: &mut DoctorReport) -> bool {
+    match result {
+        Ok(false) => false,
+        Ok(true) => {
+            report.skipped_directories += 1;
+            true
+        }
+        Err(error) => {
+            report.skipped_directories += 1;
+            report.problems.push(ScanProblem {
+                path: path.to_owned(),
+                message: format!("Cannot check Git worktree metadata: {error}"),
+            });
+            true
+        }
     }
 }
 
@@ -372,9 +450,15 @@ pub fn scan_with_progress(
             report.skipped_directories += 1;
             continue;
         }
-        if !options.include_worktrees && depth > 0 && path.join(".git").is_file() {
-            report.skipped_directories += 1;
-            continue;
+        if !options.include_worktrees {
+            let worktree = if depth == 0 {
+                fs::canonicalize(&path).and_then(|canonical| worktree_ancestor(&canonical))
+            } else {
+                linked_worktree(&path)
+            };
+            if prune_worktree(worktree, &path, &mut report) {
+                continue;
+            }
         }
         if !visited.insert(path.clone()) {
             continue;
@@ -458,6 +542,9 @@ pub fn scan_with_progress(
                 children.push(child);
             } else if kind.is_symlink() && target_root(&path, context) {
                 match fs::canonicalize(&child) {
+                    Ok(real)
+                        if !options.include_worktrees
+                            && prune_worktree(worktree_ancestor(&real), &child, &mut report) => {}
                     Ok(real) if real.join("SKILL.md").is_file() => {
                         found.insert(child);
                     }
@@ -469,6 +556,16 @@ pub fn scan_with_progress(
                 }
             } else if kind.is_symlink() && target_root(&child, context) {
                 // A target root can itself be a symlink. Only inspect this known boundary.
+                if !options.include_worktrees
+                    && prune_worktree(
+                        fs::canonicalize(&child)
+                            .and_then(|canonical| worktree_ancestor(&canonical)),
+                        &child,
+                        &mut report,
+                    )
+                {
+                    continue;
+                }
                 match fs::read_dir(&child) {
                     Ok(entries) => {
                         for e in entries {
@@ -480,6 +577,17 @@ pub fn scan_with_progress(
                                     {
                                         report.skipped_directories += 1;
                                         report.problems.push(ScanProblem { path: e.path(), message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
+                                        continue;
+                                    }
+                                    if !options.include_worktrees
+                                        && prune_worktree(
+                                            fs::canonicalize(e.path()).and_then(|canonical| {
+                                                worktree_ancestor(&canonical)
+                                            }),
+                                            &e.path(),
+                                            &mut report,
+                                        )
+                                    {
                                         continue;
                                     }
                                     if e.path().join("SKILL.md").is_file() {
@@ -530,10 +638,13 @@ pub fn scan_with_progress(
                 report.skipped_directories += 1;
                 report.problems.push(ScanProblem { path, message: "Link points outside the home directory. Pass its root explicitly to scan it.".into() });
             }
-            Ok(canonical) => by_canonical
-                .entry(canonical)
-                .or_default()
-                .push(location(&path, context)),
+            Ok(canonical) => match location(&path, context) {
+                Ok(location) => by_canonical.entry(canonical).or_default().push(location),
+                Err(error) => report.problems.push(ScanProblem {
+                    path,
+                    message: format!("Cannot read Skill location: {error}"),
+                }),
+            },
             Err(e) => report.problems.push(ScanProblem {
                 path,
                 message: e.to_string(),
