@@ -7,7 +7,7 @@ execution:
   max_turns: 15
   allowed_tools: [Read, Glob, Grep, Skill, Bash]
   prompt: |
-    Use the Agent Skill `heyimjames/nikita-bier-consumer-apps/nikita-bier-consumer-apps`
+    Use the Agent Skill `github:heyimjames/nikita-bier-consumer-apps/.#commit:f8b8a1828cd53e4aedaa39c3e2abb01e71660bc0`
     once for a source lookup. Do not install it.
 
     Which four alternatives to full contact access does its `onboarding.md`
