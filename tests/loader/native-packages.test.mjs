@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -76,12 +76,16 @@ it('accepts the executable from a packed platform package', async () => {
   const spec = nativePackageSpecs.find(candidate => candidate.directory === 'cli-linux-x64-gnu')
   await writeNativePackage(root, spec)
   await writeFile(join(root, spec.directory, 'LICENSE'), 'MIT\n')
+  const staging = join(root, 'stage')
+  await mkdir(join(staging, 'package'), { recursive: true })
+  await cp(join(root, spec.directory), join(staging, 'package'), { recursive: true })
   await mkdir(output)
-  await execFileAsync('npm', [
-    'pack',
-    join(root, spec.directory),
-    '--pack-destination',
-    output,
+  await execFileAsync('tar', [
+    '-czf',
+    join(output, `${spec.packageName}-3.0.0-test.0.tgz`),
+    '-C',
+    staging,
+    'package',
   ])
   const filename = (await readdir(output)).find(path => path.endsWith('.tgz'))
   assert.ok(filename)
