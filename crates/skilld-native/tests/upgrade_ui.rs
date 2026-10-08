@@ -92,3 +92,18 @@ fn the_prompt_fits_a_narrow_terminal() {
         "{output}"
     );
 }
+
+#[test]
+fn a_short_prompt_keeps_the_action_and_consent_visible() {
+    let output = render_snapshot("3.6.7", "3.7.0", "Run skilld upgrade", 40, 8, false);
+    assert!(output.contains("Run skilld upgrade"), "{output}");
+    assert!(output.contains("Upgrade now"), "{output}");
+    assert!(output.contains("Enter"), "{output}");
+    assert!(output.contains("Esc"), "{output}");
+}
+
+#[test]
+fn an_unusable_prompt_does_not_hide_consent_behind_a_partial_form() {
+    let output = render_snapshot("3.6.7", "3.7.0", "Run skilld upgrade", 12, 3, false);
+    assert!(output.contains("Resize"), "{output}");
+}

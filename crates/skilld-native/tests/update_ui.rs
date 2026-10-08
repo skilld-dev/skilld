@@ -567,3 +567,31 @@ fn command_host_reports_one_atomic_failure_for_every_selected_skill() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_hidden_update_form_cannot_apply_selected_skills() {
+    let model = browsing_model(12, 3);
+    let transition = update(model, Message::Key(KeyInput::Apply));
+    assert!(transition.effects.is_empty());
+    assert!(render_snapshot(&transition.model, false).contains("Resize"));
+}
+
+#[test]
+fn cancelling_a_hidden_update_form_still_exits() {
+    let model = browsing_model(12, 3);
+    let transition = update(model, Message::Key(KeyInput::Cancel));
+    assert!(matches!(transition.effects.as_slice(), [Effect::Exit(_)]));
+}
+
+#[test]
+fn resizing_restores_visible_update_controls() {
+    let model = browsing_model(12, 3);
+    let transition = update(
+        model,
+        Message::Resized {
+            width: 80,
+            height: 24,
+        },
+    );
+    assert!(render_snapshot(&transition.model, false).contains("enter update"));
+}

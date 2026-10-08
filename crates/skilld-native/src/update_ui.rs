@@ -893,6 +893,9 @@ fn update_key(model: &mut Model, key: KeyInput, effects: &mut Vec<Effect>) {
         model.expanded_help = !model.expanded_help;
         return;
     }
+    if model.width < 20 || model.height < 7 {
+        return;
+    }
     if let Phase::FailedLoad(_) = &model.phase {
         if key == KeyInput::Retry {
             model.phase = Phase::LoadingCandidates;
@@ -1004,6 +1007,10 @@ fn update_key(model: &mut Model, key: KeyInput, effects: &mut Vec<Effect>) {
 }
 
 pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model, color: bool) {
+    if frame.area().width < 20 || frame.area().height < 7 {
+        frame.render_widget(Paragraph::new("Resize to 20x7\nq cancel"), frame.area());
+        return;
+    }
     let help_height = if model.expanded_help { 3 } else { 1 };
     let areas = Layout::vertical([
         Constraint::Length(1),
@@ -1372,7 +1379,11 @@ fn bindings(model: &Model) -> Vec<Binding> {
         },
         Binding {
             keys: "q",
-            action: "cancel",
+            action: if matches!(model.phase, Phase::Applying) {
+                "exit after update"
+            } else {
+                "cancel"
+            },
         },
     ]);
     bindings
@@ -1392,7 +1403,18 @@ fn help_text(model: &Model) -> String {
 }
 
 fn theme(color: bool, value: Color) -> Color {
-    if color { value } else { Color::Reset }
+    if !color {
+        return Color::Reset;
+    }
+    let rgb = match value {
+        Color::Cyan => skilld_ui::theme::BRAND,
+        Color::Green => skilld_ui::theme::SUCCESS,
+        Color::Yellow => skilld_ui::theme::WARN,
+        Color::Red => skilld_ui::theme::ERROR,
+        Color::DarkGray | Color::Gray => skilld_ui::theme::DIM,
+        _ => return value,
+    };
+    Color::Rgb(rgb.0, rgb.1, rgb.2)
 }
 
 fn short_sha(value: &str) -> &str {

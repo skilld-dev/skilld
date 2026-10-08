@@ -40,6 +40,8 @@ pub enum PickerKey {
     ToggleAll,
     Confirm,
     Cancel,
+    /// Quit without preserving or clearing an active filter first.
+    Quit,
     /// Start typing a filter.
     FilterStart,
     /// One character typed into the filter.
@@ -163,6 +165,7 @@ impl PickerModel {
                 }
             }
             PickerKey::Confirm => self.outcome = Some(PickerOutcome::Chose(self.chosen())),
+            PickerKey::Quit => self.outcome = Some(PickerOutcome::Cancelled),
             PickerKey::Cancel => {
                 // Escape backs out of the filter first. It cancels the picker
                 // only when there is nothing to back out of.
@@ -248,6 +251,10 @@ pub fn run_skill_picker(
     with_restored_terminal(NativeTerminalLifecycle, || {
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend).map_err(terminal_lost)?;
+        // Input buffered for the previous command is not installation consent.
+        while event::poll(Duration::ZERO).map_err(terminal_lost)? {
+            let _ = event::read().map_err(terminal_lost)?;
+        }
         loop {
             terminal
                 .draw(|frame| view(frame, &model, color))
@@ -259,6 +266,13 @@ pub fn run_skill_picker(
                 && let Event::Key(event) = event::read().map_err(terminal_lost)?
                 && let Some(key) = picker_key(event, model.filtering())
             {
+                let area = terminal.size().map_err(terminal_lost)?;
+                if area.width < 20 || area.height < 5 {
+                    if matches!(key, PickerKey::Cancel | PickerKey::Quit) {
+                        model.update(PickerKey::Quit);
+                    }
+                    continue;
+                }
                 model.update(key);
             }
         }
@@ -271,6 +285,10 @@ const MARK_FREE: &str = "\u{25cb}";
 const CURSOR: &str = "\u{276f} ";
 
 fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
+    if frame.area().width < 20 || frame.area().height < 5 {
+        frame.render_widget(Paragraph::new("Resize to 20x5\nEsc cancel"), frame.area());
+        return;
+    }
     let areas = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(1),
@@ -284,7 +302,11 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    "No Skill matches ",
+                    if model.choices().is_empty() {
+                        "No Skills in this ref."
+                    } else {
+                        "No Skill matches "
+                    },
                     Style::default().fg(theme(color, Color::DarkGray)),
                 ),
                 Span::styled(
@@ -294,7 +316,7 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
             ])),
             areas[1],
         );
-        frame.render_widget(footer(model, color), areas[2]);
+        frame.render_widget(footer(model, color, frame.area().width), areas[2]);
         return;
     }
     // The name column is as wide as the longest name, so every description
@@ -303,7 +325,8 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
         .iter()
         .map(|position| UnicodeWidthStr::width(model.choices()[*position].label.as_str()))
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(width.saturating_sub(UnicodeWidthStr::width(CURSOR) + 4));
     let items = visible
         .iter()
         .map(|position| row(&model.choices()[*position], name_width, width, color))
@@ -316,7 +339,7 @@ fn view(frame: &mut ratatui::Frame<'_>, model: &PickerModel, color: bool) {
         areas[1],
         &mut state,
     );
-    frame.render_widget(footer(model, color), areas[2]);
+    frame.render_widget(footer(model, color, frame.area().width), areas[2]);
 }
 
 /// The ref, the counts, and one blank line.
@@ -393,7 +416,7 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
             Style::default().fg(theme(color, Color::DarkGray)),
         )
     };
-    let name = sanitize(&choice.label);
+    let name = truncate(&sanitize(&choice.label), name_width);
     let name_style = if choice.selected {
         Style::default().fg(theme(color, Color::Reset))
     } else {
@@ -426,12 +449,34 @@ fn row(choice: &SkillChoice, name_width: usize, width: usize, color: bool) -> Li
 /// The key hints. Each key is lit, each verb stays dim.
 ///
 /// Typing a filter takes the letter keys, so the hints say what is left.
-fn footer(model: &PickerModel, color: bool) -> Paragraph<'static> {
+fn footer(model: &PickerModel, color: bool, width: u16) -> Paragraph<'static> {
     let key = Style::default()
         .fg(theme(color, Color::Cyan))
         .add_modifier(Modifier::BOLD);
     let text = Style::default().fg(theme(color, Color::DarkGray));
-    let hints = if model.filtering() {
+    if width < 50 {
+        let lines = if model.choices().is_empty() {
+            ["No Skills to install", "Esc cancel"]
+        } else if model.filtering() {
+            ["Enter done Esc clear", "↑/↓ move Ctrl+C quit"]
+        } else if width < 30 {
+            ["Enter install q quit", "Space choose / filter"]
+        } else {
+            [
+                "↑/↓ move Space choose a all",
+                "Enter install / filter q quit",
+            ]
+        };
+        return Paragraph::new(
+            lines
+                .into_iter()
+                .map(|line| Line::styled(line, key))
+                .collect::<Vec<_>>(),
+        );
+    }
+    let hints = if model.choices().is_empty() {
+        vec![("esc", " cancel")]
+    } else if model.filtering() {
         vec![
             ("type", " to filter   "),
             ("enter", " keep it   "),
@@ -459,12 +504,33 @@ fn footer(model: &PickerModel, color: bool) -> Paragraph<'static> {
         spans.push(Span::styled(name, key));
         spans.push(Span::styled(verb, text));
     }
-    Paragraph::new(vec![Line::from(String::new()), Line::from(spans)])
+    Paragraph::new(vec![
+        Line::styled(
+            if model.filtering() {
+                "↑/↓ move  Ctrl+C cancel"
+            } else {
+                "↑/↓ move  j/k move  q cancel  Ctrl+C cancel"
+            },
+            text,
+        ),
+        Line::from(spans),
+    ])
 }
 
 /// Colors are off under NO_COLOR, so every style falls back to the default.
 const fn theme(color: bool, value: Color) -> Color {
-    if color { value } else { Color::Reset }
+    if !color {
+        return Color::Reset;
+    }
+    let rgb = match value {
+        Color::Cyan => skilld_ui::theme::BRAND,
+        Color::Green => skilld_ui::theme::SUCCESS,
+        Color::Yellow => skilld_ui::theme::WARN,
+        Color::Red => skilld_ui::theme::ERROR,
+        Color::DarkGray | Color::Gray => skilld_ui::theme::DIM,
+        _ => return value,
+    };
+    Color::Rgb(rgb.0, rgb.1, rgb.2)
 }
 
 /// One line of text, with runs of whitespace collapsed.
@@ -526,7 +592,7 @@ fn picker_key(event: KeyEvent, filtering: bool) -> Option<PickerKey> {
         return None;
     }
     if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
-        return Some(PickerKey::Cancel);
+        return Some(PickerKey::Quit);
     }
     if filtering {
         return match event.code {
@@ -550,7 +616,8 @@ fn picker_key(event: KeyEvent, filtering: bool) -> Option<PickerKey> {
         KeyCode::Char('a') => Some(PickerKey::ToggleAll),
         KeyCode::Char('/') => Some(PickerKey::FilterStart),
         KeyCode::Enter => Some(PickerKey::Confirm),
-        KeyCode::Char('q') | KeyCode::Esc => Some(PickerKey::Cancel),
+        KeyCode::Char('q') => Some(PickerKey::Quit),
+        KeyCode::Esc => Some(PickerKey::Cancel),
         _ => None,
     }
 }
