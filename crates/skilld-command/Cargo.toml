@@ -16,6 +16,7 @@ base64.workspace = true
 
 clap.workspace = true
 
+globset = "0.4"
 miniz_oxide = "0.9.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 

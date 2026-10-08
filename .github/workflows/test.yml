@@ -49,6 +49,10 @@ jobs:
       - run: pnpm test:js
       - name: Rust public API contract
         run: cargo test -p skilld-core --test api_contract
+      - name: Doctor discovery, migration, and removal
+        run: |
+          cargo test -p skilld-command --test doctor --test doctor_metadata --test doctor_actions
+          cargo test -p skilld-native --test doctor_ui
       - name: Rust tests
         if: github.event_name == 'push'
         run: cargo test --workspace

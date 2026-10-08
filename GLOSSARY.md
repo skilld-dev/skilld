@@ -66,6 +66,7 @@ Every public export, command, error, route, and document uses these terms.
 | `skilld verify` | source verification |
 | `skilld outdated` | outdated Skill report |
 | `skilld outdated --all` | system-wide outdated Skill report |
+| `skilld doctor` | Skill discovery and cleanup |
 | `skilld install skilld --global` | global skilld Skill install |
 | `skilld auth login` | account login |
 | `SKILLD_NO_WEEKLY` | weekly notice opt-out |

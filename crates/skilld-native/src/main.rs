@@ -57,6 +57,15 @@ fn main() -> ExitCode {
     let upgrade_notice = start_upgrade();
 
     let args = env::args_os().collect::<Vec<_>>();
+    let doctor = skilld_command::interactive_doctor_requested(args.clone())
+        .ok()
+        .flatten()
+        .filter(|_| {
+            std::io::stdin().is_terminal()
+                && std::io::stdout().is_terminal()
+                && !active_agent_detected()
+                && !environment_enabled("CI")
+        });
     let interactive = interactive_update_requested(args.clone()).is_ok_and(|requested| requested);
     if interactive
         && let Err(error) = require_interactive_tty(
@@ -87,7 +96,7 @@ fn main() -> ExitCode {
         terminal_width(),
         CommandPlatform::current(),
     );
-    let label = if interactive {
+    let label = if interactive || doctor.is_some() {
         None
     } else {
         status::status_label(args.iter().map(|arg| arg.to_string_lossy()))
@@ -168,6 +177,16 @@ fn main() -> ExitCode {
         host
     };
     let host = Arc::new(host);
+
+    if let Some(options) = doctor {
+        return match skilld_native::doctor_ui::run_doctor(host, options) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     if interactive {
         let interactive_host = Arc::new(CommandInteractiveUpdateHost::new(host));

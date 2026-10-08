@@ -351,6 +351,11 @@ skilld update --check --json
 skilld update <skill>
 skilld verify <skill>
 
+# Sweep Skill files and review cleanup actions
+skilld doctor
+skilld doctor ./apps --json
+skilld doctor --exclude '**/archive/**'
+
 # Remove a Skill
 skilld remove <skill>
 ```
@@ -358,6 +363,36 @@ skilld remove <skill>
 Project installs update `.skills/skilld-lock.yaml` and the selected Agent targets.
 Use `--global` (or `-g`) for account-level Agent targets.
 Use `--mode copy` or `--mode symlink` to control target writes.
+
+### Review Skill files
+
+`skilld doctor` scans your home directory and opens a terminal UI.
+Pass roots to narrow the scan. Use `--json` or `--plain` for a read-only report.
+The scan includes hidden `.claude/skills` directories and lists `CLAUDE.md` and `.claude/commands` files separately.
+
+Default exclude globs prune dependencies, builds, caches, plugin staging, sessions, backups, and fixtures before reading their children.
+Git worktrees are skipped beneath scan roots.
+Use `--include-excluded` or `--include-worktrees` when you need those files.
+Repeat `--exclude GLOB` to add exclusions. Git internals remain excluded.
+Source and plugin files retain their owners.
+
+Press Tab to show skills.sh installs separately. Choose a Skill, then press `m` to migrate or `d` to remove.
+Review affected Agent targets before pressing Enter. Escape cancels.
+Migration keeps the scope and copy or link mode of each observed target.
+It verifies source contents, preserves recorded branches, and requests approval for Skill behaviors.
+When the recorded Git tree matches the installed files, migration can also replace them with the displayed source commit.
+If provenance cannot establish the replacement, migration stops before changing files.
+
+Removal backs up the selected targets and removes only their skills.sh lockfile entry.
+Original targets, lock metadata, and `recovery.json` remain under `.skilld-doctor-backups` beside the skilld store.
+Unknown Agent targets can also be removed after review.
+Declared skilld installs, plugin files, and source directories require their existing owner's workflow.
+
+`--check-sources` checks up to 20 source candidates through skilld.dev.
+An exact directory match includes supporting files and executable modes.
+A name match alone never establishes provenance.
+The report retains scan problems. Exit code 1 means some files could not be checked.
+Historical commit searches and project-to-global deduplication are outside this command's current actions.
 
 ### Read the registry
 
