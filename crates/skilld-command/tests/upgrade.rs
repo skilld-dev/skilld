@@ -6,12 +6,23 @@ use skilld_command::upgrade::{
 const DAY: u64 = 86_400;
 const NOW: u64 = 1_800_000_000;
 
+#[test]
+fn a_known_standalone_upgrade_never_installs_without_an_answer() {
+    let plan = plan_upgrade(
+        "3.0.0",
+        &InstallChannel::Standalone,
+        &state(NOW - 60, Some("3.1.0")),
+        NOW,
+    );
+
+    assert_eq!(plan.worker, None);
+    assert!(plan.notice.is_some());
+}
+
 fn state(checked_at: u64, latest: Option<&str>) -> UpgradeState {
     UpgradeState {
         checked_at,
         latest: latest.map(str::to_owned),
-        attempted_version: None,
-        attempted_at: None,
         last_error: None,
     }
 }
@@ -51,107 +62,25 @@ fn a_stale_check_refreshes_in_the_background_without_a_notice() {
 }
 
 #[test]
-fn an_npm_install_names_the_upgrade_command_for_its_runner() {
+fn a_cached_newer_release_offers_an_upgrade_for_every_managed_channel() {
     let fresh = state(NOW - 60, Some("3.1.0"));
-    for (runner, command) in [
-        (PackageRunner::Npx, "npx skilld@latest"),
-        (PackageRunner::Npm, "npm install --global skilld"),
-        (PackageRunner::Pnpm, "pnpm add --global skilld"),
-        (PackageRunner::Yarn, "yarn global add skilld"),
-        (PackageRunner::Bun, "bun add --global skilld"),
+    for channel in [
+        InstallChannel::Standalone,
+        InstallChannel::Npm(PackageRunner::Npx),
+        InstallChannel::Npm(PackageRunner::Npm),
+        InstallChannel::Npm(PackageRunner::Pnpm),
+        InstallChannel::Npm(PackageRunner::Yarn),
+        InstallChannel::Npm(PackageRunner::Bun),
     ] {
-        let plan = plan_upgrade("3.0.0", &InstallChannel::Npm(runner), &fresh, NOW);
-
+        let plan = plan_upgrade("3.0.0", &channel, &fresh, NOW);
         assert_eq!(plan.worker, None);
-        let notice = plan.notice.expect("a newer version shows a notice");
         assert_eq!(
-            notice,
-            UpgradeNotice::Available {
-                version: "3.1.0".to_owned(),
-                command: command.to_owned(),
-            }
-        );
-        assert_eq!(
-            notice.message(),
-            format!("skilld 3.1.0 is available. Run {command} to upgrade.")
+            plan.notice,
+            Some(UpgradeNotice {
+                version: "3.1.0".to_owned()
+            })
         );
     }
-}
-
-#[test]
-fn a_standalone_install_upgrades_itself_and_asks_for_a_restart() {
-    let plan = plan_upgrade(
-        "3.0.0",
-        &InstallChannel::Standalone,
-        &state(NOW - 60, Some("3.1.0")),
-        NOW,
-    );
-
-    assert_eq!(
-        plan.worker,
-        Some(UpgradeWorker::Install {
-            version: "3.1.0".to_owned()
-        })
-    );
-    assert_eq!(
-        plan.notice.unwrap().message(),
-        "Upgrading skilld to 3.1.0 in the background. Restart skilld to use it."
-    );
-}
-
-#[test]
-fn a_recent_failed_upgrade_waits_before_it_retries() {
-    let mut recent = state(NOW - 60, Some("3.1.0"));
-    recent.attempted_version = Some("3.1.0".to_owned());
-    recent.attempted_at = Some(NOW - 60);
-
-    assert_eq!(
-        plan_upgrade("3.0.0", &InstallChannel::Standalone, &recent, NOW),
-        UpgradePlan::default()
-    );
-
-    recent.attempted_at = Some(NOW - DAY);
-    assert!(matches!(
-        plan_upgrade("3.0.0", &InstallChannel::Standalone, &recent, NOW).worker,
-        Some(UpgradeWorker::Install { .. })
-    ));
-}
-
-#[test]
-fn a_retry_after_a_failed_upgrade_names_the_failure_in_its_notice() {
-    let mut failed = state(NOW - 60, Some("3.1.0"));
-    failed.attempted_version = Some("3.1.0".to_owned());
-    failed.attempted_at = Some(NOW - DAY);
-    failed.last_error = Some("UPGRADE_DOWNLOAD_FAILED".to_owned());
-
-    let plan = plan_upgrade("3.0.0", &InstallChannel::Standalone, &failed, NOW);
-
-    assert_eq!(
-        plan.notice.map(|notice| notice.message()),
-        Some(
-            "The last upgrade attempt failed: UPGRADE_DOWNLOAD_FAILED. \
-             Retrying skilld 3.1.0 in the background. Restart skilld to use it."
-                .to_owned()
-        )
-    );
-}
-
-#[test]
-fn a_first_install_ignores_a_failure_from_another_version() {
-    let mut failed = state(NOW - 60, Some("3.2.0"));
-    failed.attempted_version = Some("3.1.0".to_owned());
-    failed.attempted_at = Some(NOW - DAY);
-    failed.last_error = Some("UPGRADE_DOWNLOAD_FAILED".to_owned());
-
-    let plan = plan_upgrade("3.0.0", &InstallChannel::Standalone, &failed, NOW);
-
-    assert_eq!(
-        plan.notice,
-        Some(UpgradeNotice::Installing {
-            version: "3.2.0".to_owned(),
-            last_error: None,
-        })
-    );
 }
 
 #[test]

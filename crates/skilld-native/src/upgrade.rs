@@ -77,7 +77,7 @@ pub fn current_release_asset() -> Option<&'static str> {
 /// Plans the upgrade for one command, records it, and starts the worker.
 ///
 /// Returns the notice to print after the command. Upgrade problems never change
-/// the command result, so this reports nothing when state or spawning fails.
+/// the command result. A failed check still allows an existing cached notice.
 pub fn before_command(
     data_root: &Path,
     executable: &Path,
@@ -88,29 +88,23 @@ pub fn before_command(
     let mut state = read_state(data_root);
     let plan = plan_upgrade(current_version, &channel, &state, now);
     if let Some(worker) = &plan.worker {
-        match worker {
-            UpgradeWorker::Check => state.checked_at = now,
-            UpgradeWorker::Install { version } => {
-                state.attempted_version = Some(version.clone());
-                state.attempted_at = Some(now);
-            }
-        }
+        state.checked_at = now;
         // Recording first stops concurrent commands from starting duplicate workers.
-        write_state(data_root, &state).ok()?;
-        spawn_worker(executable, worker).ok()?;
+        if write_state(data_root, &state).is_ok() {
+            // A failed optional check must not hide an already cached upgrade.
+            let _ = spawn_worker(executable, worker);
+        }
     }
     plan.notice
 }
 
 /// Runs the background worker named by `WORKER_VARIABLE`.
 ///
-/// `target` is `None` unless this is a standalone install with a compiled release key.
 pub fn run_worker(
     value: &str,
     data_root: &Path,
     channel: InstallChannel,
     fetcher: &dyn ReleaseFetcher,
-    target: Option<InstallTarget<'_>>,
     now: u64,
 ) {
     let Some(_lock) = WorkerLock::acquire(data_root) else {
@@ -130,16 +124,6 @@ pub fn run_worker(
             state.latest = Some(latest);
             Ok(())
         })
-    } else if let Some(version) = value.strip_prefix("install:") {
-        state.attempted_version = Some(version.to_owned());
-        state.attempted_at = Some(now);
-        match target {
-            Some(target) => install_release(&target, fetcher, version),
-            None => Err(RemoteError::new(
-                "UPGRADE_UNAVAILABLE",
-                "only a standalone install with a release key upgrades itself",
-            )),
-        }
     } else {
         return;
     };
@@ -150,8 +134,8 @@ pub fn run_worker(
 
 /// Downloads, verifies, and installs one release over the running executable.
 ///
-/// Nothing is written beside the executable until the signed manifest and the
-/// binary digest both verify. The new binary runs only after verification.
+/// Release bytes reach disk only after the signature and digest verify.
+/// The new binary runs only after verification.
 pub fn install_release(
     target: &InstallTarget<'_>,
     fetcher: &dyn ReleaseFetcher,
@@ -161,6 +145,26 @@ pub fn install_release(
         return Err(RemoteError::new(
             "UPGRADE_NOT_NEWER",
             "skilld only upgrades to a newer version",
+        ));
+    }
+    let lock = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(target.executable.with_file_name(".skilld-install.lock"))
+        .map_err(upgrade_io)?;
+    fs4::FileExt::try_lock(&lock).map_err(|error| {
+        RemoteError::new(
+            "UPGRADE_LOCK_FAILED",
+            format!("Cannot lock skilld for an upgrade: {error}"),
+        )
+    })?;
+    // Another terminal may have upgraded while this process waited for consent.
+    let installed = executable_version(target.executable)?;
+    if !is_newer(version, &installed) {
+        return Err(RemoteError::new(
+            "UPGRADE_NOT_NEWER",
+            "The installed skilld is already current. Run your command again.",
         ));
     }
     let url = |asset: &str| {
@@ -179,6 +183,65 @@ pub fn install_release(
     let binary = fetcher.get(&url(target.asset)?, MAX_BINARY_BYTES)?;
     verify_release_asset(&release, target.asset, &binary)?;
     replace_executable(target.executable, &binary, version)
+}
+
+/// Upgrade only a recognized global package installation. Project dependencies
+/// and transient npx installs remain under their caller's package manager.
+pub fn package_upgrade_args(
+    runner: PackageRunner,
+    executable: &Path,
+    version: &str,
+) -> Option<(&'static str, Vec<String>)> {
+    if !skilld_core::is_release_version(version) {
+        return None;
+    }
+    let path = executable.to_string_lossy().replace('\\', "/");
+    let global = match runner {
+        PackageRunner::Npm => {
+            path.contains("/lib/node_modules/") || path.contains("/npm/node_modules/")
+        }
+        PackageRunner::Pnpm => path.contains("/pnpm/global/"),
+        PackageRunner::Bun => path.contains("/.bun/install/global/"),
+        PackageRunner::Yarn => path.contains("/yarn/global/"),
+        PackageRunner::Npx => false,
+    };
+    if !global {
+        return None;
+    }
+    let (program, args): (_, &[&str]) = match runner {
+        PackageRunner::Npm => ("npm", &["install", "--global"]),
+        PackageRunner::Pnpm => ("pnpm", &["add", "--global"]),
+        PackageRunner::Bun => ("bun", &["add", "--global"]),
+        PackageRunner::Yarn => ("yarn", &["global", "add"]),
+        PackageRunner::Npx => return None,
+    };
+    let mut args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    args.push(format!("skilld@{version}"));
+    Some((program, args))
+}
+
+/// Run the package manager with inherited terminal streams after consent.
+pub fn run_package_upgrade(program: &str, args: &[String]) -> Result<(), RemoteError> {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/d", "/s", "/c", program]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = Command::new(program);
+    let status = command
+        .args(args)
+        .env_remove(WORKER_VARIABLE)
+        .status()
+        .map_err(upgrade_io)?;
+    if !status.success() {
+        return Err(RemoteError::new(
+            "UPGRADE_FAILED",
+            format!("{program} could not upgrade skilld. Retry the command shown above."),
+        ));
+    }
+    Ok(())
 }
 
 fn replace_executable(executable: &Path, binary: &[u8], version: &str) -> Result<(), RemoteError> {
@@ -207,6 +270,16 @@ fn stage(path: &Path, binary: &[u8]) -> Result<(), RemoteError> {
 }
 
 fn check_version(path: &Path, version: &str) -> Result<(), RemoteError> {
+    if executable_version(path)? != version {
+        return Err(RemoteError::new(
+            "UPGRADE_VERSION_MISMATCH",
+            "the downloaded skilld reports another version",
+        ));
+    }
+    Ok(())
+}
+
+fn executable_version(path: &Path) -> Result<String, RemoteError> {
     let output = Command::new(path)
         .arg("--version")
         .env("SKILLD_NO_UPGRADE", "1")
@@ -215,13 +288,18 @@ fn check_version(path: &Path, version: &str) -> Result<(), RemoteError> {
         .stderr(Stdio::null())
         .output()
         .map_err(upgrade_io)?;
-    if !output.status.success() || output.stdout != format!("skilld {version}\n").as_bytes() {
+    let version = std::str::from_utf8(&output.stdout)
+        .ok()
+        .and_then(|value| value.strip_prefix("skilld "))
+        .and_then(|value| value.strip_suffix('\n'))
+        .filter(|version| skilld_core::is_release_version(version));
+    if !output.status.success() || version.is_none() {
         return Err(RemoteError::new(
             "UPGRADE_VERSION_MISMATCH",
-            "the downloaded skilld reports another version",
+            "Cannot read the skilld executable version.",
         ));
     }
-    Ok(())
+    Ok(version.expect("validated version").to_owned())
 }
 
 #[cfg(not(windows))]
@@ -251,7 +329,6 @@ pub fn previous_executable(executable: &Path) -> PathBuf {
 fn spawn_worker(executable: &Path, worker: &UpgradeWorker) -> io::Result<()> {
     let value = match worker {
         UpgradeWorker::Check => "check".to_owned(),
-        UpgradeWorker::Install { version } => format!("install:{version}"),
     };
     let mut command = Command::new(executable);
     command
@@ -279,6 +356,30 @@ pub fn read_state(data_root: &Path) -> UpgradeState {
     fs::read(data_root.join(STATE_FILE))
         .map(|bytes| UpgradeState::parse(&bytes))
         .unwrap_or_default()
+}
+
+/// Dismissals live separately, so an in-flight check cannot overwrite an answer.
+pub fn dismiss_version(data_root: &Path, version: &str) -> io::Result<()> {
+    fs::create_dir_all(data_root)?;
+    let mut file = tempfile::NamedTempFile::new_in(data_root)?;
+    file.write_all(version.as_bytes())?;
+    file.persist(data_root.join("upgrade-dismissed"))
+        .map(drop)
+        .map_err(|error| error.error)
+}
+
+pub fn version_dismissed(data_root: &Path, version: &str) -> bool {
+    fs::read_to_string(data_root.join("upgrade-dismissed"))
+        .is_ok_and(|dismissed| dismissed == version)
+}
+
+/// Recheck cached results after a command without waiting for the network worker.
+pub fn available_upgrade(
+    data_root: &Path,
+    channel: InstallChannel,
+    current: &str,
+) -> Option<UpgradeNotice> {
+    plan_upgrade(current, &channel, &read_state(data_root), unix_now()).notice
 }
 
 fn write_state(data_root: &Path, state: &UpgradeState) -> io::Result<()> {

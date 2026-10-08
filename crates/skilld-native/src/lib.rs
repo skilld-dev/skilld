@@ -15,6 +15,7 @@ pub mod select_ui;
 pub mod update_ui;
 #[cfg(not(target_os = "wasi"))]
 pub mod upgrade;
+pub mod upgrade_ui;
 pub mod weekly;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

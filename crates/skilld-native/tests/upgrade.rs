@@ -16,6 +16,83 @@ use skilld_native::upgrade::{
     install_release, read_state, run_worker,
 };
 
+#[test]
+fn dismissal_survives_an_in_flight_check_and_only_matches_one_version() {
+    use skilld_native::upgrade::{dismiss_version, version_dismissed};
+    let data = tempfile::tempdir().unwrap();
+    let mut fetcher = FakeFetcher::default();
+    fetcher.responses.insert(
+        "https://registry.npmjs.org/skilld/latest".to_owned(),
+        br#"{"version":"3.2.0"}"#.to_vec(),
+    );
+    dismiss_version(data.path(), "3.2.0").unwrap();
+    run_worker(
+        "check",
+        data.path(),
+        InstallChannel::Npm(PackageRunner::Npm),
+        &fetcher,
+        1_000,
+    );
+    assert!(version_dismissed(data.path(), "3.2.0"));
+    assert!(!version_dismissed(data.path(), "3.3.0"));
+}
+
+#[test]
+fn only_global_package_installs_offer_an_executable_upgrade_command() {
+    use skilld_native::upgrade::package_upgrade_args;
+    for (runner, path, program, arguments) in [
+        (
+            PackageRunner::Npm,
+            "/usr/lib/node_modules/skilld-cli/bin/skilld",
+            "npm",
+            vec!["install", "--global", "skilld@3.7.0"],
+        ),
+        (
+            PackageRunner::Pnpm,
+            "/home/me/.local/share/pnpm/global/v11/pkg/node_modules/skilld-cli/bin/skilld",
+            "pnpm",
+            vec!["add", "--global", "skilld@3.7.0"],
+        ),
+        (
+            PackageRunner::Bun,
+            "/home/me/.bun/install/global/node_modules/skilld-cli/bin/skilld",
+            "bun",
+            vec!["add", "--global", "skilld@3.7.0"],
+        ),
+        (
+            PackageRunner::Yarn,
+            "/home/me/.config/yarn/global/node_modules/skilld-cli/bin/skilld",
+            "yarn",
+            vec!["global", "add", "skilld@3.7.0"],
+        ),
+    ] {
+        assert_eq!(
+            package_upgrade_args(runner, Path::new(path), "3.7.0"),
+            Some((program, arguments.into_iter().map(str::to_owned).collect()))
+        );
+        assert_eq!(
+            package_upgrade_args(
+                runner,
+                Path::new("/project/node_modules/skilld-cli/bin/skilld"),
+                "3.7.0"
+            ),
+            None
+        );
+        assert_eq!(
+            package_upgrade_args(runner, Path::new(path), "3.7.0;bad"),
+            None
+        );
+    }
+    assert_eq!(
+        package_upgrade_args(
+            PackageRunner::Npx,
+            Path::new("/cache/_npx/pkg/skilld"),
+            "3.7.0"
+        ),
+        None
+    );
+}
+
 const ASSET: &str = "skilld-cli-linux-x64-gnu";
 const BASE: &str = "https://github.com/skilld-dev/skilld/releases/download/v9.0.0";
 
@@ -176,6 +253,21 @@ fn an_older_or_equal_version_is_refused_before_any_download() {
 }
 
 #[test]
+fn a_prompt_from_an_old_process_cannot_replace_a_newer_installed_release() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = installed(directory.path());
+    fs::write(&executable, script("10.0.0")).unwrap();
+    let pin = pin();
+    let fetcher = FakeFetcher::default();
+
+    let error = install_release(&target(&executable, &pin), &fetcher, "9.0.0").unwrap_err();
+
+    assert_eq!(error.code, "UPGRADE_NOT_NEWER");
+    assert!(fetcher.requested.borrow().is_empty());
+    assert_eq!(fs::read(executable).unwrap(), script("10.0.0"));
+}
+
+#[test]
 fn the_channel_comes_from_the_loader_or_a_regular_install_marker() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("skilld");
@@ -220,7 +312,6 @@ fn the_check_worker_records_the_latest_npm_version() {
         data.path(),
         InstallChannel::Npm(PackageRunner::Npm),
         &fetcher,
-        None,
         1_000,
     );
 
@@ -228,64 +319,36 @@ fn the_check_worker_records_the_latest_npm_version() {
     assert_eq!(state.latest.as_deref(), Some("3.2.0"));
     assert_eq!(state.checked_at, 1_000);
     assert_eq!(state.last_error, None);
+    assert_eq!(
+        skilld_native::upgrade::available_upgrade(
+            data.path(),
+            InstallChannel::Npm(PackageRunner::Npm),
+            "3.0.0"
+        ),
+        Some(UpgradeNotice {
+            version: "3.2.0".to_owned()
+        }),
+        "the command footer sees a completed asynchronous check"
+    );
 }
 
 #[test]
-fn the_install_worker_records_a_failed_verification() {
+fn a_background_worker_cannot_install_a_release() {
     let directory = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
     let executable = installed(directory.path());
-    let pin = pin();
-    let fetcher = release(&signing_key(), &script("9.0.0"), &script("tampered"));
+    let data = tempfile::tempdir().unwrap();
+    let fetcher = release(&signing_key(), &script("9.0.0"), &script("9.0.0"));
 
     run_worker(
         "install:9.0.0",
         data.path(),
         InstallChannel::Standalone,
         &fetcher,
-        Some(target(&executable, &pin)),
         1_000,
     );
 
-    let state = read_state(data.path());
-    assert_eq!(state.last_error.as_deref(), Some("RELEASE_DIGEST_MISMATCH"));
-    assert_eq!(state.attempted_version.as_deref(), Some("9.0.0"));
-    assert_eq!(fs::read(&executable).unwrap(), script("3.0.0"));
-}
-
-#[test]
-fn a_retry_after_a_failed_upgrade_names_the_previous_error() {
-    let directory = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let executable = installed(directory.path());
-    let state = UpgradeState {
-        checked_at: 1_000,
-        latest: Some("3.2.0".to_owned()),
-        attempted_version: Some("3.2.0".to_owned()),
-        attempted_at: Some(1_000),
-        last_error: Some("UPGRADE_DOWNLOAD_FAILED".to_owned()),
-    };
-    fs::write(
-        data.path().join("upgrade.json"),
-        serde_json::to_vec(&state).unwrap(),
-    )
-    .unwrap();
-
-    let notice = before_command(
-        data.path(),
-        &executable,
-        InstallChannel::Standalone,
-        "3.0.0",
-        5_000,
-    );
-
-    let message = notice
-        .expect("an overdue retry still plans an upgrade")
-        .message();
-    assert!(
-        message.contains("UPGRADE_DOWNLOAD_FAILED"),
-        "the notice must name the previous failure: {message}"
-    );
+    assert_eq!(fs::read(executable).unwrap(), script("3.0.0"));
+    assert!(fetcher.requested.borrow().is_empty());
 }
 
 #[test]
@@ -312,9 +375,8 @@ fn a_known_npm_upgrade_prints_its_notice_without_a_worker() {
 
     assert_eq!(
         notice,
-        Some(UpgradeNotice::Available {
+        Some(UpgradeNotice {
             version: "3.2.0".to_owned(),
-            command: "npx skilld@latest".to_owned(),
         })
     );
 }
