@@ -128,7 +128,7 @@ fn doctor_groups_skills_sh_and_previews_removal_without_changing_files() {
 
 #[test]
 fn applying_never_promises_cancellation_and_filter_keeps_error_visible() {
-    let model = Model {
+    let mut model = Model {
         work: WorkState::Applying,
         filter: "example".into(),
         message: "Could not read affected files".into(),
@@ -137,6 +137,9 @@ fn applying_never_promises_cancellation_and_filter_keeps_error_visible() {
     let output = render_snapshot(&model, 80, 24);
     assert!(output.contains("Wait for the result"));
     assert!(!output.contains("q cancel"));
+    assert!(output.contains("Could not read affected files"));
+    model.work = WorkState::Ready;
+    let output = render_snapshot(&model, 80, 24);
     assert!(output.contains("Could not read affected files"));
     assert!(output.contains("Filter: example"));
 }

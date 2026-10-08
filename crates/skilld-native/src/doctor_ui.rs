@@ -1,8 +1,9 @@
+use crate::terminal_theme::{selection, tone};
 use crate::update_ui::{InteractiveUpdateError, NativeTerminalLifecycle, with_restored_terminal};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use skilld_command::doctor::{DoctorOptions, DoctorOwner, DoctorReport, ScanPhase, ScanProgress};
@@ -17,14 +18,6 @@ use std::time::{Duration, Instant};
 
 const ACCENT: Color = Color::Cyan;
 const MUTED: Color = Color::Reset;
-fn tone(color: bool, foreground: Color) -> Style {
-    if color {
-        Style::default().fg(foreground)
-    } else {
-        Style::default()
-    }
-}
-
 fn owner_color(owner: &DoctorOwner) -> Color {
     match owner {
         DoctorOwner::Unavailable { .. } => Color::Red,
@@ -273,7 +266,7 @@ pub fn view(frame: &mut ratatui::Frame<'_>, model: &Model) {
                     )),
             )
             .highlight_symbol("> ")
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)),
+            .highlight_style(selection()),
         cols[0],
         &mut state,
     );
