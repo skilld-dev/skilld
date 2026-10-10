@@ -56,13 +56,35 @@ Skill authoring lives in visible [skilld-maintained Skills](#author-a-skill) and
 
 ## Features
 
-- 📖 **Run a Skill without installing it.** `skilld run` prints `SKILL.md` to stdout and writes no file. Your Agent follows it for this session only.
-- 🎯 **One install, 73 Agent targets.** `skilld install` detects the Agents you use and writes the same Skill to each: Claude Code, Codex, Cursor, Gemini CLI, Zed, and 68 more.
-- 🦀 **One native binary, no runtime.** It starts in under a millisecond. The `curl` install needs no Node.js.
-- 🔏 **Every install is pinned to a commit.** The lockfile records the exact source commit. skilld checks the Artifact digest and attestation before it writes a file. `skilld outdated` reports when the source moved.
+- 💬 **Ask your Agent to find and run Skills.** Install the `skilld` Skill once, then describe your task. Your Agent searches the registry and loads a Skill for you.
+- 📖 **Use a Skill for one task.** Give your Agent a Skill URL and ask it to run the Skill. Loading the instructions writes no files.
+- 🎯 **Keep Skills across sessions and Agents.** Ask your Agent to install a Skill when you want to keep it. skilld supports Claude Code, Codex, Cursor, Gemini CLI, Zed, and more.
+- 🔏 **Know where a Skill came from.** Remote installs record the exact source commit. Ask your Agent to check for updates when you need them.
 - 🛡️ **No telemetry.** The CLI sends no analytics. Account credentials go to your operating system keychain, never to a plain text file.
 
 ## Get started
+
+Install the [`skilld` Skill](https://skilld.dev/gh/skilld-dev/skilld/skilld) so your Agent can find and run Skills:
+
+```sh
+npx skilld install skilld --global
+```
+
+This installs the Skill for your detected Agents across projects.
+Start a new Agent session, then ask for what you need:
+
+> Find me a good Skill for reviewing my Vue app.
+
+> Run this Skill: https://skilld.dev/gh/antfu/skills/vue
+
+Your Agent searches the registry, reads the Skill, and follows it for the current task.
+To keep a Skill across sessions, ask your Agent to install it.
+
+For setup through your Agent, paste this:
+
+> Read https://skilld.dev/agent.md and follow it to set up skilld for me.
+
+## Use the CLI
 
 Every command below works through `npx` with no install.
 To install the CLI, see [Install the CLI](#install-the-cli).
@@ -179,23 +201,6 @@ See [SECURITY.md](./SECURITY.md#how-the-cli-upgrades-itself) for each check.
 
 The npm package selects the same native executable for your system.
 It carries no JavaScript engine and no fallback.
-
-### Teach your Agent skilld
-
-Install the [`skilld` Skill](https://skilld.dev/gh/skilld-dev/skilld/skilld) once for every project:
-
-```sh
-skilld install skilld --global
-```
-
-Your Agent then searches the registry and loads Skills on its own.
-Ask for what you need, in your own words:
-
-> Find a skilld Skill for Vue and use it
-
-No terminal? Paste this into your Agent:
-
-> Read https://skilld.dev/agent.md and follow it to set up skilld for me.
 
 ### Claude Code plugin
 
