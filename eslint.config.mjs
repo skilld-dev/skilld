@@ -11,7 +11,7 @@ export default antfu({
     'e18e/prefer-array-to-sorted': 'off',
   },
   ignores: [
-    'CLAUDE.md',
+    'AGENTS.md',
     'docs/**',
     '.claude/skills/**',
     '.claude/worktrees/**',

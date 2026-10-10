@@ -9,6 +9,9 @@ dist
 .output
 coverage
 /target
+/.pnpm-store/
+/artifacts/
+/native-artifacts/
 /packages/cli-*/bin/skilld
 /packages/cli-*/bin/skilld.exe
 
