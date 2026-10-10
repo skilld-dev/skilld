@@ -40,7 +40,8 @@
   },
   "files": [
     "bin",
-    "loader"
+    "loader",
+    "skills/skilld"
   ],
   "engines": {
     "node": ">=22.0.0"

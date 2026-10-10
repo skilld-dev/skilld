@@ -431,6 +431,8 @@ Use `--exclude GLOB` to prune more paths.
 Use `--include-excluded` or `--include-worktrees` only when those files matter to the task.
 
 Read owner labels, duplicate paths, source matches, and scan problems separately.
+The `pnpm` owner names Skills linked from npm dependencies. Update these through pnpm, not skilld.
+Doctor never migrates or removes pnpm-owned links. `outdated --all` excludes them from replacement suggestions.
 Exit code `1` with success data means some files could not be checked.
 Use `--check-sources` for up to 20 source candidates through skilld.dev.
 A name match alone never establishes provenance.

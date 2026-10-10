@@ -236,6 +236,11 @@ impl LocalHost {
             .get(index)
             .ok_or_else(|| failure("Select a Skill first."))?;
         let record = match &selected.owner {
+            DoctorOwner::Pnpm { .. } => {
+                return Err(failure(
+                    "pnpm owns this Skill. Update or remove its package with pnpm.",
+                ));
+            }
             DoctorOwner::SkillsSh { record } => Some(record.clone()),
             DoctorOwner::Unknown if action == DoctorAction::Remove => None,
             _ => {

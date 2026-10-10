@@ -204,6 +204,7 @@ impl SkillLocation {
 pub enum DoctorOwner {
     SkillsSh { record: ForeignRecord },
     Skilld { store: PathBuf },
+    Pnpm { package: String, version: String },
     Plugin,
     Source,
     Unknown,
@@ -215,6 +216,7 @@ impl DoctorOwner {
         match self {
             Self::SkillsSh { .. } => "skills.sh",
             Self::Skilld { .. } => "skilld",
+            Self::Pnpm { .. } => "pnpm",
             Self::Plugin => "Plugin",
             Self::Source => "Source",
             Self::Unknown => "Unknown",
@@ -773,12 +775,6 @@ pub fn scan_with_progress(
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        if SkillName::parse(name.clone()).is_err() {
-            report.problems.push(ScanProblem {
-                path: canonical.clone(),
-                message: "Invalid Skill directory name.".into(),
-            });
-        }
         let owner = owner(
             &canonical,
             &name,
@@ -788,6 +784,12 @@ pub fn scan_with_progress(
             &mut locks,
             &mut report.problems,
         );
+        if !matches!(owner, DoctorOwner::Pnpm { .. }) && SkillName::parse(name.clone()).is_err() {
+            report.problems.push(ScanProblem {
+                path: canonical.clone(),
+                message: "Invalid Skill directory name.".into(),
+            });
+        }
         let fingerprint = if canonical.join(".git").exists() && matches!(owner, DoctorOwner::Source)
         {
             None
@@ -861,6 +863,14 @@ fn owner(
     locks: &mut BTreeMap<PathBuf, Vec<ForeignRecord>>,
     problems: &mut Vec<ScanProblem>,
 ) -> DoctorOwner {
+    for path in paths.iter().filter(|path| path.agent.is_some()) {
+        if let Some(package) = crate::pnpm::linked_package(&path.path, canonical) {
+            return DoctorOwner::Pnpm {
+                package: package.name,
+                version: package.version,
+            };
+        }
+    }
     if canonical.components().any(|p| p.as_os_str() == "plugins")
         || canonical.starts_with(context.home.join(".codex/skills/.system"))
     {

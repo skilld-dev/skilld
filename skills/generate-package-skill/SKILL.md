@@ -144,6 +144,10 @@ Report to the user:
   Give each item expected, observed, a minimal repro with its output, and a source link at the release tag. File it only if asked.
 - The source path or documentation URL behind each version-specific rule.
 - If the Skill sits inside the published package directory, add its directory to `files` in `package.json`. After one build, list packed files with `npm pack --dry-run --ignore-scripts`; `pnpm pack` rejects that flag.
+- For npm packages, use `skills/<name>/SKILL.md` beside the package's `package.json`. Include linked files in the tarball.
+  [pnpm 12.11 and newer](https://pnpm.io/agent-skills) link Skills from approved direct dependencies.
+  Document `pnpm approve` for developers who want these links. Approval covers every Skill and later version of the package.
+  Never approve a package for the user without their request. pnpm owns its links, dependency updates, and removal.
 - Edit the README beside the Skill's `package.json`. If it already links the skilld.dev page, keep that link. Else add the badge below after the others.
   Replace a `skilld add` tip that names this package in place with the tip below. Else add the tip after the install command.
   Replace `OWNER`, `REPOSITORY`, and `PACKAGE`. Count every `SKILL.md` in the Repository, hidden Agent folders included; the skilld.dev indexer skips test and fixture folders.

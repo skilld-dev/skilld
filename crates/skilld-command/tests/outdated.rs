@@ -297,6 +297,43 @@ fn unmanaged_skill(home: &Path, agent_dir: &str, name: &str) {
     .unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn outdated_does_not_replace_pnpm_owned_links() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let bundled = project.join("node_modules/kit/skills/auth");
+    fs::create_dir_all(&bundled).unwrap();
+    fs::write(
+        bundled.join("SKILL.md"),
+        "---\nname: auth\ndescription: Auth.\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("node_modules/kit/package.json"),
+        r#"{"name":"kit","version":"1.2.3"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(project.join(".agents/skills")).unwrap();
+    let link = project.join(".agents/skills/pnpm-kit-auth");
+    std::os::unix::fs::symlink(&bundled, &link).unwrap();
+    let provider = Arc::new(Provider::new("---\nname: example\n---\n"));
+    let host = LocalHost::new(project, temporary.path().join("data"))
+        .with_remote_provider(provider.clone());
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run(
+        ["skilld", "outdated", "--all"],
+        &host,
+        &mut stdout,
+        &mut stderr,
+    );
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(provider.search_calls.load(Ordering::Relaxed), 0);
+    assert!(!String::from_utf8(stdout).unwrap().contains("Delete"));
+    assert!(link.is_symlink());
+}
+
 #[test]
 fn outdated_reports_current_and_stale_project_skills() {
     let temporary = tempfile::tempdir().unwrap();
