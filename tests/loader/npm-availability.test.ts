@@ -41,11 +41,15 @@ it('retries transient registry failures without hiding the reason', async () => 
   const progress = vi.fn()
   const fetcher = vi.fn(async () => now === 0 ? new Response(null, { status: 503 }) : Response.json({ name: 'skilld', version: '3.6.8' }))
   await waitForNpmPackages({
-    packages: [packages[0]!], fetch: fetcher, now: () => now,
+    packages: [packages[0]!],
+    fetch: fetcher,
+    now: () => now,
     sleep: async (ms) => {
       now += ms
     },
-    onProgress: progress, timeoutMs: 20, intervalMs: 10,
+    onProgress: progress,
+    timeoutMs: 20,
+    intervalMs: 10,
   })
   expect(progress).toHaveBeenCalledWith(expect.stringContaining('HTTP 503'))
 })

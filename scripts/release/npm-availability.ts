@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
