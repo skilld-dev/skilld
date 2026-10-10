@@ -209,6 +209,7 @@ impl Model {
                 ("Unavailable", "Resolve ownership problems"),
                 ("Duplicates", "Review duplicate copies"),
                 ("skilld", "Browse skilld installs"),
+                ("pnpm", "Browse pnpm-linked Skills"),
                 ("Plugin", "Browse plugin Skills"),
                 ("Source", "Browse source directories"),
             ]
@@ -622,6 +623,9 @@ Linked paths include links in parent folders."
             }
             Browse::Locations { owner: "skilld" } => {
                 "Managed by skilld. Use skilld update or remove for these Skills."
+            }
+            Browse::Locations { owner: "pnpm" } => {
+                "Managed by pnpm. Update or remove the package with pnpm."
             }
             Browse::Locations { owner: "Plugin" } => {
                 "Managed by plugins. Use the plugin manager to make changes."

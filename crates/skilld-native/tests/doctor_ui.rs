@@ -407,3 +407,32 @@ fn linked_parent_paths_are_in_the_symlink_view_and_explain_the_parent_link() {
     let directories = render_snapshot(&model, 180, 60);
     assert!(!directories.contains("project/.claude"));
 }
+
+#[cfg(unix)]
+#[test]
+fn pnpm_skills_are_visible_and_explain_package_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    let package = root.path().join("node_modules/example");
+    let skill = package.join("skills/read-files");
+    let target = root.path().join(".agents/skills");
+    fs::create_dir_all(&skill).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"example","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    fs::write(skill.join("SKILL.md"), "# Read files\nRead the project.\n").unwrap();
+    std::os::unix::fs::symlink(&skill, target.join("pnpm-example-read-files")).unwrap();
+    let mut model = Model {
+        report: Some(scan_fixture(root.path())),
+        work: WorkState::Ready,
+        ..Model::default()
+    };
+    assert!(render_snapshot(&model, 100, 26).contains("Browse pnpm-linked Skills"));
+    model.open_group();
+    model.open_group();
+    let snapshot = render_snapshot(&model, 180, 60);
+    assert!(snapshot.contains("pnpm-example-read-files"));
+    assert!(snapshot.contains("Managed by pnpm"));
+}
