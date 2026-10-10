@@ -1,6 +1,8 @@
 ---
 name: generate-project-skill
 description: Generate or update an Agent Skill from the observed workflows, boundaries, and conventions of one software project.
+license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Generate a project Skill
@@ -55,7 +57,11 @@ The directory must contain `SKILL.md`.
 Use `references/` for architecture details and command guides.
 Use `scripts/` only for reusable automation.
 
-The `SKILL.md` frontmatter must contain only `name` and `description`.
+The `SKILL.md` frontmatter contains `name` and `description`. It may also contain `license`, `compatibility`, `metadata`, and `allowed-tools`.
+If the project declares a license, copy its identifier into `license`. Never infer a license.
+Include `compatibility` only for specific tool, runtime, network, or product requirements, at most 500 characters.
+Omit it for general guidance. Do not repeat the package name, tested version, or implementation details.
+`metadata` maps string keys to string values. `allowed-tools` is an experimental space-separated string of pre-approved tools.
 Use lowercase letters, numbers, and single hyphens in the name.
 Keep the name at 64 characters or fewer.
 

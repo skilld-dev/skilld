@@ -2,6 +2,7 @@
 name: skilld-tui-design
 description: Designs and verifies skilld CLI output, terminal pickers, and full-screen flows. Use for terminal colours, loading feedback, keyboard controls, layout, errors, or end-to-end CLI UX reviews.
 license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Design skilld CLI interactions

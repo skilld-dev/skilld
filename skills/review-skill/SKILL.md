@@ -1,6 +1,8 @@
 ---
 name: review-skill
 description: Review an Agent Skill for valid structure, clear triggers, usable instructions, current evidence, and risky or unclear actions.
+license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Review a Skill

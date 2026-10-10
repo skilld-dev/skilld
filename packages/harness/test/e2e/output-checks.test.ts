@@ -82,7 +82,7 @@ async function runTurns(outputs: ReadonlyArray<Output>) {
 }
 
 describe('output check feedback', () => {
-  const invalid = { 'SKILL.md': `${frontmatter('example-package', 'license: MIT\n')}# Example\n` }
+  const invalid = { 'SKILL.md': `${frontmatter('example-package', 'unsupported: value\n')}# Example\n` }
   const valid = { 'SKILL.md': `${frontmatter('example-package')}# Example\n` }
 
   it('sends failed checks back to the Agent in the same session and promotes the repaired Skill', async () => {
@@ -90,13 +90,13 @@ describe('output check feedback', () => {
 
     expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
     expect(prompts).toHaveLength(2)
-    expect(prompts[1]).toContain('Frontmatter field is not supported: license')
+    expect(prompts[1]).toContain('Frontmatter field is not supported: unsupported')
   })
 
   it('returns the remaining issues after two repair turns', async () => {
     const { result, prompts } = await runTurns([invalid])
 
-    expect(issues(result)).toContain('Frontmatter field is not supported: license')
+    expect(issues(result)).toContain('Frontmatter field is not supported: unsupported')
     expect(prompts).toHaveLength(3)
   })
 })
@@ -113,12 +113,49 @@ describe('generated Skill output checks', () => {
   })
 
   it.each([
-    ['license: MIT\n', 'license'],
-    ['metadata:\n  owner: example\n', 'metadata'],
-  ])('rejects a frontmatter field other than name and description (%s)', async (extra, field) => {
+    ['unsupported: value\n', 'unsupported'],
+  ])('rejects a frontmatter field outside the generation contract (%s)', async (extra, field) => {
     const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
 
     expect(issues(result)).toContain(`Frontmatter field is not supported: ${field}`)
+  })
+
+  it.each([
+    'license: MIT\n',
+    'compatibility: Requires Node.js 22 or later.\n',
+    'license: MIT\ncompatibility: Requires Node.js 22 or later.\n',
+    `compatibility: "${'x'.repeat(500)}"\n`,
+    `compatibility: "${'😀'.repeat(500)}"\n`,
+    'metadata:\n  author: example\n  version: "1.0"\n',
+    'allowed-tools: Read Bash(git:*)\n',
+  ])('promotes a package Skill with optional metadata (%s)', async (extra) => {
+    const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
+  it('promotes a project Skill with license and compatibility metadata', async () => {
+    const result = await runProjectSkill({
+      'SKILL.md': `${frontmatter('example-project', 'license: MIT\ncompatibility: Requires shell access.\n')}${projectSkillBody()}`,
+    })
+
+    expect(result).toMatchObject({ _tag: 'Ok', value: { _tag: 'GeneratedSkill' } })
+  })
+
+  it.each([
+    ['license: 42\n', 'Frontmatter license must be a non-empty string.'],
+    ['license: " "\n', 'Frontmatter license must be a non-empty string.'],
+    ['compatibility: true\n', 'Frontmatter compatibility must contain 1 to 500 characters.'],
+    ['compatibility: " "\n', 'Frontmatter compatibility must contain 1 to 500 characters.'],
+    [`compatibility: ${'x'.repeat(501)}\n`, 'Frontmatter compatibility must contain 1 to 500 characters.'],
+    ['metadata: []\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['metadata:\n  version: 1\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['metadata:\n  1: example\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['allowed-tools: [Read]\n', 'Frontmatter allowed-tools must be a string.'],
+  ])('rejects invalid optional metadata (%s)', async (extra, issue) => {
+    const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
+
+    expect(issues(result)).toContain(issue)
   })
 
   it('rejects a package SKILL.md of 500 lines or more', async () => {
@@ -176,7 +213,6 @@ describe('generated Skill output checks', () => {
     })
 
     expect(issues(result)).toEqual([
-      'Frontmatter field is not supported: license',
       'SKILL.md must link references/orphan.md.',
     ])
   })

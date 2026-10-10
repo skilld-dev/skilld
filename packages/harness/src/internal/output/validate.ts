@@ -3,11 +3,11 @@ import type { Result } from '../result.ts'
 import type { CollectedFile } from './collect.ts'
 import { isScalar, parseDocument, Scalar } from 'yaml'
 import { isSkillName, normalizeOutputPath } from '../paths.ts'
-import { checkProjectSkill } from './project.ts'
 import { err, ok } from '../result.ts'
+import { checkProjectSkill } from './project.ts'
 
-/** Both generation Skills say the frontmatter must contain only these fields. */
-const allowedFrontmatter = new Set(['name', 'description'])
+/** The six fields defined by the Agent Skills specification. */
+const allowedFrontmatter = new Set(['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools'])
 
 /** `generate-package-skill`: "Keep `SKILL.md` under 500 lines." */
 const packageSkillLineLimit = 500
@@ -29,8 +29,9 @@ export type GenerationContract
   = | { readonly _tag: 'PackageSkill' }
     | { readonly _tag: 'ProjectSkill', readonly projectPaths: ReadonlyArray<string> }
 
-const invalid = (issues: ReadonlyArray<string>): Result<never, SkillRunError> =>
-  err({ _tag: 'InvalidSkill', message: 'Skill output failed deterministic checks.', issues })
+function invalid(issues: ReadonlyArray<string>): Result<never, SkillRunError> {
+  return err({ _tag: 'InvalidSkill', message: 'Skill output failed deterministic checks.', issues })
+}
 
 function decodeText(content: Uint8Array): string | null {
   try {
@@ -82,11 +83,7 @@ function structureIssues(markdown: string, files: ReadonlyArray<CollectedFile>, 
   return issues
 }
 
-export const validateGeneratedSkill = (
-  name: string,
-  files: ReadonlyArray<CollectedFile>,
-  contract: GenerationContract,
-): Result<void, SkillRunError> => {
+export function validateGeneratedSkill(name: string, files: ReadonlyArray<CollectedFile>, contract: GenerationContract): Result<void, SkillRunError> {
   const issues: string[] = []
   const skillFiles = files.filter(file => file.path === 'SKILL.md')
   if (skillFiles.length !== 1)
@@ -129,8 +126,19 @@ export const validateGeneratedSkill = (
     issues.push('Frontmatter name must match the Skill directory name.')
   if (typeof frontmatter.name !== 'string' || !isSkillName(frontmatter.name))
     issues.push('Frontmatter name is invalid.')
-  if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0 || frontmatter.description.length > 1024)
+  if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0 || [...frontmatter.description].length > 1024)
     issues.push('Frontmatter description must contain 1 to 1024 characters.')
+  if ('license' in frontmatter && (typeof frontmatter.license !== 'string' || frontmatter.license.trim().length === 0))
+    issues.push('Frontmatter license must be a non-empty string.')
+  if ('compatibility' in frontmatter && (typeof frontmatter.compatibility !== 'string' || frontmatter.compatibility.trim().length === 0 || [...frontmatter.compatibility].length > 500))
+    issues.push('Frontmatter compatibility must contain 1 to 500 characters.')
+  if ('allowed-tools' in frontmatter && typeof frontmatter['allowed-tools'] !== 'string')
+    issues.push('Frontmatter allowed-tools must be a string.')
+  if ('metadata' in frontmatter) {
+    const metadata = document.toJS({ mapAsMap: true }).get('metadata') as unknown
+    if (!(metadata instanceof Map) || [...metadata].some(([key, value]) => typeof key !== 'string' || typeof value !== 'string'))
+      issues.push('Frontmatter metadata must map string keys to string values.')
+  }
   const description = document.get('description', true)
   if (typeof frontmatter.description === 'string' && (!isScalar(description) || description.type !== Scalar.PLAIN || riskyDescription.test(frontmatter.description)))
     issues.push('Frontmatter description must be one plain line without double quotes, backticks, or %. Name symptoms in plain words.')
@@ -141,9 +149,7 @@ export const validateGeneratedSkill = (
 
 const findingLevels = new Set(['error', 'warning', 'note'])
 
-export const validateSkillReview = (
-  files: ReadonlyArray<CollectedFile>,
-): Result<SkillReview, SkillRunError> => {
+export function validateSkillReview(files: ReadonlyArray<CollectedFile>): Result<SkillReview, SkillRunError> {
   if (files.length !== 1 || files[0]?.path !== 'review.json')
     return invalid(['Review output must contain only review.json.'])
 
