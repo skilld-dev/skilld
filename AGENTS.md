@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Read `GLOSSARY.md` before changing public names, commands, errors, routes, or documentation.
 
