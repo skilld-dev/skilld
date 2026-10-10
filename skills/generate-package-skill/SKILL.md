@@ -1,6 +1,8 @@
 ---
 name: generate-package-skill
 description: Generate or update an Agent Skill that teaches consumers one npm or local package the user maintains, including framework modules and wrappers. Tests each example against the installed version. Use when a maintainer asks for a package Skill, a SKILL.md for their library, or a Skill update after a release.
+license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Generate a package Skill
@@ -100,7 +102,9 @@ Shape:
 - Skillgen maintains only `SKILL.md` and Markdown under `references/`: at most 9 files and 64 KiB in total. It never updates `scripts/`.
 - Never include credentials, caches, build output, or dependency directories.
 
-The frontmatter contains only `name` and `description`.
+The frontmatter contains `name` and `description`. It may also contain `license` and `compatibility`.
+If the source declares a license, copy its identifier into `license`. Never infer a license.
+If the Skill needs a specific environment, state those requirements in `compatibility`, at most 500 characters.
 The name uses lowercase letters, numbers, and single hyphens, at most 64 characters, and matches the directory.
 For a scoped package, drop the `@` and replace `/` with a hyphen: `@nuxtjs/seo` becomes `nuxtjs-seo`.
 The description, at most 1024 characters in third person, says what the Skill does, then when to use it, in the words a user types: package name, main exports, config key, error symptoms.

@@ -55,7 +55,8 @@ An `InvalidSkill` error lists each check that still fails in `issues`.
 
 The Harness checks the rules that the generation Skills state:
 
-- The frontmatter contains only `name` and `description`.
+- The frontmatter contains `name` and `description`, with optional `license` and `compatibility`.
+- `license` is a non-empty string. `compatibility` contains 1 to 500 characters when supplied.
 - The description is one plain YAML line without double quotes, backticks, or `%`.
 - `SKILL.md` links every file under `references/`, by a Markdown link or an inline code path.
 - A package Skill keeps `SKILL.md` under 500 lines and writes at most eight reference files.

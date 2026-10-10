@@ -6,8 +6,8 @@ import { isSkillName, normalizeOutputPath } from '../paths.ts'
 import { checkProjectSkill } from './project.ts'
 import { err, ok } from '../result.ts'
 
-/** Both generation Skills say the frontmatter must contain only these fields. */
-const allowedFrontmatter = new Set(['name', 'description'])
+/** Generation Skills support identification, license, and environment requirements. */
+const allowedFrontmatter = new Set(['name', 'description', 'license', 'compatibility'])
 
 /** `generate-package-skill`: "Keep `SKILL.md` under 500 lines." */
 const packageSkillLineLimit = 500
@@ -131,6 +131,10 @@ export const validateGeneratedSkill = (
     issues.push('Frontmatter name is invalid.')
   if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0 || frontmatter.description.length > 1024)
     issues.push('Frontmatter description must contain 1 to 1024 characters.')
+  if ('license' in frontmatter && (typeof frontmatter.license !== 'string' || frontmatter.license.trim().length === 0))
+    issues.push('Frontmatter license must be a non-empty string.')
+  if ('compatibility' in frontmatter && (typeof frontmatter.compatibility !== 'string' || frontmatter.compatibility.trim().length === 0 || frontmatter.compatibility.length > 500))
+    issues.push('Frontmatter compatibility must contain 1 to 500 characters.')
   const description = document.get('description', true)
   if (typeof frontmatter.description === 'string' && (!isScalar(description) || description.type !== Scalar.PLAIN || riskyDescription.test(frontmatter.description)))
     issues.push('Frontmatter description must be one plain line without double quotes, backticks, or %. Name symptoms in plain words.')

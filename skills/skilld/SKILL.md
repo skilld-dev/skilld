@@ -1,6 +1,8 @@
 ---
 name: skilld
 description: Operate skilld CLI for Skill discovery, use, installation, inspection, updates, authentication, configuration, restoration, and removal, including Repository, curator, and collection refs. Also read the skilld.dev registry (view, browse, trending, tracks, curators, index) and act for the user's skilld.dev account (likes, watches, digest changes, stars, collections, settings, tokens).
+license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Use skilld CLI

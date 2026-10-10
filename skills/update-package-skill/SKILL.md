@@ -1,6 +1,8 @@
 ---
 name: update-package-skill
 description: Updates an existing package Skill for a new release of its npm or local package by testing only what changed since the version the Skill names. Use when a maintainer asks to refresh a package Skill after a release, or when a SKILL.md names an older tested version than the package.
+license: MIT
+compatibility: "Requires an agent with filesystem and shell access. Network access is needed for remote sources."
 ---
 
 # Update a package Skill
@@ -49,7 +51,8 @@ If no change is relevant, leave the copy byte-identical and stop. Report "no cha
 
 Keep the format rules:
 
-- The frontmatter contains only `name` and `description`. The name matches the directory.
+- The frontmatter contains `name` and `description`, with optional `license` and `compatibility`. The name matches the directory.
+- Preserve the source license. Update `compatibility` when requirements change, keeping it under 501 characters.
 - The description is one plain YAML line without double quotes, backticks, or `%`.
 - `SKILL.md` stays under 500 lines. Write at most eight reference files, each linked from `SKILL.md`.
 
