@@ -114,7 +114,6 @@ describe('generated Skill output checks', () => {
 
   it.each([
     ['unsupported: value\n', 'unsupported'],
-    ['metadata:\n  owner: example\n', 'metadata'],
   ])('rejects a frontmatter field outside the generation contract (%s)', async (extra, field) => {
     const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
 
@@ -126,6 +125,9 @@ describe('generated Skill output checks', () => {
     'compatibility: Requires Node.js 22 or later.\n',
     'license: MIT\ncompatibility: Requires Node.js 22 or later.\n',
     `compatibility: "${'x'.repeat(500)}"\n`,
+    `compatibility: "${'😀'.repeat(500)}"\n`,
+    'metadata:\n  author: example\n  version: "1.0"\n',
+    'allowed-tools: Read Bash(git:*)\n',
   ])('promotes a package Skill with optional metadata (%s)', async (extra) => {
     const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
 
@@ -146,6 +148,10 @@ describe('generated Skill output checks', () => {
     ['compatibility: true\n', 'Frontmatter compatibility must contain 1 to 500 characters.'],
     ['compatibility: " "\n', 'Frontmatter compatibility must contain 1 to 500 characters.'],
     [`compatibility: ${'x'.repeat(501)}\n`, 'Frontmatter compatibility must contain 1 to 500 characters.'],
+    ['metadata: []\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['metadata:\n  version: 1\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['metadata:\n  1: example\n', 'Frontmatter metadata must map string keys to string values.'],
+    ['allowed-tools: [Read]\n', 'Frontmatter allowed-tools must be a string.'],
   ])('rejects invalid optional metadata (%s)', async (extra, issue) => {
     const result = await runPackageSkill({ 'SKILL.md': `${frontmatter('example-package', extra)}# Example\n` })
 

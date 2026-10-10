@@ -102,9 +102,11 @@ Shape:
 - Skillgen maintains only `SKILL.md` and Markdown under `references/`: at most 9 files and 64 KiB in total. It never updates `scripts/`.
 - Never include credentials, caches, build output, or dependency directories.
 
-The frontmatter contains `name` and `description`. It may also contain `license` and `compatibility`.
+The frontmatter contains `name` and `description`. It may also contain `license`, `compatibility`, `metadata`, and `allowed-tools`.
 If the source declares a license, copy its identifier into `license`. Never infer a license.
-If the Skill needs a specific environment, state those requirements in `compatibility`, at most 500 characters.
+Include `compatibility` only for specific tool, runtime, network, or product requirements, at most 500 characters.
+Omit it for general guidance. Do not repeat the package name, tested version, or implementation details.
+`metadata` maps string keys to string values. `allowed-tools` is an experimental space-separated string of pre-approved tools.
 The name uses lowercase letters, numbers, and single hyphens, at most 64 characters, and matches the directory.
 For a scoped package, drop the `@` and replace `/` with a hyphen: `@nuxtjs/seo` becomes `nuxtjs-seo`.
 The description, at most 1024 characters in third person, says what the Skill does, then when to use it, in the words a user types: package name, main exports, config key, error symptoms.
