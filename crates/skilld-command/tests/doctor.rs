@@ -25,6 +25,64 @@ fn context(home: &Path) -> ScanContext {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn pnpm_links_belong_to_the_package_manager() {
+    let home = tempfile::tempdir().unwrap();
+    skill(
+        home.path(),
+        "app/node_modules/@acme/kit/skills/auth",
+        "Bundled",
+    );
+    fs::write(
+        home.path().join("app/node_modules/@acme/kit/package.json"),
+        r#"{"name":"@acme/kit","version":"1.2.3"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(home.path().join("app/.agents/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        home.path().join("app/node_modules/@acme/kit/skills/auth"),
+        home.path().join("app/.agents/skills/pnpm-@acme+kit-auth"),
+    )
+    .unwrap();
+    let report = scan(&DoctorOptions::for_root(home.path()), &context(home.path())).unwrap();
+    assert_eq!(report.skills.len(), 1);
+    assert_eq!(report.skills[0].owner.label(), "pnpm");
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    let owner = serde_json::to_value(&report.skills[0].owner).unwrap();
+    assert_eq!(owner["package"], "@acme/kit");
+    assert_eq!(owner["version"], "1.2.3");
+    let host = skilld_command::LocalHost::new(home.path().join("app"), home.path().join("data"));
+    for action in [
+        skilld_command::doctor_actions::DoctorAction::Remove,
+        skilld_command::doctor_actions::DoctorAction::Migrate,
+    ] {
+        let error = host
+            .doctor_plan(&report, 0, action)
+            .err()
+            .expect("pnpm ownership blocks changes");
+        assert!(error.message.contains("pnpm owns this Skill"));
+    }
+    assert!(
+        home.path()
+            .join("app/.agents/skills/pnpm-@acme+kit-auth")
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn pnpm_prefix_does_not_claim_an_ordinary_skill() {
+    let home = tempfile::tempdir().unwrap();
+    skill(
+        home.path(),
+        "app/.agents/skills/pnpm-kit-auth",
+        "User-owned",
+    );
+    let report = scan(&DoctorOptions::for_root(home.path()), &context(home.path())).unwrap();
+    assert_eq!(report.skills[0].owner.label(), "Unknown");
+}
+
 #[test]
 fn sweep_keeps_hidden_claude_skills_and_prunes_dependency_and_session_trees() {
     let home = tempfile::tempdir().unwrap();

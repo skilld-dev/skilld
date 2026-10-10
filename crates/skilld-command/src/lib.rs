@@ -8,6 +8,7 @@ pub mod doctor_metadata;
 pub use dependencies::{ExternalReference, external_references};
 mod local_store;
 mod outdated;
+mod pnpm;
 pub use outdated::{NoOutdatedProgress, OutdatedProgress, ancestor_roots};
 mod output;
 mod provenance;

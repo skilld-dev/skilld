@@ -87,12 +87,18 @@ pub(crate) fn scan_unmanaged(
             let Some(name) = entry.file_name().to_str().map(ToOwned::to_owned) else {
                 continue;
             };
-            if SkillName::parse(name.clone()).is_err() || !entry.path().join("SKILL.md").is_file() {
+            if !entry.path().join("SKILL.md").is_file() {
                 continue;
             }
             let Some(canonical) = fs::canonicalize(entry.path()).ok() else {
                 continue;
             };
+            // pnpm updates these through dependency versions. Never suggest replacing its links.
+            if crate::pnpm::linked_package(&entry.path(), &canonical).is_some()
+                || SkillName::parse(name.clone()).is_err()
+            {
+                continue;
+            }
             if stores.iter().any(|root| canonical.starts_with(root)) {
                 continue;
             }

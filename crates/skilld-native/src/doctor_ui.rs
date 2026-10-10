@@ -714,6 +714,9 @@ Linked paths include links in parent folders."
             }
             DoctorOwner::Unknown => "\nNo installation record found.\nAction: d review removal.",
             DoctorOwner::Skilld { .. } => "\nManaged by skilld. Use skilld update or remove.",
+            DoctorOwner::Pnpm { .. } => {
+                "\nManaged by pnpm. Update or remove its package with pnpm."
+            }
             DoctorOwner::Plugin => "\nManaged by a plugin. Change it through its plugin manager.",
             DoctorOwner::Source => "\nSource directory. No cleanup action applies here.",
             DoctorOwner::Unavailable { .. } => {
