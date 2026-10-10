@@ -195,6 +195,9 @@ jobs:
           if test "$(node scripts/release/native-packages.mjs package-publish packages/harness)" = true; then
             pnpm --dir packages/harness publish --access public --no-git-checks --tag "${{ steps.npm_tag.outputs.value }}"
           fi
+      - name: Wait for npm availability
+        timeout-minutes: 17
+        run: node --experimental-strip-types scripts/release/npm-availability.ts "$GITHUB_REF_NAME"
       - name: Publish GitHub release
         shell: bash
         env:
