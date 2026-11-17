@@ -16,8 +16,8 @@ pub use behavior::{
 };
 
 pub use lock::{
-    LockDocument, LockedDeclarationSkill, LockedSkill, LockedSource, LockedTarget, SOURCE_STATUSES,
-    SourceStatus,
+    InstalledBy, LockDocument, LockedDeclarationSkill, LockedSkill, LockedSource, LockedTarget,
+    SOURCE_STATUSES, SourceStatus,
 };
 pub use reference::{ListedOrigin, ListedSkill, MultiSkillRef, SkillListing, SkillRef};
 pub use release::{

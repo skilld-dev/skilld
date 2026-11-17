@@ -55,12 +55,23 @@ pub struct LockedTarget {
     pub mode: InstallMode,
 }
 
+/// The command that wrote a lockfile entry, when that command removes the entry later.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InstalledBy {
+    /// `skilld sync` installed the entry and removes it once no declaration names it.
+    Sync,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LockedSkill {
     pub source: LockedSource,
     pub source_status: SourceStatus,
     pub targets: Vec<LockedTarget>,
+    /// Absent for `skilld install` and for entries from a CLI that did not record it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_by: Option<InstalledBy>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

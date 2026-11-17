@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -5,9 +6,13 @@ use std::thread;
 use std::time::Duration;
 
 use skilld_command::{
-    LocalStore, PreparedStoreUpdate, ResolvedTarget, StoreError, TargetInstall, TransactionGate,
+    LocalStore, PreparedStoreInstall, PreparedStoreUpdate, ResolvedTarget, StoreDeclaration,
+    StoreError, TargetInstall, TransactionGate,
 };
-use skilld_core::{AgentTargetId, InstallMode, LockedSource, SkillName};
+use skilld_core::{
+    AgentTargetId, InstallMode, LockDocument, LockedDeclarationSkill, LockedSource, LockedTarget,
+    SkillName,
+};
 
 fn source(root: &Path, parent: &str, content: &str) -> PathBuf {
     named_source(root, parent, "example", content)
@@ -953,4 +958,159 @@ fn recovery_rejects_a_journal_skill_with_path_traversal() {
 
     assert_eq!(error.code(), "INVALID_LOCKFILE");
     assert_eq!(fs::read_to_string(outside.join("keep")).unwrap(), "fixture");
+}
+
+/// Prepare a sync of a fixture declaration that names each of `sources`.
+fn declared_sync(
+    store: &LocalStore,
+    sources: &[&Path],
+    install: &TargetInstall,
+) -> (Vec<PreparedStoreInstall>, LockDocument, StoreDeclaration) {
+    let snapshot = store
+        .snapshot(std::slice::from_ref(&install.target))
+        .unwrap();
+    let declaration = StoreDeclaration {
+        name: "fixture".to_owned(),
+        skills: sources
+            .iter()
+            .map(|source| {
+                (
+                    source.file_name().unwrap().to_str().unwrap().to_owned(),
+                    LockedDeclarationSkill {
+                        source: local_source(source),
+                        targets: vec![LockedTarget {
+                            agent: install.target.agent,
+                            mode: install.mode,
+                        }],
+                    },
+                )
+            })
+            .collect(),
+        requirements: BTreeMap::new(),
+    };
+    let installs = sources
+        .iter()
+        .map(|source| PreparedStoreInstall {
+            source: source.to_path_buf(),
+            locked_source: local_source(source),
+            source_status: None,
+            targets: vec![install.clone()],
+        })
+        .collect();
+    (installs, snapshot, declaration)
+}
+
+fn copy_target(temporary: &Path) -> TargetInstall {
+    TargetInstall {
+        target: resolved(
+            AgentTargetId::Codex,
+            temporary.join("project/.agents/skills"),
+        ),
+        mode: InstallMode::Copy,
+    }
+}
+
+#[test]
+fn a_lock_commit_failure_restores_every_undeclared_skill_a_sync_removed() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "sources", "alpha", "alpha");
+    let beta = named_source(temporary.path(), "sources", "beta", "beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let install = copy_target(temporary.path());
+    let target = install.target.clone();
+    let (installs, snapshot, declaration) = declared_sync(&store, &[&alpha, &beta], &install);
+    store
+        .apply_sync_batch(
+            installs,
+            &snapshot,
+            declaration,
+            vec![],
+            false,
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let lockfile = store.root().join("skilld-lock.yaml");
+    let before = fs::read(&lockfile).unwrap();
+    let undeclared = || vec![SkillName::parse("beta").unwrap()];
+
+    let (installs, snapshot, declaration) = declared_sync(&store, &[&alpha], &install);
+    let error = store
+        .apply_sync_batch_with_gate(
+            installs,
+            &snapshot,
+            declaration,
+            undeclared(),
+            false,
+            std::slice::from_ref(&target),
+            &RejectLockCommit,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "injected lock failure");
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+    for root in [store.root(), target.root.as_path()] {
+        assert_eq!(
+            fs::read_to_string(root.join("beta/SKILL.md")).unwrap(),
+            "---\nname: beta\ndescription: Test fixture.\n---\n\nbeta\n"
+        );
+    }
+
+    let (installs, snapshot, declaration) = declared_sync(&store, &[&alpha], &install);
+    store
+        .apply_sync_batch(
+            installs,
+            &snapshot,
+            declaration,
+            undeclared(),
+            false,
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+
+    assert!(!store.root().join("beta").exists());
+    assert!(!target.root.join("beta").exists());
+    assert!(target.root.join("alpha/SKILL.md").is_file());
+    assert_eq!(
+        store.list(std::slice::from_ref(&target)).unwrap(),
+        ["alpha"]
+    );
+}
+
+#[test]
+fn a_sync_refuses_to_remove_a_skill_that_sync_did_not_install() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "sources", "alpha", "alpha");
+    let gamma = named_source(temporary.path(), "sources", "gamma", "gamma");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let install = copy_target(temporary.path());
+    let target = install.target.clone();
+    store
+        .install_from(
+            &gamma,
+            local_source(&gamma),
+            std::slice::from_ref(&install),
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+    let before = fs::read(store.root().join("skilld-lock.yaml")).unwrap();
+
+    let (installs, snapshot, declaration) = declared_sync(&store, &[&alpha], &install);
+    let error = store
+        .apply_sync_batch(
+            installs,
+            &snapshot,
+            declaration,
+            vec![SkillName::parse("gamma").unwrap()],
+            false,
+            std::slice::from_ref(&target),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code(), "TARGET_CONFLICT");
+    assert_eq!(
+        fs::read(store.root().join("skilld-lock.yaml")).unwrap(),
+        before
+    );
+    assert!(target.root.join("gamma/SKILL.md").is_file());
+    assert!(!target.root.join("alpha").exists());
 }

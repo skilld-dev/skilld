@@ -10,8 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, LockDocument, LockedDeclarationSkill, LockedSkill,
-    LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceSelector, SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, InstalledBy, LockDocument, LockedDeclarationSkill,
+    LockedSkill, LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceSelector,
+    SourceStatus,
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
@@ -253,13 +254,37 @@ impl LocalStore {
         Ok(file_permissions(source)? == file_permissions(&installed)?)
     }
 
+    /// Install a declaration and remove the `undeclared` Skills in one transaction.
     pub fn apply_sync_batch(
         &self,
         installs: Vec<PreparedStoreInstall>,
         snapshot: &LockDocument,
         declaration: StoreDeclaration,
+        undeclared: Vec<SkillName>,
         adopt: bool,
         known_targets: &[ResolvedTarget],
+    ) -> Result<Vec<SkillName>, StoreError> {
+        self.apply_sync_batch_with_gate(
+            installs,
+            snapshot,
+            declaration,
+            undeclared,
+            adopt,
+            known_targets,
+            &AllowTransaction,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_sync_batch_with_gate<G: TransactionGate>(
+        &self,
+        installs: Vec<PreparedStoreInstall>,
+        snapshot: &LockDocument,
+        declaration: StoreDeclaration,
+        undeclared: Vec<SkillName>,
+        adopt: bool,
+        known_targets: &[ResolvedTarget],
+        gate: &G,
     ) -> Result<Vec<SkillName>, StoreError> {
         let updates = installs
             .into_iter()
@@ -276,9 +301,10 @@ impl LocalStore {
         self.apply_batch(
             updates,
             Some(declaration),
+            undeclared,
             adopt,
             known_targets,
-            &AllowTransaction,
+            gate,
         )
     }
 
@@ -519,6 +545,8 @@ impl LocalStore {
                         mode: target.mode,
                     })
                     .collect(),
+                // `skilld install` owns this Skill, so sync never removes it.
+                installed_by: None,
             },
         );
         if let Err(error) = self.write_lock_atomic(&new_lock, &transaction) {
@@ -556,20 +584,26 @@ impl LocalStore {
                 expected_skill: Some(update.expected_skill),
             })
             .collect();
-        self.apply_batch(updates, None, false, known_targets, gate)
+        self.apply_batch(updates, None, Vec::new(), false, known_targets, gate)
     }
 
     fn apply_batch<G: TransactionGate>(
         &self,
         updates: Vec<PreparedBatchSkill>,
         requirements: Option<StoreDeclaration>,
+        undeclared: Vec<SkillName>,
         adopt: bool,
         known_targets: &[ResolvedTarget],
         gate: &G,
     ) -> Result<Vec<SkillName>, StoreError> {
         ensure_write_capability()?;
         if updates.is_empty() {
-            return Ok(vec![]);
+            if undeclared.is_empty() {
+                return Ok(vec![]);
+            }
+            return Err(StoreError::InvalidSource(
+                "a Skill sync needs at least one declared Skill".to_owned(),
+            ));
         }
 
         let mut names = BTreeSet::new();
@@ -648,6 +682,21 @@ impl LocalStore {
                 update,
             });
         }
+        let removals = undeclared
+            .into_iter()
+            .map(|name| {
+                if names.contains(&name) {
+                    return Err(StoreError::InvalidSource(format!(
+                        "Skill {name} cannot be installed and removed in one sync"
+                    )));
+                }
+                let old_skill = old_lock
+                    .skills
+                    .get(name.as_str())
+                    .ok_or_else(stale_update_plan)?;
+                self.plan_removal(name, old_skill, known_targets)
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
 
         let transaction = transaction_id();
         let journal = Journal {
@@ -669,6 +718,22 @@ impl LocalStore {
                         })
                         .collect(),
                 })
+                .chain(removals.iter().map(|removal| {
+                    JournalSkill {
+                        operation: JournalOperation::Remove,
+                        skill: removal.name.to_string(),
+                        canonical_had_existing: removal.canonical_had_existing,
+                        targets: removal
+                            .targets
+                            .iter()
+                            .map(|target| JournalTarget {
+                                agent: target.agent,
+                                had_existing: true,
+                                promote: false,
+                            })
+                            .collect(),
+                    }
+                }))
                 .collect(),
         };
         self.write_journal(&journal)?;
@@ -714,10 +779,22 @@ impl LocalStore {
                     }
                 }
             }
+            for removal in &removals {
+                let canonical = self.root.join(removal.name.as_str());
+                if removal.canonical_had_existing {
+                    rename_path(&canonical, backup_path(&canonical, &transaction)?)?;
+                }
+                for target in &removal.targets {
+                    let destination = target.destination(&removal.name);
+                    rename_path(&destination, backup_path(&destination, &transaction)?)?;
+                }
+            }
 
             gate.before_lock_commit(&self.lockfile_path())?;
             let mut new_lock = old_lock;
             new_lock.transaction_id.clone_from(&transaction);
+            // Sync owns every Skill it writes. An update keeps the recorded installer.
+            let sync = requirements.is_some();
             if let Some(declaration) = requirements {
                 new_lock
                     .requirements
@@ -741,8 +818,20 @@ impl LocalStore {
                                 mode: target.mode,
                             })
                             .collect(),
+                        installed_by: if sync {
+                            Some(InstalledBy::Sync)
+                        } else {
+                            prepared
+                                .update
+                                .expected_skill
+                                .as_ref()
+                                .and_then(|skill| skill.installed_by)
+                        },
                     },
                 );
+            }
+            for removal in &removals {
+                new_lock.skills.remove(removal.name.as_str());
             }
             self.write_lock_atomic(&new_lock, &transaction)
         })();
@@ -963,6 +1052,58 @@ impl LocalStore {
             }
         }
         Ok(())
+    }
+
+    /// Plan an undeclared Skill's removal. Agent target paths this store does not own stay in place.
+    fn plan_removal(
+        &self,
+        name: SkillName,
+        skill: &LockedSkill,
+        known_targets: &[ResolvedTarget],
+    ) -> Result<StoreRemoval, StoreError> {
+        if skill.installed_by != Some(InstalledBy::Sync) {
+            return Err(StoreError::Conflict(format!(
+                "sync did not install Skill {name}, so sync cannot remove it"
+            )));
+        }
+        let digest = source_digest(&skill.source_status);
+        let canonical = self.root.join(name.as_str());
+        let canonical_had_existing = path_exists(&canonical)?;
+        if canonical_had_existing && !hash_skill_tree(&canonical).is_ok_and(|hash| hash == digest) {
+            return Err(StoreError::Conflict(format!(
+                "canonical Skill {name} changed after installation"
+            )));
+        }
+        let mut targets = Vec::new();
+        for target in unique_locked_target_paths(&name, &skill.targets, known_targets)? {
+            let destination = target.destination(&name);
+            let metadata = match fs::symlink_metadata(&destination) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(fs_error(error)),
+            };
+            let owned = if metadata.file_type().is_symlink() {
+                let link = fs::read_link(&destination).map_err(fs_error)?;
+                normalize_path(&target.root.join(link)) == canonical
+            } else {
+                let copied = skill.targets.iter().any(|locked| {
+                    locked.mode == InstallMode::Copy
+                        && find_target(known_targets, locked.agent)
+                            .is_ok_and(|known| known.root == target.root)
+                });
+                copied
+                    && metadata.is_dir()
+                    && hash_skill_tree(&destination).is_ok_and(|hash| hash == digest)
+            };
+            if owned {
+                targets.push(target);
+            }
+        }
+        Ok(StoreRemoval {
+            name,
+            canonical_had_existing,
+            targets,
+        })
     }
 
     fn lockfile_path(&self) -> PathBuf {
@@ -1260,6 +1401,14 @@ struct BatchStoreUpdate {
     canonical: PathBuf,
     canonical_had_existing: bool,
     changes: Vec<TargetChange>,
+}
+
+/// An undeclared Skill and the Agent target paths that link to or copy its store directory.
+#[derive(Clone, Debug)]
+struct StoreRemoval {
+    name: SkillName,
+    canonical_had_existing: bool,
+    targets: Vec<ResolvedTarget>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
