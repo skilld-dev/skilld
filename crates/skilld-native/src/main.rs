@@ -550,7 +550,7 @@ impl Host for SearchOutputProbe {
         unreachable!("install is outside the search output probe")
     }
 
-    fn search(&self, _query: &str) -> Result<SearchResponse, CommandError> {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, CommandError> {
         Ok(SearchResponse {
             items: vec![SearchResult {
                 name: "output-probe".to_owned(),

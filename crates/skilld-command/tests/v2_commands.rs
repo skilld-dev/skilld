@@ -19,7 +19,7 @@ impl Host for V2Host {
         unreachable!("install is outside this test")
     }
 
-    fn search(&self, _query: &str) -> Result<SearchResponse, CommandError> {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, CommandError> {
         unreachable!("search is outside this test")
     }
 

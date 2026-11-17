@@ -5,6 +5,7 @@ use skilld_core::{
     InstallScope, InstallSource, RemoteError, SearchResponse, SearchResult, SourceProvider,
     SourceRequest, SourceSelector,
 };
+use std::cell::RefCell;
 use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
 
@@ -26,9 +27,47 @@ impl Host for SearchHost {
         unreachable!("install is outside this test")
     }
 
-    fn search(&self, _query: &str) -> Result<SearchResponse, CommandError> {
+    fn search(&self, _query: &str, _limit: u8) -> Result<SearchResponse, CommandError> {
         self.response.clone()
     }
+}
+
+/// Records the limit each search asks the registry for.
+struct LimitHost {
+    limits: RefCell<Vec<u8>>,
+}
+
+impl Host for LimitHost {
+    fn list(&self, _scope: InstallScope) -> Result<Vec<String>, CommandError> {
+        unreachable!("list is outside this test")
+    }
+
+    fn install(
+        &self,
+        _source: InstallSource,
+        _scope: InstallScope,
+    ) -> Result<InstalledSkill, CommandError> {
+        unreachable!("install is outside this test")
+    }
+
+    fn search(&self, _query: &str, limit: u8) -> Result<SearchResponse, CommandError> {
+        self.limits.borrow_mut().push(limit);
+        Ok(response())
+    }
+}
+
+fn run_limits(args: &[&str]) -> (u8, String, Vec<u8>) {
+    let host = LimitHost {
+        limits: RefCell::new(Vec::new()),
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = run_with_output(args, &host, PLAIN, &mut stdout, &mut stderr);
+    (
+        result.exit_code,
+        String::from_utf8(stderr).unwrap(),
+        host.limits.into_inner(),
+    )
 }
 
 fn response() -> SearchResponse {
@@ -611,6 +650,37 @@ fn json_parse_errors_keep_the_typed_error_contract_for_untrusted_arguments() {
         error["error"]["message"],
         "unexpected argument '--unknown\u{0085}\u{202e}\rforged"
     );
+}
+
+#[test]
+fn search_asks_the_registry_for_twenty_skills_unless_limit_says_otherwise() {
+    assert_eq!(
+        run_limits(&["skilld", "search", "grill"]),
+        (0, String::new(), vec![20])
+    );
+    assert_eq!(
+        run_limits(&["skilld", "search", "grill", "--limit", "1"]),
+        (0, String::new(), vec![1])
+    );
+    assert_eq!(
+        run_limits(&["skilld", "search", "--limit=50", "grill", "me"]),
+        (0, String::new(), vec![50])
+    );
+}
+
+#[test]
+fn search_refuses_a_limit_the_registry_would_reject_before_asking_it() {
+    for limit in ["0", "51", "256", "+5x", "ten", ""] {
+        let (exit, stderr, limits) = run_limits(&["skilld", "search", "grill", "--limit", limit]);
+
+        assert_eq!(exit, 2, "{limit}");
+        assert!(stderr.starts_with("INVALID_ARGUMENT:"), "{limit}: {stderr}");
+        assert!(
+            stderr.contains("'--limit <N>': give a number from 1 to 50"),
+            "{limit}: {stderr}"
+        );
+        assert!(limits.is_empty(), "{limit}");
+    }
 }
 
 #[test]

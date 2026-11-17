@@ -64,6 +64,9 @@ skilld search <query> --json
 Read `data.items` before choosing a Skill.
 Use each item's `selector` for a Skill run.
 Refine the query when several Skills cover different tasks.
+Add `--limit N`, from 1 to 50, when the top few Skills are enough.
+The default is 20.
+`data.total` still counts every match.
 
 Do not guess a selector from the Skill name.
 Do not install a search result before reading its description.
