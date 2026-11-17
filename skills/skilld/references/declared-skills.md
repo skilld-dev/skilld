@@ -44,8 +44,16 @@ Sync prepares every source before changing Agent targets.
 One transaction writes installed Skills, targets, requirements, and declarations.
 Preparation failures and target conflicts leave existing targets unchanged.
 Repeated sync uses installed bytes when a remote source still matches its exact commit.
-Sync preserves installed Skills omitted from the declaration.
-Remove those Skills explicitly after releasing their requirements.
+
+Sync removes each Skill in its store lockfile that no declaration in that store names.
+This includes Skills that `skilld install` added to the same store.
+To keep such Skills, use `SKILLD_DATA_DIR` to give the declaration a separate store.
+A required Skill counts as declared.
+Sync removes an Agent target link only when it points into this store.
+Sync removes an Agent target copy only when its files match the store.
+Other Agent target paths stay unchanged.
+The same transaction removes the store directory and the lockfile entry.
+`skilld sync --check` names each Skill that is no longer declared and changes nothing.
 
 Declarations in one store can share a Skill with the same source.
 Local sources must resolve to the same directory.

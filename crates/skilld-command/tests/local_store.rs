@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -5,9 +6,13 @@ use std::thread;
 use std::time::Duration;
 
 use skilld_command::{
-    LocalStore, PreparedStoreUpdate, ResolvedTarget, StoreError, TargetInstall, TransactionGate,
+    LocalStore, PreparedStoreInstall, PreparedStoreUpdate, ResolvedTarget, StoreDeclaration,
+    StoreError, TargetInstall, TransactionGate,
 };
-use skilld_core::{AgentTargetId, InstallMode, LockedSource, SkillName};
+use skilld_core::{
+    AgentTargetId, InstallMode, LockDocument, LockedDeclarationSkill, LockedSource, LockedTarget,
+    SkillName,
+};
 
 fn source(root: &Path, parent: &str, content: &str) -> PathBuf {
     named_source(root, parent, "example", content)
@@ -953,4 +958,107 @@ fn recovery_rejects_a_journal_skill_with_path_traversal() {
 
     assert_eq!(error.code(), "INVALID_LOCKFILE");
     assert_eq!(fs::read_to_string(outside.join("keep")).unwrap(), "fixture");
+}
+
+/// Sync `alpha` as the only declared Skill of a fixture declaration.
+fn sync_alpha(
+    store: &LocalStore,
+    alpha: &Path,
+    install: &TargetInstall,
+) -> (Vec<PreparedStoreInstall>, LockDocument, StoreDeclaration) {
+    let snapshot = store
+        .snapshot(std::slice::from_ref(&install.target))
+        .unwrap();
+    let declaration = StoreDeclaration {
+        name: "fixture".to_owned(),
+        skills: BTreeMap::from([(
+            "alpha".to_owned(),
+            LockedDeclarationSkill {
+                source: local_source(alpha),
+                targets: vec![LockedTarget {
+                    agent: install.target.agent,
+                    mode: install.mode,
+                }],
+            },
+        )]),
+        requirements: BTreeMap::new(),
+    };
+    let installs = vec![PreparedStoreInstall {
+        source: alpha.to_owned(),
+        locked_source: local_source(alpha),
+        source_status: None,
+        targets: vec![install.clone()],
+    }];
+    (installs, snapshot, declaration)
+}
+
+#[test]
+fn a_lock_commit_failure_restores_every_undeclared_skill_a_sync_removed() {
+    let temporary = tempfile::tempdir().unwrap();
+    let alpha = named_source(temporary.path(), "sources", "alpha", "alpha");
+    let beta = named_source(temporary.path(), "sources", "beta", "beta");
+    let store = LocalStore::new(temporary.path().join("project/.skills"));
+    let target = resolved(
+        AgentTargetId::Codex,
+        temporary.path().join("project/.agents/skills"),
+    );
+    let install = TargetInstall {
+        target: target.clone(),
+        mode: InstallMode::Copy,
+    };
+    for source in [&alpha, &beta] {
+        store
+            .install_from(
+                source,
+                local_source(source),
+                std::slice::from_ref(&install),
+                std::slice::from_ref(&target),
+            )
+            .unwrap();
+    }
+    let lockfile = store.root().join("skilld-lock.yaml");
+    let before = fs::read(&lockfile).unwrap();
+    let undeclared = || vec![SkillName::parse("beta").unwrap()];
+
+    let (installs, snapshot, declaration) = sync_alpha(&store, &alpha, &install);
+    let error = store
+        .apply_sync_batch_with_gate(
+            installs,
+            &snapshot,
+            declaration,
+            undeclared(),
+            false,
+            std::slice::from_ref(&target),
+            &RejectLockCommit,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "injected lock failure");
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+    for root in [store.root(), target.root.as_path()] {
+        assert_eq!(
+            fs::read_to_string(root.join("beta/SKILL.md")).unwrap(),
+            "---\nname: beta\ndescription: Test fixture.\n---\n\nbeta\n"
+        );
+    }
+
+    let (installs, snapshot, declaration) = sync_alpha(&store, &alpha, &install);
+    store
+        .apply_sync_batch(
+            installs,
+            &snapshot,
+            declaration,
+            undeclared(),
+            false,
+            std::slice::from_ref(&target),
+        )
+        .unwrap();
+
+    assert!(!store.root().join("beta").exists());
+    assert!(!target.root.join("beta").exists());
+    assert!(target.root.join("alpha/SKILL.md").is_file());
+    assert_eq!(
+        store.list(std::slice::from_ref(&target)).unwrap(),
+        ["alpha"]
+    );
 }

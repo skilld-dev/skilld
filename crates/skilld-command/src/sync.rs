@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, LockedDeclarationSkill,
-    LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, LockDocument,
+    LockedDeclarationSkill, LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef,
+    SourceStatus,
 };
 use skilld_ui::Line;
 
@@ -139,6 +140,7 @@ pub struct SyncRequest {
 pub struct SyncReport {
     pub current: bool,
     pub changed: Vec<String>,
+    pub undeclared: Vec<String>,
     pub requirements_changed: bool,
     pub declarations_changed: bool,
 }
@@ -146,13 +148,22 @@ pub struct SyncReport {
 impl SyncReport {
     pub(crate) fn lines(&self) -> Vec<Line> {
         if self.current {
-            vec![Line::success("Declared Skills match their Agent targets.")]
+            let mut lines = vec![Line::success("Declared Skills match their Agent targets.")];
+            lines.extend(self.undeclared.iter().map(|name| {
+                Line::success(format!("Removed Skill {name}. It is no longer declared."))
+            }));
+            lines
         } else {
             let mut lines: Vec<_> = self
                 .changed
                 .iter()
                 .map(|name| Line::warn(format!("Skill {name} needs sync.")))
                 .collect();
+            lines.extend(
+                self.undeclared
+                    .iter()
+                    .map(|name| Line::warn(format!("Skill {name} is no longer declared."))),
+            );
             if self.requirements_changed {
                 lines.push(Line::warn("Declared Skill requirements need sync."));
             }
@@ -162,6 +173,32 @@ impl SyncReport {
             lines
         }
     }
+}
+
+/// Skills in this store's lockfile that neither this manifest nor another declaration names.
+fn undeclared_skills(snapshot: &LockDocument, manifest: &Manifest) -> Vec<String> {
+    let mut declared = manifest
+        .skills
+        .keys()
+        .chain(manifest.requires.values().flatten())
+        .map(SkillName::as_str)
+        .collect::<BTreeSet<_>>();
+    for (owner, skills) in &snapshot.declarations {
+        if owner != manifest.name.as_str() {
+            declared.extend(skills.keys().map(String::as_str));
+        }
+    }
+    for (owner, requirements) in &snapshot.requirements {
+        if owner != manifest.name.as_str() {
+            declared.extend(requirements.values().flatten().map(String::as_str));
+        }
+    }
+    snapshot
+        .skills
+        .keys()
+        .filter(|name| !declared.contains(name.as_str()))
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport, CommandError> {
@@ -203,6 +240,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
         .collect::<BTreeMap<_, _>>();
     let requirements_changed =
         snapshot.requirements.get(manifest.name.as_str()) != Some(&requirements);
+    let undeclared = undeclared_skills(&snapshot, &manifest);
     let mut changed = Vec::new();
     let mut installs = Vec::new();
     // Keep every remote staging directory alive until the batch commits.
@@ -398,13 +436,22 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
         snapshot.declarations.get(manifest.name.as_str()) != Some(&ownership);
     if request.check {
         return Ok(SyncReport {
-            current: changed.is_empty() && !requirements_changed && !declarations_changed,
+            current: changed.is_empty()
+                && undeclared.is_empty()
+                && !requirements_changed
+                && !declarations_changed,
             changed,
+            undeclared,
             requirements_changed,
             declarations_changed,
         });
     }
-    if !changed.is_empty() || requirements_changed || declarations_changed {
+    if !changed.is_empty() || !undeclared.is_empty() || requirements_changed || declarations_changed
+    {
+        let removals = undeclared
+            .iter()
+            .map(|name| SkillName::parse(name.clone()).map_err(CommandError::domain))
+            .collect::<Result<Vec<_>, _>>()?;
         store
             .apply_sync_batch(
                 installs,
@@ -414,6 +461,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
                     skills: ownership,
                     requirements,
                 },
+                removals,
                 request.adopt,
                 &known,
             )
@@ -422,6 +470,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
     Ok(SyncReport {
         current: true,
         changed,
+        undeclared,
         requirements_changed: false,
         declarations_changed: false,
     })

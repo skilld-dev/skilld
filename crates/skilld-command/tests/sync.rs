@@ -619,3 +619,213 @@ fn a_hosted_preparation_failure_leaves_every_agent_unchanged() {
             .exists()
     );
 }
+
+fn declare_only_alpha(root: &Path) {
+    let manifest = root.join("project/.skills/skilld.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    value["skills"] = json!({"alpha": {"source": "../sources/alpha"}});
+    value["requires"] = json!({"pr": ["alpha"]});
+    fs::write(manifest, value.to_string()).unwrap();
+}
+
+fn locked_skills(lockfile: &Path) -> Vec<String> {
+    let lock: serde_json::Value = serde_json::from_slice(&fs::read(lockfile).unwrap()).unwrap();
+    lock["skills"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect()
+}
+
+const AGENT_TARGETS: [&str; 3] = [".agents/skills", ".claude/skills", ".opencode/skills"];
+
+#[test]
+fn check_names_each_undeclared_skill_and_sync_removes_it() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    declare_only_alpha(root.path());
+    let project = root.path().join("project");
+    let lockfile = project.join(".skills/skilld-lock.yaml");
+    let before = fs::read(&lockfile).unwrap();
+
+    let checked = command(&host, &["skilld", "sync", "--check"]);
+    assert_eq!(checked.0, 1, "{}", checked.2);
+    assert!(
+        checked.1.contains("Skill beta is no longer declared."),
+        "{}",
+        checked.1
+    );
+    let json = command(&host, &["skilld", "sync", "--check", "--json"]);
+    assert_eq!(json.0, 1, "{}", json.2);
+    let report: serde_json::Value = serde_json::from_str(&json.1).unwrap();
+    assert_eq!(report["data"]["current"], false);
+    assert_eq!(report["data"]["undeclared"], json!(["beta"]));
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+    assert!(project.join(".skills/beta/SKILL.md").is_file());
+    for target in AGENT_TARGETS {
+        assert!(project.join(target).join("beta/SKILL.md").is_file());
+    }
+
+    let synced = command(&host, &["skilld", "sync"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert!(
+        synced
+            .1
+            .contains("Removed Skill beta. It is no longer declared."),
+        "{}",
+        synced.1
+    );
+    assert!(!project.join(".skills/beta").exists());
+    for target in AGENT_TARGETS {
+        assert!(fs::symlink_metadata(project.join(target).join("beta")).is_err());
+        assert!(project.join(target).join("alpha/SKILL.md").is_file());
+    }
+    assert_eq!(locked_skills(&lockfile), ["alpha"]);
+    assert_eq!(command(&host, &["skilld", "sync", "--check"]).0, 0);
+}
+
+#[test]
+fn sync_removes_a_skill_that_no_declaration_names_from_its_own_store() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    let project = root.path().join("project");
+    let gamma = project.join("sources/gamma");
+    fs::create_dir_all(&gamma).unwrap();
+    fs::write(
+        gamma.join("SKILL.md"),
+        "---\nname: gamma\ndescription: Test.\n---\nOriginal.\n",
+    )
+    .unwrap();
+    let installed = command(
+        &host,
+        &["skilld", "install", "./sources/gamma", "--agent", "codex"],
+    );
+    assert_eq!(installed.0, 0, "{}", installed.2);
+
+    let checked = command(&host, &["skilld", "sync", "--check"]);
+    assert_eq!(checked.0, 1, "{}", checked.2);
+    assert!(
+        checked.1.contains("Skill gamma is no longer declared."),
+        "{}",
+        checked.1
+    );
+    assert!(!checked.1.contains("Skill alpha"), "{}", checked.1);
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    assert!(!project.join(".skills/gamma").exists());
+    assert!(fs::symlink_metadata(project.join(".agents/skills/gamma")).is_err());
+    assert!(gamma.join("SKILL.md").is_file());
+    assert_eq!(
+        locked_skills(&project.join(".skills/skilld-lock.yaml")),
+        ["alpha", "beta"]
+    );
+}
+
+#[test]
+fn sync_removes_the_store_entry_when_its_links_were_deleted_by_hand() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync", "--global"]).0, 0);
+    declare_only_alpha(root.path());
+    for target in [
+        ".agents/skills",
+        ".claude/skills",
+        ".config/opencode/skills",
+    ] {
+        fs::remove_file(root.path().join(target).join("beta")).unwrap();
+    }
+    let checked = command(&host, &["skilld", "sync", "--global", "--check"]);
+    assert_eq!(checked.0, 1, "{}", checked.2);
+    assert!(checked.1.contains("Skill beta is no longer declared."));
+    let synced = command(&host, &["skilld", "sync", "--global"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert!(!root.path().join("global/skills/beta").exists());
+    assert_eq!(
+        locked_skills(&root.path().join("global/skills/skilld-lock.yaml")),
+        ["alpha"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_keeps_agent_target_links_that_point_outside_its_store() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync", "--global"]).0, 0);
+    let other = root.path().join("other/skills/beta");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        other.join("SKILL.md"),
+        "---\nname: beta\ndescription: Other.\n---\nOther store.\n",
+    )
+    .unwrap();
+    let link = root.path().join(".claude/skills/beta");
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    declare_only_alpha(root.path());
+
+    let synced = command(&host, &["skilld", "sync", "--global"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert_eq!(fs::read_link(&link).unwrap(), other);
+    assert!(other.join("SKILL.md").is_file());
+    for target in [".agents/skills", ".config/opencode/skills"] {
+        assert!(fs::symlink_metadata(root.path().join(target).join("beta")).is_err());
+    }
+    assert!(!root.path().join("global/skills/beta").exists());
+    assert_eq!(
+        locked_skills(&root.path().join("global/skills/skilld-lock.yaml")),
+        ["alpha"]
+    );
+}
+
+#[test]
+fn sync_removes_matching_copies_and_keeps_edited_copies_of_an_undeclared_skill() {
+    let (root, host) = fixture();
+    let manifest = root.path().join("project/.skills/skilld.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    value["mode"] = json!("copy");
+    fs::write(&manifest, value.to_string()).unwrap();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    let project = root.path().join("project");
+    let edited = project.join(".claude/skills/beta/SKILL.md");
+    fs::write(
+        &edited,
+        "---\nname: beta\ndescription: Test.\n---\nUser edits.\n",
+    )
+    .unwrap();
+    declare_only_alpha(root.path());
+
+    let synced = command(&host, &["skilld", "sync"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert!(fs::read_to_string(&edited).unwrap().contains("User edits."));
+    for target in [".agents/skills", ".opencode/skills"] {
+        assert!(!project.join(target).join("beta").exists());
+    }
+    assert!(!project.join(".skills/beta").exists());
+}
+
+#[test]
+fn sync_keeps_skills_that_another_declaration_in_the_store_names() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    let one = declaration(
+        root.path(),
+        "one",
+        &["codex"],
+        "../sources/alpha",
+        "symlink",
+    );
+    let checked = command(&host, &["skilld", "sync", "--manifest", &one, "--check"]);
+    assert!(!checked.1.contains("no longer declared"), "{}", checked.1);
+    assert_eq!(command(&host, &["skilld", "sync", "--manifest", &one]).0, 0);
+    let project = root.path().join("project");
+    assert!(project.join(".skills/beta/SKILL.md").is_file());
+    for target in AGENT_TARGETS {
+        assert!(project.join(target).join("beta/SKILL.md").is_file());
+    }
+    assert_eq!(
+        command(&host, &["skilld", "sync", "--manifest", &one, "--check"]).0,
+        0
+    );
+    assert_eq!(command(&host, &["skilld", "sync", "--check"]).0, 0);
+}

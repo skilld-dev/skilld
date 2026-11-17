@@ -32,7 +32,7 @@ use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
     AllowTransaction, LocalStore, PreparedStoreInstall, PreparedStoreUpdate, ResolvedTarget,
-    SkillView, StoreError, TargetInstall, TransactionGate,
+    SkillView, StoreDeclaration, StoreError, TargetInstall, TransactionGate,
 };
 pub use output::{CommandPlatform, OutputContext};
 pub use provenance::{RemoteProvenance, search_result_page_url};
@@ -98,6 +98,8 @@ enum Command {
         options: doctor::DoctorOptions,
     },
     /// Sync declared Skills and their required Skills to Agent targets.
+    ///
+    /// Sync also removes each Skill in its store that no declaration names.
     Sync {
         /// Read declarations from this JSON file.
         #[arg(long, default_value = ".skills/skilld.json")]
