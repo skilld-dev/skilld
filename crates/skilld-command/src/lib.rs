@@ -99,7 +99,7 @@ enum Command {
     },
     /// Sync declared Skills and their required Skills to Agent targets.
     ///
-    /// Sync also removes each Skill in its store that no declaration names.
+    /// Sync also removes each Skill it installed that no declaration names.
     Sync {
         /// Read declarations from this JSON file.
         #[arg(long, default_value = ".skills/skilld.json")]

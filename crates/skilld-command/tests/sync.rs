@@ -629,6 +629,21 @@ fn declare_only_alpha(root: &Path) {
     fs::write(manifest, value.to_string()).unwrap();
 }
 
+fn lock(lockfile: &Path) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(lockfile).unwrap()).unwrap()
+}
+
+/// Rewrite one lockfile entry as an older CLI or `skilld install` records it.
+fn forget_installer(lockfile: &Path, name: &str) {
+    let mut value = lock(lockfile);
+    value["skills"][name]
+        .as_object_mut()
+        .unwrap()
+        .remove("installedBy")
+        .unwrap();
+    fs::write(lockfile, value.to_string()).unwrap();
+}
+
 fn locked_skills(lockfile: &Path) -> Vec<String> {
     let lock: serde_json::Value = serde_json::from_slice(&fs::read(lockfile).unwrap()).unwrap();
     lock["skills"]
@@ -661,7 +676,10 @@ fn check_names_each_undeclared_skill_and_sync_removes_it() {
     assert_eq!(json.0, 1, "{}", json.2);
     let report: serde_json::Value = serde_json::from_str(&json.1).unwrap();
     assert_eq!(report["data"]["current"], false);
-    assert_eq!(report["data"]["undeclared"], json!(["beta"]));
+    assert_eq!(
+        report["data"]["undeclared"],
+        json!([{"_tag": "Removable", "name": "beta"}])
+    );
     assert_eq!(fs::read(&lockfile).unwrap(), before);
     assert!(project.join(".skills/beta/SKILL.md").is_file());
     for target in AGENT_TARGETS {
@@ -687,11 +705,10 @@ fn check_names_each_undeclared_skill_and_sync_removes_it() {
 }
 
 #[test]
-fn sync_removes_a_skill_that_no_declaration_names_from_its_own_store() {
+fn sync_keeps_and_reports_a_skill_that_skilld_install_added_to_its_store() {
     let (root, host) = fixture();
-    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
-    let project = root.path().join("project");
-    let gamma = project.join("sources/gamma");
+    assert_eq!(command(&host, &["skilld", "sync", "--global"]).0, 0);
+    let gamma = root.path().join("project/sources/gamma");
     fs::create_dir_all(&gamma).unwrap();
     fs::write(
         gamma.join("SKILL.md"),
@@ -700,26 +717,117 @@ fn sync_removes_a_skill_that_no_declaration_names_from_its_own_store() {
     .unwrap();
     let installed = command(
         &host,
-        &["skilld", "install", "./sources/gamma", "--agent", "codex"],
+        &[
+            "skilld",
+            "install",
+            "./sources/gamma",
+            "--global",
+            "--agent",
+            "codex",
+        ],
     );
     assert_eq!(installed.0, 0, "{}", installed.2);
+    let data_root = root.path().join("global");
+    let lockfile = data_root.join("skills/skilld-lock.yaml");
+    let locked = lock(&lockfile);
+    assert_eq!(locked["skills"]["alpha"]["installedBy"], "sync");
+    assert!(locked["skills"]["gamma"].get("installedBy").is_none());
+    let remove = format!(
+        "SKILLD_DATA_DIR={} skilld remove gamma --global",
+        data_root.display()
+    );
 
-    let checked = command(&host, &["skilld", "sync", "--check"]);
-    assert_eq!(checked.0, 1, "{}", checked.2);
+    let checked = command(&host, &["skilld", "sync", "--global", "--check"]);
+    assert_eq!(checked.0, 0, "{}", checked.2);
     assert!(
-        checked.1.contains("Skill gamma is no longer declared."),
+        checked
+            .1
+            .contains("Skill gamma is not declared. Sync did not install it, so sync keeps it."),
         "{}",
         checked.1
     );
-    assert!(!checked.1.contains("Skill alpha"), "{}", checked.1);
-    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
-    assert!(!project.join(".skills/gamma").exists());
-    assert!(fs::symlink_metadata(project.join(".agents/skills/gamma")).is_err());
-    assert!(gamma.join("SKILL.md").is_file());
-    assert_eq!(
-        locked_skills(&project.join(".skills/skilld-lock.yaml")),
-        ["alpha", "beta"]
+    assert!(
+        checked.1.contains(&format!("To remove it, run: {remove}")),
+        "{}",
+        checked.1
     );
+    let json = command(&host, &["skilld", "sync", "--global", "--check", "--json"]);
+    assert_eq!(json.0, 0, "{}", json.2);
+    let report: serde_json::Value = serde_json::from_str(&json.1).unwrap();
+    assert_eq!(report["data"]["current"], true);
+    assert_eq!(
+        report["data"]["undeclared"],
+        json!([{"_tag": "Kept", "name": "gamma", "removeCommand": remove}])
+    );
+
+    let synced = command(&host, &["skilld", "sync", "--global"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert!(synced.1.contains("Sync did not install it"), "{}", synced.1);
+    assert!(data_root.join("skills/gamma/SKILL.md").is_file());
+    assert!(root.path().join(".agents/skills/gamma/SKILL.md").is_file());
+    assert_eq!(locked_skills(&lockfile), ["alpha", "beta", "gamma"]);
+
+    let removed = command(&host, &["skilld", "remove", "gamma", "--global"]);
+    assert_eq!(removed.0, 0, "{}", removed.2);
+    assert!(!data_root.join("skills/gamma").exists());
+    assert!(fs::symlink_metadata(root.path().join(".agents/skills/gamma")).is_err());
+}
+
+#[test]
+fn sync_keeps_and_reports_an_undeclared_entry_that_an_older_sync_wrote() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    let project = root.path().join("project");
+    let lockfile = project.join(".skills/skilld-lock.yaml");
+    forget_installer(&lockfile, "beta");
+    declare_only_alpha(root.path());
+
+    let checked = command(&host, &["skilld", "sync", "--check"]);
+    assert!(
+        checked
+            .1
+            .contains("Skill beta is not declared. Sync did not install it, so sync keeps it."),
+        "{}",
+        checked.1
+    );
+    assert!(
+        checked.1.contains("To remove it, run: skilld remove beta"),
+        "{}",
+        checked.1
+    );
+    assert!(!checked.1.contains("no longer declared"), "{}", checked.1);
+    let synced = command(&host, &["skilld", "sync"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    assert!(project.join(".skills/beta/SKILL.md").is_file());
+    for target in AGENT_TARGETS {
+        assert!(project.join(target).join("beta/SKILL.md").is_file());
+    }
+    assert_eq!(locked_skills(&lockfile), ["alpha", "beta"]);
+    assert_eq!(command(&host, &["skilld", "sync", "--check"]).0, 0);
+
+    let removed = command(&host, &["skilld", "remove", "beta"]);
+    assert_eq!(removed.0, 0, "{}", removed.2);
+    assert!(!project.join(".skills/beta").exists());
+}
+
+#[test]
+fn sync_records_its_installer_on_declared_entries_that_an_older_sync_wrote() {
+    let (root, host) = fixture();
+    assert_eq!(command(&host, &["skilld", "sync"]).0, 0);
+    let lockfile = root.path().join("project/.skills/skilld-lock.yaml");
+    for name in ["alpha", "beta"] {
+        forget_installer(&lockfile, name);
+    }
+    let before = fs::read(&lockfile).unwrap();
+    assert_eq!(command(&host, &["skilld", "sync", "--check"]).0, 0);
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+
+    let synced = command(&host, &["skilld", "sync"]);
+    assert_eq!(synced.0, 0, "{}", synced.2);
+    let locked = lock(&lockfile);
+    for name in ["alpha", "beta"] {
+        assert_eq!(locked["skills"][name]["installedBy"], "sync", "{name}");
+    }
 }
 
 #[test]

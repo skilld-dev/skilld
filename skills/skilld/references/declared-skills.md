@@ -45,15 +45,20 @@ One transaction writes installed Skills, targets, requirements, and declarations
 Preparation failures and target conflicts leave existing targets unchanged.
 Repeated sync uses installed bytes when a remote source still matches its exact commit.
 
-Sync removes each Skill in its store lockfile that no declaration in that store names.
-This includes Skills that `skilld install` added to the same store.
-To keep such Skills, use `SKILLD_DATA_DIR` to give the declaration a separate store.
+Sync records `"installedBy": "sync"` in each lockfile entry it writes.
+On its next run, sync also records it on declared entries that an older sync wrote.
+If no declaration in the store names a Skill with that record, sync removes the Skill.
 A required Skill counts as declared.
 Sync removes an Agent target link only when it points into this store.
 Sync removes an Agent target copy only when its files match the store.
 Other Agent target paths stay unchanged.
 The same transaction removes the store directory and the lockfile entry.
-`skilld sync --check` names each Skill that is no longer declared and changes nothing.
+`skilld sync --check` exits `1` and names each Skill that sync will remove.
+
+Sync never removes a Skill without that record.
+These Skills come from `skilld install` or from a CLI that did not record the installer.
+Sync and `skilld sync --check` name each one with the `skilld remove` command that removes it.
+These Skills alone do not make `skilld sync --check` exit `1`.
 
 Declarations in one store can share a Skill with the same source.
 Local sources must resolve to the same directory.
@@ -76,6 +81,7 @@ Sync preserves the original source directory.
 
 Use a CLI containing `sync` to read lockfiles with recorded requirements.
 Older CLIs reject those fields.
+A CLI that does not record `installedBy` rejects a lockfile that contains it.
 Keep legacy v2 stores separate; sync does not migrate their lockfiles.
 
 ## Keep the skilld-maintained Skill current

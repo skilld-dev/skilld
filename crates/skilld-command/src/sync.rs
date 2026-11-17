@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, LockDocument,
+    AgentTargetId, CommitSha, InstallMode, InstallScope, InstallSource, InstalledBy, LockDocument,
     LockedDeclarationSkill, LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef,
     SourceStatus,
 };
@@ -135,21 +135,41 @@ pub struct SyncRequest {
     pub adopt: bool,
 }
 
+/// A Skill in this store's lockfile that no declaration names.
+#[derive(Debug, Serialize)]
+#[serde(tag = "_tag", rename_all_fields = "camelCase")]
+pub enum UndeclaredSkill {
+    /// Sync installed this Skill, so sync removes it.
+    Removable { name: String },
+    /// `skilld install` or an older sync installed this Skill, so sync keeps it.
+    Kept {
+        name: String,
+        remove_command: String,
+    },
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncReport {
     pub current: bool,
     pub changed: Vec<String>,
-    pub undeclared: Vec<String>,
+    pub undeclared: Vec<UndeclaredSkill>,
     pub requirements_changed: bool,
     pub declarations_changed: bool,
 }
 
 impl SyncReport {
+    fn removable(&self) -> impl Iterator<Item = &str> {
+        self.undeclared.iter().filter_map(|skill| match skill {
+            UndeclaredSkill::Removable { name } => Some(name.as_str()),
+            UndeclaredSkill::Kept { .. } => None,
+        })
+    }
+
     pub(crate) fn lines(&self) -> Vec<Line> {
-        if self.current {
+        let mut lines = if self.current {
             let mut lines = vec![Line::success("Declared Skills match their Agent targets.")];
-            lines.extend(self.undeclared.iter().map(|name| {
+            lines.extend(self.removable().map(|name| {
                 Line::success(format!("Removed Skill {name}. It is no longer declared."))
             }));
             lines
@@ -160,8 +180,7 @@ impl SyncReport {
                 .map(|name| Line::warn(format!("Skill {name} needs sync.")))
                 .collect();
             lines.extend(
-                self.undeclared
-                    .iter()
+                self.removable()
                     .map(|name| Line::warn(format!("Skill {name} is no longer declared."))),
             );
             if self.requirements_changed {
@@ -171,6 +190,38 @@ impl SyncReport {
                 lines.push(Line::warn("Skill declarations need sync."));
             }
             lines
+        };
+        for skill in &self.undeclared {
+            if let UndeclaredSkill::Kept {
+                name,
+                remove_command,
+            } = skill
+            {
+                lines.push(Line::warn(format!(
+                    "Skill {name} is not declared. Sync did not install it, so sync keeps it."
+                )));
+                lines.push(Line::plain(format!("To remove it, run: {remove_command}")));
+            }
+        }
+        lines
+    }
+}
+
+/// The command that removes a Skill from the store this sync uses.
+fn remove_command(host: &LocalHost, scope: InstallScope, name: &str) -> String {
+    match scope {
+        InstallScope::Project => format!("skilld remove {name}"),
+        InstallScope::Global => {
+            let root = host.global_root.to_string_lossy();
+            let safe = root.chars().all(|character| {
+                character.is_ascii_alphanumeric() || "/._-+:@%,".contains(character)
+            });
+            let root = if safe {
+                root.into_owned()
+            } else {
+                format!("'{}'", root.replace('\'', r"'\''"))
+            };
+            format!("SKILLD_DATA_DIR={root} skilld remove {name} --global")
         }
     }
 }
@@ -240,7 +291,35 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
         .collect::<BTreeMap<_, _>>();
     let requirements_changed =
         snapshot.requirements.get(manifest.name.as_str()) != Some(&requirements);
-    let undeclared = undeclared_skills(&snapshot, &manifest);
+    let undeclared = undeclared_skills(&snapshot, &manifest)
+        .into_iter()
+        .map(|name| {
+            if snapshot.skills[&name].installed_by == Some(InstalledBy::Sync) {
+                UndeclaredSkill::Removable { name }
+            } else {
+                let remove_command = remove_command(host, request.scope, &name);
+                UndeclaredSkill::Kept {
+                    name,
+                    remove_command,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let removals = undeclared
+        .iter()
+        .filter_map(|skill| match skill {
+            UndeclaredSkill::Removable { name } => Some(name),
+            UndeclaredSkill::Kept { .. } => None,
+        })
+        .map(|name| SkillName::parse(name.clone()).map_err(CommandError::domain))
+        .collect::<Result<Vec<_>, _>>()?;
+    // An older sync wrote declared entries without an installer, so sync records it now.
+    let installer_missing = manifest.skills.keys().any(|name| {
+        snapshot
+            .skills
+            .get(name.as_str())
+            .is_some_and(|skill| skill.installed_by != Some(InstalledBy::Sync))
+    });
     let mut changed = Vec::new();
     let mut installs = Vec::new();
     // Keep every remote staging directory alive until the batch commits.
@@ -437,7 +516,7 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
     if request.check {
         return Ok(SyncReport {
             current: changed.is_empty()
-                && undeclared.is_empty()
+                && removals.is_empty()
                 && !requirements_changed
                 && !declarations_changed,
             changed,
@@ -446,12 +525,12 @@ pub(crate) fn sync(host: &LocalHost, request: SyncRequest) -> Result<SyncReport,
             declarations_changed,
         });
     }
-    if !changed.is_empty() || !undeclared.is_empty() || requirements_changed || declarations_changed
+    if !changed.is_empty()
+        || !removals.is_empty()
+        || installer_missing
+        || requirements_changed
+        || declarations_changed
     {
-        let removals = undeclared
-            .iter()
-            .map(|name| SkillName::parse(name.clone()).map_err(CommandError::domain))
-            .collect::<Result<Vec<_>, _>>()?;
         store
             .apply_sync_batch(
                 installs,

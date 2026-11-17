@@ -10,8 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use skilld_core::{
-    AgentTargetId, CommitSha, InstallMode, LockDocument, LockedDeclarationSkill, LockedSkill,
-    LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceSelector, SourceStatus,
+    AgentTargetId, CommitSha, InstallMode, InstalledBy, LockDocument, LockedDeclarationSkill,
+    LockedSkill, LockedSource, LockedTarget, RemoteSelector, SkillName, SourceRef, SourceSelector,
+    SourceStatus,
 };
 
 const JOURNAL_NAME: &str = ".skilld-transaction";
@@ -544,6 +545,8 @@ impl LocalStore {
                         mode: target.mode,
                     })
                     .collect(),
+                // `skilld install` owns this Skill, so sync never removes it.
+                installed_by: None,
             },
         );
         if let Err(error) = self.write_lock_atomic(&new_lock, &transaction) {
@@ -790,6 +793,8 @@ impl LocalStore {
             gate.before_lock_commit(&self.lockfile_path())?;
             let mut new_lock = old_lock;
             new_lock.transaction_id.clone_from(&transaction);
+            // Sync owns every Skill it writes. An update keeps the recorded installer.
+            let sync = requirements.is_some();
             if let Some(declaration) = requirements {
                 new_lock
                     .requirements
@@ -813,6 +818,15 @@ impl LocalStore {
                                 mode: target.mode,
                             })
                             .collect(),
+                        installed_by: if sync {
+                            Some(InstalledBy::Sync)
+                        } else {
+                            prepared
+                                .update
+                                .expected_skill
+                                .as_ref()
+                                .and_then(|skill| skill.installed_by)
+                        },
                     },
                 );
             }
@@ -1047,6 +1061,11 @@ impl LocalStore {
         skill: &LockedSkill,
         known_targets: &[ResolvedTarget],
     ) -> Result<StoreRemoval, StoreError> {
+        if skill.installed_by != Some(InstalledBy::Sync) {
+            return Err(StoreError::Conflict(format!(
+                "sync did not install Skill {name}, so sync cannot remove it"
+            )));
+        }
         let digest = source_digest(&skill.source_status);
         let canonical = self.root.join(name.as_str());
         let canonical_had_existing = path_exists(&canonical)?;
