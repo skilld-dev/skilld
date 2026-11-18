@@ -2700,6 +2700,72 @@ fn a_served_primary_root_that_fails_verification_never_asks_for_the_backup_root(
 }
 
 #[test]
+fn a_primary_root_that_cannot_be_read_or_verified_never_asks_for_the_backup_root() {
+    let (backup, responses) = verified_remote_responses();
+    let (ready, backup_root) = (responses[0].clone(), responses[1].clone());
+    let transport = || {
+        Err(RemoteError::new(
+            "HTTP_TRANSPORT",
+            "the connection was reset",
+        ))
+    };
+    let mut redirect = response(302, Vec::new());
+    redirect.headers.insert(
+        "location".to_owned(),
+        "https://elsewhere.example/api/v1/trusted-roots/root-2026-11".to_owned(),
+    );
+    let cases = [
+        // skilld.dev serves the backup root at the primary path.
+        ("TRUSTED_ROOT_MISMATCH", vec![Ok(backup_root.clone())]),
+        (
+            "INVALID_RESPONSE",
+            vec![Ok(response(200, b"not json".to_vec()))],
+        ),
+        (
+            "HTTP_TRANSPORT",
+            vec![transport(), transport(), transport()],
+        ),
+        ("REMOTE_ORIGIN_REJECTED", vec![Ok(redirect)]),
+    ];
+    for (code, primary) in cases {
+        // The backup root stays queued, so a fall through would verify.
+        let queue = std::iter::once(Ok(ready.clone()))
+            .chain(primary)
+            .chain([Ok(backup_root.clone())])
+            .collect();
+        let http = Arc::new(FakeHttp {
+            responses: Mutex::new(queue),
+            ..FakeHttp::default()
+        });
+        let remote = SkilldRemote::new(
+            http.clone(),
+            Arc::new(NoTokenProvider),
+            NativeRemoteConfig::Pinned(TrustedRootPins::new(
+                unserved_pin("root-2026-11"),
+                Some(backup.clone()),
+            )),
+        )
+        .with_endpoint("http://127.0.0.1:8787")
+        .unwrap()
+        .with_sleeper(Arc::new(NoSleep));
+
+        let error = remote
+            .prepare(
+                &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+                false,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, code);
+        assert!(
+            !request_paths(&http).contains(&"/api/v1/trusted-roots/root-1".to_owned()),
+            "{code}: {:?}",
+            request_paths(&http)
+        );
+    }
+}
+
+#[test]
 fn every_pinned_root_unknown_to_skilld_dev_fails_closed_and_names_the_upgrade() {
     let (_, responses) = verified_remote_responses();
     let (http, remote) = linking_remote(
