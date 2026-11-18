@@ -14,7 +14,13 @@ function signed(domain: string, statement: Buffer, privateKey: KeyObject) {
   ]), privateKey).toString('base64url')
 }
 
-function rootFixture(rootKeyId: string, signer: { publicKey: KeyObject }, keyId = 'signer-1') {
+function rootFixture(rootKeyId: string, signer: { publicKey: KeyObject }, keyId = 'signer-1', additionalKeys: Partial<{
+  keyId: string
+  publicKey: string
+  notBefore: string
+  notAfter: string
+  status: string
+}>[] = []) {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const rootPublicKey = publicKey.export({ format: 'jwk' }).x!
   const key = {
@@ -25,17 +31,19 @@ function rootFixture(rootKeyId: string, signer: { publicKey: KeyObject }, keyId 
     notAfter: '2027-01-01T00:00:00.000Z',
     status: 'active',
   }
-  const statement = Buffer.from(JSON.stringify({ version: 1, rootKeyId, ...key }))
   return {
     version: 1,
     rootKeyId,
     rootPublicKey,
     fetchedAt: '2026-11-18T00:00:00.000Z',
-    keys: [{
-      ...key,
-      statement: statement.toString('base64url'),
-      rootSignature: signed('skilld-trusted-key-v1', statement, privateKey),
-    }],
+    keys: [key, ...additionalKeys.map(extra => ({ ...key, ...extra }))].map((key) => {
+      const statement = Buffer.from(JSON.stringify({ version: 1, rootKeyId, ...key }))
+      return {
+        ...key,
+        statement: statement.toString('base64url'),
+        rootSignature: signed('skilld-trusted-key-v1', statement, privateKey),
+      }
+    }),
   }
 }
 
@@ -90,6 +98,7 @@ process.stdout.write('200')
   return {
     primary,
     backup,
+    signer,
     save,
     resolution,
     saveResolution,
@@ -112,6 +121,85 @@ process.stdout.write('200')
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   }
 }
+
+it.each(['primary', 'backup'] as const)('rejects an overlapping signer present only under the %s root despite a valid probe', (pin) => {
+  const fixture = preflightFixture()
+  try {
+    const root = rootFixture(fixture[pin].rootKeyId, fixture.signer, 'signer-1', [{
+      keyId: 'signer-2',
+      publicKey: generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' }).x!,
+      status: 'overlapping',
+    }])
+    Object.assign(fixture[pin], root)
+    fixture.save(root)
+    const result = fixture.run()
+    expect(result.status, result.stderr).not.toBe(0)
+    expect(result.stdout).not.toContain('native-build-reached')
+    expect(result.stderr).toContain('supported Artifact signers differ')
+  }
+  finally {
+    fixture.cleanup()
+  }
+}, 120_000)
+
+it.each(['public-key', 'start', 'end', 'retired', 'revoked'] as const)('rejects different %s acceptance for a signer outside the probe', (difference) => {
+  const fixture = preflightFixture()
+  try {
+    const extra = {
+      keyId: 'signer-2',
+      publicKey: generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' }).x!,
+      status: 'overlapping',
+    }
+    const changed = {
+      ...extra,
+      ...(difference === 'public-key' ? { publicKey: fixture.signer.publicKey.export({ format: 'jwk' }).x! } : {}),
+      ...(difference === 'start' ? { notBefore: '2026-06-01T00:00:00Z' } : {}),
+      ...(difference === 'end' ? { notAfter: '2026-12-01T00:00:00Z' } : {}),
+      ...(['retired', 'revoked'].includes(difference) ? { status: difference } : {}),
+    }
+    for (const pin of ['primary', 'backup'] as const) {
+      const root = rootFixture(fixture[pin].rootKeyId, fixture.signer, 'signer-1', [pin === 'primary' ? extra : changed])
+      Object.assign(fixture[pin], root)
+      fixture.save(root)
+    }
+    const result = fixture.run()
+    expect(result.status, result.stderr).not.toBe(0)
+    expect(result.stdout).not.toContain('native-build-reached')
+    expect(result.stderr).toContain('supported Artifact signers differ')
+  }
+  finally {
+    fixture.cleanup()
+  }
+}, 120_000)
+
+it('accepts equivalent signer policies regardless of key order, accepted status, or timestamp format', () => {
+  const fixture = preflightFixture()
+  try {
+    const extra = {
+      keyId: 'signer-2',
+      publicKey: generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' }).x!,
+      status: 'overlapping',
+    }
+    const primary = rootFixture(fixture.primary.rootKeyId, fixture.signer, 'signer-1', [extra, { keyId: 'retired', status: 'retired' }])
+    const backup = rootFixture(fixture.backup.rootKeyId, fixture.signer, 'signer-1', [{
+      ...extra,
+      status: 'active',
+      notBefore: '2026-01-01T01:00:00+01:00',
+      notAfter: '2027-01-01T00:00:00Z',
+    }])
+    backup.keys.reverse()
+    for (const root of [primary, backup]) {
+      Object.assign(root.rootKeyId === primary.rootKeyId ? fixture.primary : fixture.backup, root)
+      fixture.save(root)
+    }
+    const result = fixture.run()
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('native-build-reached')
+  }
+  finally {
+    fixture.cleanup()
+  }
+}, 120_000)
 
 it.each(['primary', 'backup'] as const)('rejects a valid %s root whose signer cannot verify the service attestation', (pin) => {
   const fixture = preflightFixture()

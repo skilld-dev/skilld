@@ -108,8 +108,7 @@ jobs:
             local key_id_name="$1" public_key_name="$2"
             local key_id="${!key_id_name}" public_key="${!public_key_name}"
             local body status
-            body="$(mktemp)"
-            trap 'rm -f "$body"' EXIT
+            body="$probe/$key_id_name.json"
             # No --location: a redirect fails this check.
             status="$(curl --fail --silent --show-error --proto '=https' \
               --retry 3 --max-time 30 --output "$body" --write-out '%{http_code}' \
@@ -121,11 +120,13 @@ jobs:
               echo "skilld.dev answered HTTP $status for the trusted root $key_id from $key_id_name." >&2
               exit 1
             fi
-            cargo run --locked --quiet --package skilld-core --example verify-release-root \
-              -- "$body" "$key_id" "$public_key" "$probe/attestation.json"
           )
           require_served_root SKILLD_ROOT_KEY_ID SKILLD_ROOT_PUBLIC_KEY
           require_served_root SKILLD_BACKUP_ROOT_KEY_ID SKILLD_BACKUP_ROOT_PUBLIC_KEY
+          cargo run --locked --quiet --package skilld-core --example verify-release-root \
+            -- "$probe/SKILLD_ROOT_KEY_ID.json" "$SKILLD_ROOT_KEY_ID" "$SKILLD_ROOT_PUBLIC_KEY" \
+            "$probe/attestation.json" \
+            "$probe/SKILLD_BACKUP_ROOT_KEY_ID.json" "$SKILLD_BACKUP_ROOT_KEY_ID" "$SKILLD_BACKUP_ROOT_PUBLIC_KEY"
       - id: matrix
         name: Read native package matrix
         shell: bash
