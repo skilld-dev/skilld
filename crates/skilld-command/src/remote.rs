@@ -3116,8 +3116,8 @@ impl RemoteProvider for SkilldRemote {
         commit_sha: &str,
     ) -> Result<RemoteSourceState, RemoteError> {
         let descriptor = self.resolve(selector.source())?.descriptor;
-        let root = self.verified_root()?;
-        verify_attestation(&descriptor.attestation, &root)?;
+        let root = self.verified_root().map_err(untrusted_root)?;
+        verify_attestation(&descriptor.attestation, &root).map_err(untrusted_root)?;
         if descriptor.artifact_id == artifact_id
             && descriptor.attestation.source.commit_sha == commit_sha
         {
@@ -3146,8 +3146,8 @@ impl RemoteProvider for SkilldRemote {
             });
         }
         let descriptor = self.resolve(selector.source())?.descriptor;
-        let root = self.verified_root()?;
-        verify_attestation(&descriptor.attestation, &root)?;
+        let root = self.verified_root().map_err(untrusted_root)?;
+        verify_attestation(&descriptor.attestation, &root).map_err(untrusted_root)?;
         let access = match descriptor.visibility {
             RepositoryVisibility::Public => RemoteComparisonAccess::PublicGithub,
             RepositoryVisibility::Private => RemoteComparisonAccess::Hosted,
@@ -3763,7 +3763,7 @@ fn unverifiable_artifact(error: RemoteError, source_url: &str) -> RemoteError {
             "The Skill did not cause this failure. skilld.dev is changing its signing key. Run the same command again in a minute.".to_owned()
         }
         "TRUSTED_ROOT_MISMATCH" | "TRUSTED_ROOT_INVALID" | "TRUSTED_ROOT_SIGNATURE_INVALID" => {
-            "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to upgrade skilld with npx skilld@latest or npm i -g skilld@latest. Then run the same command again.".to_owned()
+            return untrusted_root(error);
         }
         "HTTP_TRANSPORT" | "SERVICE_UNAVAILABLE" | "RATE_LIMITED" | "CANCELLED" => return error,
         _ => format!(
@@ -3771,6 +3771,21 @@ fn unverifiable_artifact(error: RemoteError, source_url: &str) -> RemoteError {
         ),
     };
     error.with_next_step(next_step)
+}
+
+/// Add the upgrade step to a failure that means this build does not trust
+/// the skilld.dev keys. Every other failure passes through unchanged.
+fn untrusted_root(error: RemoteError) -> RemoteError {
+    match error.code {
+        "TRUSTED_ROOT_MISMATCH" | "TRUSTED_ROOT_INVALID" | "TRUSTED_ROOT_SIGNATURE_INVALID"
+            if error.next_step.is_none() =>
+        {
+            error.with_next_step(
+                "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to upgrade skilld with npx skilld@latest or npm i -g skilld@latest. Then run the same command again.",
+            )
+        }
+        _ => error,
+    }
 }
 
 fn is_transfer_mismatch(code: &str) -> bool {

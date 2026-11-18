@@ -2800,6 +2800,32 @@ fn every_pinned_root_unknown_to_skilld_dev_fails_closed_and_names_the_upgrade() 
 }
 
 #[test]
+fn an_update_check_that_trusts_no_served_root_names_the_upgrade() {
+    let (_, responses) = verified_remote_responses();
+    let (_, remote) = linking_remote(
+        vec![responses[0].clone(), root_not_found()],
+        unserved_pin("root-2026-11"),
+    );
+
+    let error = remote
+        .latest_commit(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "TRUSTED_ROOT_MISMATCH");
+    assert!(
+        error
+            .next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("npx skilld@latest")),
+        "{:?}",
+        error.next_step
+    );
+}
+
+#[test]
 fn a_build_pins_its_primary_root_then_its_backup_root() {
     let pin = |key_id: &str, public_key: &str| TrustedRootPin {
         key_id: key_id.to_owned(),
