@@ -182,7 +182,9 @@ Set these GitHub Actions repository variables before creating a v3 tag:
 - `SKILLD_BACKUP_ROOT_KEY_ID`
 - `SKILLD_BACKUP_ROOT_PUBLIC_KEY`
 
-Each public key must be a pinned Ed25519 root public key in canonical base64url form.
+Each key id has 1 to 100 characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, and `-`.
+Neither key id may be `skilld-root-2026`, whose private key is lost.
+Each public key must be a 32-byte Ed25519 root public key in canonical unpadded base64url.
 The backup root needs its own key id and its own key pair.
 Keep each root private key outside this repository and GitHub Actions.
 
@@ -190,8 +192,9 @@ The CLI asks skilld.dev for the primary root at `/api/v1/trusted-roots/{rootKeyI
 If skilld.dev answers 404, the CLI asks for the backup root.
 Any other failure stops verification.
 
-The release stops before it builds if skilld.dev does not serve the primary root.
-The served `rootKeyId` and `rootPublicKey` must equal the primary variables.
+The release stops before it builds unless skilld.dev serves both roots.
+Each served root must have `version` 1, at least one key, and the `rootKeyId` and `rootPublicKey` of its variables.
+A redirect also stops the release.
 
 The release tag must match the root `package.json` version exactly.
 The CLI, native packages, and Harness use that same version.

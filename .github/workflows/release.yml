@@ -28,27 +28,35 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
-      - name: Require the trusted root
+      - name: Require the trusted roots
         shell: bash
         run: |
-          test -n "$SKILLD_ROOT_KEY_ID" || {
-            echo 'SKILLD_ROOT_KEY_ID is required.' >&2
-            exit 1
-          }
-          test -n "$SKILLD_ROOT_PUBLIC_KEY" || {
-            echo 'SKILLD_ROOT_PUBLIC_KEY is required.' >&2
-            exit 1
-          }
-          test -n "$SKILLD_BACKUP_ROOT_KEY_ID" || {
-            echo 'SKILLD_BACKUP_ROOT_KEY_ID is required.' >&2
-            exit 1
-          }
-          test -n "$SKILLD_BACKUP_ROOT_PUBLIC_KEY" || {
-            echo 'SKILLD_BACKUP_ROOT_PUBLIC_KEY is required.' >&2
-            exit 1
-          }
-          if test "$SKILLD_BACKUP_ROOT_KEY_ID" = "$SKILLD_ROOT_KEY_ID" \
-            || test "$SKILLD_BACKUP_ROOT_PUBLIC_KEY" = "$SKILLD_ROOT_PUBLIC_KEY"; then
+          # Root key ids use only unreserved URL characters, so a URL path
+          # holds them without encoding.
+          id_pattern='^[A-Za-z0-9._~-]{1,100}$'
+          # 32 bytes in canonical unpadded base64url: 43 characters, and the
+          # last one leaves its two padding bits unset.
+          key_pattern='^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+          for root in SKILLD_ROOT SKILLD_BACKUP_ROOT; do
+            key_id_name="${root}_KEY_ID"
+            public_key_name="${root}_PUBLIC_KEY"
+            key_id="${!key_id_name}"
+            public_key="${!public_key_name}"
+            if [[ ! $key_id =~ $id_pattern || $key_id == . || $key_id == .. ]]; then
+              echo "$key_id_name must be 1 to 100 characters from A-Z, a-z, 0-9, '.', '_', '~', and '-'." >&2
+              exit 1
+            fi
+            if [[ $key_id == skilld-root-2026 ]]; then
+              echo "$key_id_name names skilld-root-2026. Its private key is lost." >&2
+              exit 1
+            fi
+            if [[ ! $public_key =~ $key_pattern ]]; then
+              echo "$public_key_name must be a 32-byte Ed25519 public key in canonical unpadded base64url." >&2
+              exit 1
+            fi
+          done
+          if [[ $SKILLD_BACKUP_ROOT_KEY_ID == "$SKILLD_ROOT_KEY_ID" \
+            || $SKILLD_BACKUP_ROOT_PUBLIC_KEY == "$SKILLD_ROOT_PUBLIC_KEY" ]]; then
             echo 'The backup root must have its own key id and public key.' >&2
             exit 1
           fi
@@ -56,25 +64,36 @@ jobs:
             echo 'SKILLD_RELEASE_PUBLIC_KEY is required. Run node scripts/release/release-signing.mjs generate-key.' >&2
             exit 1
           }
-      - name: Require skilld.dev to serve the primary root
+      - name: Require skilld.dev to serve both pinned roots
         shell: bash
         run: |
-          # The CLI asks for its primary root first. If skilld.dev does not
-          # serve it, the released CLI depends on the backup root alone.
-          key_id="$(jq -rn --arg value "$SKILLD_ROOT_KEY_ID" '$value | @uri')"
-          root="$(curl --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' --retry 3 --max-time 30 \
-            "https://skilld.dev/api/v1/trusted-roots/$key_id")" || {
-            echo "skilld.dev does not serve the trusted root $SKILLD_ROOT_KEY_ID." >&2
-            exit 1
+          # The CLI asks for each pinned root by its id. A root that skilld.dev
+          # does not serve leaves the release with one root or none.
+          require_served_root() {
+            local key_id_name="$1" public_key_name="$2"
+            local key_id="${!key_id_name}" public_key="${!public_key_name}"
+            local body status
+            body="$(mktemp)"
+            # No --location: a redirect fails this check.
+            status="$(curl --fail --silent --show-error --proto '=https' \
+              --retry 3 --max-time 30 --output "$body" --write-out '%{http_code}' \
+              "https://skilld.dev/api/v1/trusted-roots/$key_id")" || {
+              echo "skilld.dev does not serve the trusted root $key_id from $key_id_name." >&2
+              exit 1
+            }
+            if [[ $status != 200 ]]; then
+              echo "skilld.dev answered HTTP $status for the trusted root $key_id from $key_id_name." >&2
+              exit 1
+            fi
+            jq -e --arg key_id "$key_id" --arg public_key "$public_key" \
+              '.version == 1 and .rootKeyId == $key_id and .rootPublicKey == $public_key
+                and (.keys | type == "array" and length > 0)' "$body" >/dev/null || {
+              echo "The skilld.dev trusted root $key_id does not match $key_id_name and $public_key_name, or lists no keys." >&2
+              exit 1
+            }
           }
-          printf '%s' "$root" | jq -e \
-            --arg key_id "$SKILLD_ROOT_KEY_ID" \
-            --arg public_key "$SKILLD_ROOT_PUBLIC_KEY" \
-            '.rootKeyId == $key_id and .rootPublicKey == $public_key' >/dev/null || {
-            echo "The skilld.dev trusted root $SKILLD_ROOT_KEY_ID does not match SKILLD_ROOT_PUBLIC_KEY." >&2
-            exit 1
-          }
+          require_served_root SKILLD_ROOT_KEY_ID SKILLD_ROOT_PUBLIC_KEY
+          require_served_root SKILLD_BACKUP_ROOT_KEY_ID SKILLD_BACKUP_ROOT_PUBLIC_KEY
       - id: matrix
         name: Read native package matrix
         shell: bash
