@@ -69,11 +69,12 @@ jobs:
         run: |
           # The CLI asks for each pinned root by its id. A root that skilld.dev
           # does not serve leaves the release with one root or none.
-          require_served_root() {
+          require_served_root() (
             local key_id_name="$1" public_key_name="$2"
             local key_id="${!key_id_name}" public_key="${!public_key_name}"
             local body status
             body="$(mktemp)"
+            trap 'rm -f "$body"' EXIT
             # No --location: a redirect fails this check.
             status="$(curl --fail --silent --show-error --proto '=https' \
               --retry 3 --max-time 30 --output "$body" --write-out '%{http_code}' \
@@ -85,13 +86,9 @@ jobs:
               echo "skilld.dev answered HTTP $status for the trusted root $key_id from $key_id_name." >&2
               exit 1
             fi
-            jq -e --arg key_id "$key_id" --arg public_key "$public_key" \
-              '.version == 1 and .rootKeyId == $key_id and .rootPublicKey == $public_key
-                and (.keys | type == "array" and length > 0)' "$body" >/dev/null || {
-              echo "The skilld.dev trusted root $key_id does not match $key_id_name and $public_key_name, or lists no keys." >&2
-              exit 1
-            }
-          }
+            cargo run --locked --quiet --package skilld-core --example verify-release-root \
+              -- "$body" "$key_id" "$public_key"
+          )
           require_served_root SKILLD_ROOT_KEY_ID SKILLD_ROOT_PUBLIC_KEY
           require_served_root SKILLD_BACKUP_ROOT_KEY_ID SKILLD_BACKUP_ROOT_PUBLIC_KEY
       - id: matrix
