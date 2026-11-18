@@ -13,7 +13,7 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use skilld_command::{NativeRemoteConfig, NoTokenProvider, RemoteProvider, SkilldRemote};
-use skilld_core::{RemoteSelector, SourceStatus, TrustedRootPin};
+use skilld_core::{RemoteSelector, SourceStatus, TrustedRootPin, TrustedRootPins};
 use skilld_native::NativeHttpAdapter;
 
 const RESOLUTION_ID: &str = "018f47a4-2d38-7c5f-8d3e-1c5a6b7d8e9f";
@@ -307,7 +307,7 @@ fn a_run_survives_a_bad_gateway_a_pending_answer_and_a_dropped_download() {
                 200,
                 site.ready.clone(),
             ),
-            answer("GET /api/v1/trusted-root", 200, site.root.clone()),
+            answer("GET /api/v1/trusted-roots/root-1 ", 200, site.root.clone()),
             answer("POST /api/v1/artifacts/sha256%3A", 200, site.grant.clone()),
             dropped,
             answer("GET /content", 200, site.archive.clone()),
@@ -316,7 +316,7 @@ fn a_run_survives_a_bad_gateway_a_pending_answer_and_a_dropped_download() {
     let remote = SkilldRemote::new(
         Arc::new(NativeHttpAdapter::new()),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(site.pin),
+        NativeRemoteConfig::Pinned(site.pin.into()),
     )
     .with_endpoint(&format!("http://{address}"))
     .unwrap();
@@ -335,4 +335,54 @@ fn a_run_survives_a_bad_gateway_a_pending_answer_and_a_dropped_download() {
     assert_eq!(prepared.omitted_files.len(), 1);
     assert_eq!(prepared.omitted_files[0].path, "assets/demo.mp4");
     assert_eq!(prepared.omitted_files[0].bytes, Some(9_311_232));
+}
+
+#[test]
+fn a_run_verifies_with_the_backup_root_when_skilld_dev_does_not_serve_the_primary() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let site = site(&format!("http://{address}/content"));
+    let not_found = serde_json::to_vec(&json!({
+        "type": "https://skilld.dev/problems/source-not-found",
+        "title": "Source not found",
+        "status": 404,
+        "detail": "Trusted root not found",
+        "code": "SOURCE_NOT_FOUND"
+    }))
+    .unwrap();
+    let server = serve(
+        listener,
+        vec![
+            answer("POST /api/v1/resolutions", 200, site.ready.clone()),
+            answer("GET /api/v1/trusted-roots/root-2026-11 ", 404, not_found),
+            answer("GET /api/v1/trusted-roots/root-1 ", 200, site.root.clone()),
+            answer("POST /api/v1/artifacts/sha256%3A", 200, site.grant.clone()),
+            answer("GET /content", 200, site.archive.clone()),
+        ],
+    );
+    let primary = TrustedRootPin {
+        key_id: "root-2026-11".to_owned(),
+        public_key: URL_SAFE_NO_PAD.encode(
+            SigningKey::from_bytes(&[3_u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        ),
+    };
+    let remote = SkilldRemote::new(
+        Arc::new(NativeHttpAdapter::new()),
+        Arc::new(NoTokenProvider),
+        NativeRemoteConfig::Pinned(TrustedRootPins::new(primary, Some(site.pin))),
+    )
+    .with_endpoint(&format!("http://{address}"))
+    .unwrap();
+    let selector = RemoteSelector::parse("better-auth/skills/emailandpassword").unwrap();
+
+    let prepared = remote.prepare(&selector, false);
+
+    let lines = server.join().unwrap();
+    assert!(matches!(
+        prepared.unwrap().source_status,
+        SourceStatus::Verified { .. }
+    ));
+    assert_eq!(lines.len(), 5);
 }

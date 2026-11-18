@@ -20,7 +20,7 @@ use skilld_command::{
 };
 use skilld_core::{
     InstallScope, InstallSource, ReleasePin, SearchResponse, SearchResult, SourceProvider,
-    SourceRequest, SourceSelector, TrustedRootPin, VERSION,
+    SourceRequest, SourceSelector, VERSION,
 };
 use skilld_native::behavior_prompt::TtyBehaviorConfirmer;
 use skilld_native::select_ui::TtySkillChooser;
@@ -573,16 +573,12 @@ impl Host for SearchOutputProbe {
 }
 
 fn native_remote_config() -> NativeRemoteConfig {
-    match (
+    NativeRemoteConfig::from_build_variables(
         option_env!("SKILLD_ROOT_KEY_ID"),
         option_env!("SKILLD_ROOT_PUBLIC_KEY"),
-    ) {
-        (Some(key_id), Some(public_key)) => NativeRemoteConfig::Pinned(TrustedRootPin {
-            key_id: key_id.to_owned(),
-            public_key: public_key.to_owned(),
-        }),
-        _ => NativeRemoteConfig::Unconfigured,
-    }
+        option_env!("SKILLD_BACKUP_ROOT_KEY_ID"),
+        option_env!("SKILLD_BACKUP_ROOT_PUBLIC_KEY"),
+    )
 }
 
 fn target_roots() -> TargetRoots {

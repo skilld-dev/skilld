@@ -13,6 +13,8 @@ on:
 env:
   SKILLD_ROOT_KEY_ID: ${{ vars.SKILLD_ROOT_KEY_ID }}
   SKILLD_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_ROOT_PUBLIC_KEY }}
+  SKILLD_BACKUP_ROOT_KEY_ID: ${{ vars.SKILLD_BACKUP_ROOT_KEY_ID }}
+  SKILLD_BACKUP_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_BACKUP_ROOT_PUBLIC_KEY }}
   SKILLD_RELEASE_PUBLIC_KEY: ${{ vars.SKILLD_RELEASE_PUBLIC_KEY }}
 
 jobs:
@@ -37,8 +39,40 @@ jobs:
             echo 'SKILLD_ROOT_PUBLIC_KEY is required.' >&2
             exit 1
           }
+          test -n "$SKILLD_BACKUP_ROOT_KEY_ID" || {
+            echo 'SKILLD_BACKUP_ROOT_KEY_ID is required.' >&2
+            exit 1
+          }
+          test -n "$SKILLD_BACKUP_ROOT_PUBLIC_KEY" || {
+            echo 'SKILLD_BACKUP_ROOT_PUBLIC_KEY is required.' >&2
+            exit 1
+          }
+          if test "$SKILLD_BACKUP_ROOT_KEY_ID" = "$SKILLD_ROOT_KEY_ID" \
+            || test "$SKILLD_BACKUP_ROOT_PUBLIC_KEY" = "$SKILLD_ROOT_PUBLIC_KEY"; then
+            echo 'The backup root must have its own key id and public key.' >&2
+            exit 1
+          fi
           test -n "$SKILLD_RELEASE_PUBLIC_KEY" || {
             echo 'SKILLD_RELEASE_PUBLIC_KEY is required. Run node scripts/release/release-signing.mjs generate-key.' >&2
+            exit 1
+          }
+      - name: Require skilld.dev to serve the primary root
+        shell: bash
+        run: |
+          # The CLI asks for its primary root first. If skilld.dev does not
+          # serve it, the released CLI depends on the backup root alone.
+          key_id="$(jq -rn --arg value "$SKILLD_ROOT_KEY_ID" '$value | @uri')"
+          root="$(curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --retry 3 --max-time 30 \
+            "https://skilld.dev/api/v1/trusted-roots/$key_id")" || {
+            echo "skilld.dev does not serve the trusted root $SKILLD_ROOT_KEY_ID." >&2
+            exit 1
+          }
+          printf '%s' "$root" | jq -e \
+            --arg key_id "$SKILLD_ROOT_KEY_ID" \
+            --arg public_key "$SKILLD_ROOT_PUBLIC_KEY" \
+            '.rootKeyId == $key_id and .rootPublicKey == $public_key' >/dev/null || {
+            echo "The skilld.dev trusted root $SKILLD_ROOT_KEY_ID does not match SKILLD_ROOT_PUBLIC_KEY." >&2
             exit 1
           }
       - id: matrix

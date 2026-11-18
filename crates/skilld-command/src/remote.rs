@@ -14,7 +14,7 @@ use skilld_core::{
     ArtifactAttestation, CheckOutcome, CommitAuthor, CommitSha, CommitSummary, ListedOrigin,
     ListedSkill, LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector,
     RepositoryVisibility, SearchResponse, SkillListing, SkillName, SourceRef, SourceRequest,
-    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, VerifiedArtifact,
+    SourceSelector, SourceStatus, TrustedRoot, TrustedRootPin, TrustedRootPins, VerifiedArtifact,
     VerifiedTrustedRoot, declared_skill_name, parse_search_response, prepare_unverified_files,
     verify_artifact, verify_attestation, verify_linked_file, verify_trusted_root,
     with_linked_files,
@@ -770,8 +770,57 @@ struct GithubCommitAuthor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeRemoteConfig {
-    Pinned(TrustedRootPin),
+    Pinned(TrustedRootPins),
     Unconfigured,
+}
+
+impl NativeRemoteConfig {
+    /// The trusted roots a build pins, from its compiled build variables.
+    ///
+    /// An empty value counts as missing, because an unset GitHub Actions
+    /// variable arrives as an empty string. A build without a whole primary
+    /// root is unconfigured. A build with half a backup root, or a backup root
+    /// without a primary one, is unconfigured too, so it fails closed.
+    pub fn from_build_variables(
+        root_key_id: Option<&str>,
+        root_public_key: Option<&str>,
+        backup_root_key_id: Option<&str>,
+        backup_root_public_key: Option<&str>,
+    ) -> Self {
+        match (
+            build_pin(root_key_id, root_public_key),
+            build_pin(backup_root_key_id, backup_root_public_key),
+        ) {
+            (BuildPin::Whole(primary), BuildPin::Missing) => {
+                Self::Pinned(TrustedRootPins::new(primary, None))
+            }
+            (BuildPin::Whole(primary), BuildPin::Whole(backup)) => {
+                Self::Pinned(TrustedRootPins::new(primary, Some(backup)))
+            }
+            _ => Self::Unconfigured,
+        }
+    }
+}
+
+/// One trusted root pin as a build names it: both variables, neither, or one.
+enum BuildPin {
+    Missing,
+    Whole(TrustedRootPin),
+    Partial,
+}
+
+fn build_pin(key_id: Option<&str>, public_key: Option<&str>) -> BuildPin {
+    match (
+        key_id.filter(|value| !value.is_empty()),
+        public_key.filter(|value| !value.is_empty()),
+    ) {
+        (None, None) => BuildPin::Missing,
+        (Some(key_id), Some(public_key)) => BuildPin::Whole(TrustedRootPin {
+            key_id: key_id.to_owned(),
+            public_key: public_key.to_owned(),
+        }),
+        _ => BuildPin::Partial,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -942,15 +991,33 @@ impl SkilldRemote {
     /// needs. Without either, the adapter applies its own limit.
     fn execute_bounded(
         &self,
-        mut request: HttpRequest,
+        request: HttpRequest,
         allowed: AllowedOrigin,
+        deadline: Option<&mut ResolutionDeadline>,
+        transfer_timeout: Option<Duration>,
+        max_retries: usize,
+    ) -> Result<HttpResponse, RemoteError> {
+        let response =
+            self.send_bounded(request, &allowed, deadline, transfer_timeout, max_retries)?;
+        if !(200..300).contains(&response.status) {
+            return Err(status_error(&response, &allowed));
+        }
+        Ok(response)
+    }
+
+    /// [`Self::execute_bounded`] without the status check: the final response
+    /// after retries and redirects, whatever its status.
+    fn send_bounded(
+        &self,
+        mut request: HttpRequest,
+        allowed: &AllowedOrigin,
         mut deadline: Option<&mut ResolutionDeadline>,
         transfer_timeout: Option<Duration>,
         max_retries: usize,
     ) -> Result<HttpResponse, RemoteError> {
         let mut redirects = 0_usize;
         loop {
-            validate_request_url(&request.url, &allowed)?;
+            validate_request_url(&request.url, allowed)?;
             let mut retry = 0_usize;
             let response = loop {
                 if self.cancellation.is_cancelled() {
@@ -1016,7 +1083,7 @@ impl SkilldRemote {
                 let next = current.join(location).map_err(|_| {
                     RemoteError::new("REDIRECT_REJECTED", "the redirect URL is invalid")
                 })?;
-                validate_url(&next, &allowed)?;
+                validate_url(&next, allowed)?;
                 if matches!(allowed, AllowedOrigin::GithubTarball)
                     && next.host_str() != Some("codeload.github.com")
                 {
@@ -1028,17 +1095,6 @@ impl SkilldRemote {
                 request.url = next.into();
                 redirects += 1;
                 continue;
-            }
-            if !(200..300).contains(&response.status) {
-                return Err(match allowed {
-                    AllowedOrigin::Github
-                    | AllowedOrigin::GithubTarball
-                    | AllowedOrigin::GithubFile => github_error(&response),
-                    AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => {
-                        problem_error(&response)
-                    }
-                    AllowedOrigin::Api(_) => api::api_problem_error(&response),
-                });
             }
             return Ok(response);
         }
@@ -1072,23 +1128,52 @@ impl SkilldRemote {
         })
     }
 
+    /// The trusted root of the first pin that skilld.dev serves, verified
+    /// against that pin.
+    ///
+    /// skilld asks for each pinned root by its id, in pin order. Only a 404
+    /// moves on to the next pin. Any other failure, or a served root that
+    /// fails verification, stops here.
     fn verified_root(&self) -> Result<VerifiedTrustedRoot, RemoteError> {
-        let NativeRemoteConfig::Pinned(pin) = &self.root_pin else {
+        let NativeRemoteConfig::Pinned(pins) = &self.root_pin else {
             return Err(RemoteError::new(
                 "TRUSTED_ROOT_UNCONFIGURED",
                 "this build has no trusted root pin",
             ));
         };
-        let request = HttpRequest {
-            method: HttpMethod::Get,
-            url: self.service_url("/api/v1/trusted-root")?.into(),
-            headers: vec![],
-            body: vec![],
-            response_limit: JSON_LIMIT,
-        };
-        let response = self.execute(request, AllowedOrigin::Service(self.endpoint.clone()))?;
-        let root: TrustedRoot = parse_json(&response.body)?;
-        verify_trusted_root(root, pin)
+        let allowed = AllowedOrigin::Service(self.endpoint.clone());
+        for pin in pins.iter() {
+            let request = HttpRequest {
+                method: HttpMethod::Get,
+                url: self.trusted_root_url(&pin.key_id)?,
+                headers: vec![],
+                body: vec![],
+                response_limit: JSON_LIMIT,
+            };
+            let response = self.send_bounded(request, &allowed, None, None, MAX_RETRIES)?;
+            if response.status == 404 {
+                continue;
+            }
+            if !(200..300).contains(&response.status) {
+                return Err(status_error(&response, &allowed));
+            }
+            let root: TrustedRoot = parse_json(&response.body)?;
+            return verify_trusted_root(root, pin);
+        }
+        Err(RemoteError::new(
+            "TRUSTED_ROOT_MISMATCH",
+            "skilld.dev serves no trusted root that this build pins",
+        ))
+    }
+
+    /// `/api/v1/trusted-roots/{rootKeyId}`, with the id percent-encoded.
+    fn trusted_root_url(&self, key_id: &str) -> Result<String, RemoteError> {
+        let mut url = self.service_url("/")?;
+        url.path_segments_mut()
+            .map_err(|()| RemoteError::new("INVALID_ENDPOINT", "the API route is invalid"))?
+            .clear()
+            .extend(["api", "v1", "trusted-roots", key_id]);
+        Ok(url.into())
     }
 
     /// Resolve one source, and request a new Resolution when one fails for a
@@ -3678,7 +3763,7 @@ fn unverifiable_artifact(error: RemoteError, source_url: &str) -> RemoteError {
             "The Skill did not cause this failure. skilld.dev is changing its signing key. Run the same command again in a minute.".to_owned()
         }
         "TRUSTED_ROOT_MISMATCH" | "TRUSTED_ROOT_INVALID" | "TRUSTED_ROOT_SIGNATURE_INVALID" => {
-            "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to run skilld upgrade, then run the same command again.".to_owned()
+            "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to upgrade skilld with npx skilld@latest or npm i -g skilld@latest. Then run the same command again.".to_owned()
         }
         "HTTP_TRANSPORT" | "SERVICE_UNAVAILABLE" | "RATE_LIMITED" | "CANCELLED" => return error,
         _ => format!(
@@ -3720,6 +3805,17 @@ struct Problem {
     status: u16,
     r#type: String,
     instance: Option<String>,
+}
+
+/// The error for a final response outside 2xx, in the shape its origin uses.
+fn status_error(response: &HttpResponse, allowed: &AllowedOrigin) -> RemoteError {
+    match allowed {
+        AllowedOrigin::Github | AllowedOrigin::GithubTarball | AllowedOrigin::GithubFile => {
+            github_error(response)
+        }
+        AllowedOrigin::Service(_) | AllowedOrigin::Artifact(_) => problem_error(response),
+        AllowedOrigin::Api(_) => api::api_problem_error(response),
+    }
 }
 
 fn problem_error(response: &HttpResponse) -> RemoteError {

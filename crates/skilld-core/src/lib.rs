@@ -28,9 +28,9 @@ pub use remote::{
     MAX_LINKED_BYTES, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
     ResolvedSource, SearchResponse, SearchResult, SignatureAlgorithm, SourceProvider, SourceRef,
     SourceRequest, SourceSelector, TrustedKey, TrustedKeyStatus, TrustedRoot, TrustedRootPin,
-    VerifiedArtifact, VerifiedTrustedRoot, declared_skill_name, parse_search_response,
-    prepare_unverified_files, skill_identity, verify_artifact, verify_attestation,
-    verify_linked_file, verify_trusted_root, with_linked_files,
+    TrustedRootPins, VerifiedArtifact, VerifiedTrustedRoot, declared_skill_name,
+    parse_search_response, prepare_unverified_files, skill_identity, verify_artifact,
+    verify_attestation, verify_linked_file, verify_trusted_root, with_linked_files,
 };
 use serde::{Deserialize, Serialize};
 pub use target::{

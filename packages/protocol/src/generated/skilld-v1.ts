@@ -96,8 +96,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get attestation verification keys */
+        /**
+         * Get attestation verification keys
+         * @description The root that skilld CLI releases before 3.7.0 pin. Later releases read `/api/v1/trusted-roots/{rootKeyId}`.
+         */
         get: operations["getTrustedRoot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trusted-roots/{rootKeyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the attestation verification keys of one root
+         * @description The CLI asks for each root it pins by its id, in pin order. A 404 means the service does not serve that root, and the CLI asks for the next pinned root.
+         */
+        get: operations["getTrustedRootByKeyId"];
         put?: never;
         post?: never;
         delete?: never;
@@ -574,6 +597,31 @@ export interface operations {
                     "application/json": components["schemas"]["TrustedRoot"];
                 };
             };
+            429: components["responses"]["Problem"];
+            503: components["responses"]["Problem"];
+        };
+    };
+    getTrustedRootByKeyId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rootKeyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active and overlapping verification keys that this root signed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedRoot"];
+                };
+            };
+            404: components["responses"]["Problem"];
             429: components["responses"]["Problem"];
             503: components["responses"]["Problem"];
         };

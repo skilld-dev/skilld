@@ -609,6 +609,33 @@ pub struct TrustedRootPin {
     pub public_key: String,
 }
 
+/// The trusted roots one skilld build pins, in the order skilld asks for them.
+///
+/// The primary root comes first. A backup root follows it only if the build
+/// pins one, so no build pins a backup without a primary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustedRootPins {
+    primary: TrustedRootPin,
+    backup: Option<TrustedRootPin>,
+}
+
+impl TrustedRootPins {
+    pub const fn new(primary: TrustedRootPin, backup: Option<TrustedRootPin>) -> Self {
+        Self { primary, backup }
+    }
+
+    /// The primary pin, then the backup pin.
+    pub fn iter(&self) -> impl Iterator<Item = &TrustedRootPin> {
+        std::iter::once(&self.primary).chain(self.backup.as_ref())
+    }
+}
+
+impl From<TrustedRootPin> for TrustedRootPins {
+    fn from(primary: TrustedRootPin) -> Self {
+        Self::new(primary, None)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedTrustedRoot(TrustedRoot);
 
