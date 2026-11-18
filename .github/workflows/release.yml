@@ -65,8 +65,43 @@ jobs:
             exit 1
           }
       - name: Require skilld.dev to serve both pinned roots
+        timeout-minutes: 5
         shell: bash
         run: |
+          probe="$(mktemp -d)"
+          trap 'rm -rf "$probe"' EXIT
+          # Resolve this release's public Skill through the deployed service.
+          # Both roots must verify the same attestation before any native build.
+          jq -n --arg commit "$GITHUB_SHA" \
+            '{source: {provider: "github", owner: "skilld-dev", repository: "skilld",
+              selector: {type: "path", path: "skills/skilld"}, ref: {type: "commit", value: $commit}}}' \
+            > "$probe/request.json"
+          status="$(curl --fail --silent --show-error --proto '=https' --max-time 30 \
+            --output "$probe/resolution.json" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' --header 'Skilld-Capabilities: linked-files' \
+            --header "Idempotency-Key: release-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --data-binary "@$probe/request.json" 'https://skilld.dev/api/v1/resolutions')"
+          [[ $status == 200 || $status == 202 ]]
+          resolution_id="$(jq -er '.resolutionId | select(test("^[A-Za-z0-9_-]{1,100}$"))' "$probe/resolution.json")"
+          for attempt in {1..60}; do
+            state="$(jq -er --arg id "$resolution_id" 'select(.resolutionId == $id) | .state' "$probe/resolution.json")"
+            if [[ $state == ready ]]; then
+              break
+            fi
+            [[ $state == pending ]]
+            sleep 2
+            status="$(curl --fail --silent --show-error --proto '=https' --max-time 30 \
+              --output "$probe/resolution.json" --write-out '%{http_code}' \
+              "https://skilld.dev/api/v1/resolutions/$resolution_id")"
+            [[ $status == 200 ]]
+          done
+          jq -e --arg commit "$GITHUB_SHA" --arg id "$resolution_id" \
+            'select(.state == "ready" and .resolutionId == $id)
+              | .artifact | select(.visibility == "public" and .artifactId == .attestation.artifactId)
+              | .attestation | select(.source.owner == "skilld-dev" and .source.repository == "skilld"
+                and .source.skillPath == "skills/skilld" and .source.commitSha == $commit
+                and .source.visibility == "public")' \
+            "$probe/resolution.json" > "$probe/attestation.json"
           # The CLI asks for each pinned root by its id. A root that skilld.dev
           # does not serve leaves the release with one root or none.
           require_served_root() (
@@ -87,7 +122,7 @@ jobs:
               exit 1
             fi
             cargo run --locked --quiet --package skilld-core --example verify-release-root \
-              -- "$body" "$key_id" "$public_key"
+              -- "$body" "$key_id" "$public_key" "$probe/attestation.json"
           )
           require_served_root SKILLD_ROOT_KEY_ID SKILLD_ROOT_PUBLIC_KEY
           require_served_root SKILLD_BACKUP_ROOT_KEY_ID SKILLD_BACKUP_ROOT_PUBLIC_KEY
