@@ -69,6 +69,17 @@ use output::{
 /// that answers in JSON; a test keeps it in step with `supports_json`.
 const JSON_COMMANDS_HELP: &str = "Agents: add --json to doctor, sync, search, run, update --check, view with a registry ref,\nbrowse, trending, tracks, index, curators, account, like, unlike, likes, watch,\nunwatch, watches, changes, stars, collection, and tokens. Read data when _tag is Success.\nOther commands answer in text. Add --plain to them for stable text.";
 
+/// How many Skills `skilld search` asks for without `--limit`.
+const DEFAULT_SEARCH_LIMIT: u8 = 20;
+
+/// Refuses a `--limit` skilld.dev would reject, before any request.
+fn search_limit(value: &str) -> Result<u8, &'static str> {
+    match value.parse() {
+        Ok(limit @ 1..=50) => Ok(limit),
+        _ => Err("give a number from 1 to 50"),
+    }
+}
+
 const DIRECT_SOURCE_GUIDANCE: &str = "--direct requires a github:OWNER/REPOSITORY/SKILL_PATH source or a GitHub tree URL. Remove --direct, then run the same command again.";
 
 #[derive(Debug, Parser)]
@@ -115,7 +126,12 @@ enum Command {
         global: bool,
     },
     /// Search for Skills.
-    Search { query: Vec<String> },
+    Search {
+        query: Vec<String>,
+        /// Skills to show, from 1 to 50. The default is 20.
+        #[arg(long, value_name = "N", value_parser = search_limit)]
+        limit: Option<u8>,
+    },
     /// Install a Skill, or restore the Skills in your lockfile.
     #[command(
         long_about = "Install a Skill, or restore the Skills in your lockfile.\n\nGive SOURCE as:\n  OWNER/REPOSITORY/SKILL\n      Install a hosted Artifact.\n  github:OWNER/REPOSITORY/SKILL_PATH\n  github:OWNER/REPOSITORY/SKILL_PATH#branch:BRANCH\n  github:OWNER/REPOSITORY/SKILL_PATH#tag:TAG\n  github:OWNER/REPOSITORY/SKILL_PATH#commit:SHA\n  https://github.com/OWNER/REPOSITORY/tree/REF/SKILL_PATH\n      Install a hosted Artifact from an explicit GitHub selector.\n      Add --direct to fetch a public GitHub Repository instead.\n  ./RELATIVE_PATH or ABSOLUTE_PATH\n      Install a local Skill.\n  skilld\n      Install the skilld-maintained Skill with --global.\n\nRun skilld install without SOURCE to restore .skills/skilld-lock.yaml.\nVerified remote Skills restore the exact locked Git commit.",
@@ -668,7 +684,11 @@ pub trait Host {
         ))
     }
 
-    fn search(&self, _query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
+    fn search(
+        &self,
+        _query: &str,
+        _limit: u8,
+    ) -> Result<skilld_core::SearchResponse, CommandError> {
         Err(CommandError::unsupported_host(
             "Skill search is unavailable on this host",
         ))
@@ -1966,7 +1986,7 @@ fn dispatch<H: Host>(
         } => host
             .config_list()
             .map(|lines| CommandOutput::Screen(Screen::new(lines))),
-        Command::Search { query } => {
+        Command::Search { query, limit } => {
             let query = query.join(" ").trim().to_owned();
             if query.is_empty() || query.len() > 200 {
                 return Err(CommandError::usage(
@@ -1974,7 +1994,7 @@ fn dispatch<H: Host>(
                     "Skill search needs a query up to 200 bytes",
                 ));
             }
-            let response = host.search(&query)?;
+            let response = host.search(&query, limit.unwrap_or(DEFAULT_SEARCH_LIMIT))?;
             let items = response
                 .items
                 .into_iter()
@@ -3463,9 +3483,9 @@ impl Host for LocalHost {
             .ok_or_else(|| CommandError::service("the skilld.dev API is unavailable in this build"))
     }
 
-    fn search(&self, query: &str) -> Result<skilld_core::SearchResponse, CommandError> {
+    fn search(&self, query: &str, limit: u8) -> Result<skilld_core::SearchResponse, CommandError> {
         self.remote_provider()?
-            .search(query, 20)
+            .search(query, limit)
             .map_err(CommandError::remote)
     }
 

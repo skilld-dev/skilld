@@ -99,6 +99,10 @@ npx skilld search vue
 npx skilld trending
 ```
 
+Search prints up to 20 Skills, which can be a lot to scan.
+Ask for fewer with `npx skilld search vue --limit 5`.
+The limit goes from 1 to 50.
+
 Every Skill page credits its author and links the source file on GitHub.
 [Curators](https://skilld.dev/community) publish collections of the Skills they use.
 
