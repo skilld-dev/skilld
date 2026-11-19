@@ -179,9 +179,32 @@ Set these GitHub Actions repository variables before creating a v3 tag:
 
 - `SKILLD_ROOT_KEY_ID`
 - `SKILLD_ROOT_PUBLIC_KEY`
+- `SKILLD_BACKUP_ROOT_KEY_ID`
+- `SKILLD_BACKUP_ROOT_PUBLIC_KEY`
 
-The public key must be the pinned Ed25519 root public key in canonical base64url form.
-Keep the root private key outside this repository and GitHub Actions.
+Each key id has 1 to 100 characters from `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, and `-`.
+Neither key id may be `skilld-root-2026`, whose private key is lost.
+Each public key must be a 32-byte Ed25519 root public key in canonical unpadded base64url.
+The backup root needs its own key id and its own key pair.
+Keep each root private key outside this repository and GitHub Actions.
+
+The CLI asks skilld.dev for the primary root at `/api/v1/trusted-roots/{rootKeyId}`.
+If skilld.dev answers 404, the CLI asks for the backup root.
+Any other failure stops verification.
+
+The release stops before it builds unless skilld.dev serves both roots.
+Each served root must have `version` 1, at least one key, and the `rootKeyId` and `rootPublicKey` of its variables.
+A redirect also stops the release.
+
+Preflight resolves `skills/skilld` from `skilld-dev/skilld` at the release commit through the deployed service.
+Both pinned roots must verify the returned Artifact attestation with the CLI's parser and verifier.
+An unknown signing key, invalid signature, or invalid signing window stops the release.
+If resolution fails, becomes blocked, or does not finish within the preflight deadline, the release stops.
+
+Keep every supported Artifact signing key available under both roots, including keys for existing Artifacts.
+Use the same signing key id, public key, validity window, and supported status under each root.
+Each root signs its own key statements with its own root private key.
+Before changing the deployed signer, publish its verification key under both roots.
 
 The release tag must match the root `package.json` version exactly.
 The CLI, native packages, and Harness use that same version.

@@ -24,7 +24,7 @@ use skilld_core::{
     InstallRequest, InstallScope, InstallSource, LinkedFile, ListedOrigin, ListedSkill,
     LockedSource, MultiSkillRef, PreparedFile, RemoteError, RemoteSelector, RepositoryVisibility,
     ResolvedSource, SearchResponse, SignatureAlgorithm, SourceProvider, SourceStatus,
-    TrustedRootPin, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
+    TrustedRootPin, TrustedRootPins, UpdatePlanItem, UpdatePlanV1, UpdateRelation,
 };
 
 const ROOT_DOMAIN: &[u8] = b"skilld-trusted-key-v1\0";
@@ -2334,7 +2334,7 @@ fn an_unknown_pending_stage_does_not_abort_the_resolution() {
     let remote = SkilldRemote::new(
         Arc::new(FakeHttp::with(responses)),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
@@ -2532,7 +2532,7 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
@@ -2549,7 +2549,10 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
     let requests = http.requests.lock().unwrap();
     assert_eq!(requests.len(), 4);
     assert!(requests[0].url.ends_with("/api/v1/resolutions"));
-    assert!(requests[1].url.ends_with("/api/v1/trusted-root"));
+    assert_eq!(
+        requests[1].url,
+        "http://127.0.0.1:8787/api/v1/trusted-roots/root-1"
+    );
     assert!(requests[2].url.contains("/api/v1/artifacts/"));
     assert!(requests[2].url.ends_with("/grants"));
     assert!(requests[2].headers.iter().any(|header| {
@@ -2561,18 +2564,314 @@ fn a_verified_remote_install_uses_resolution_root_grant_and_content_in_order() {
 
 fn linking_remote(
     responses: Vec<HttpResponse>,
-    pin: TrustedRootPin,
+    pins: impl Into<TrustedRootPins>,
 ) -> (Arc<FakeHttp>, SkilldRemote) {
     let http = Arc::new(FakeHttp::with(responses));
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pins.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
     .with_sleeper(Arc::new(NoSleep));
     (http, remote)
+}
+
+/// A pin for a root that the scripted site does not serve.
+fn unserved_pin(key_id: &str) -> TrustedRootPin {
+    TrustedRootPin {
+        key_id: key_id.to_owned(),
+        public_key: URL_SAFE_NO_PAD.encode(
+            SigningKey::from_bytes(&[3_u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        ),
+    }
+}
+
+/// What skilld.dev answers for a root id it does not serve.
+fn root_not_found() -> HttpResponse {
+    let mut answer = response(
+        404,
+        serde_json::to_vec(&json!({
+            "type": "https://skilld.dev/problems/source-not-found",
+            "title": "Source not found",
+            "status": 404,
+            "detail": "Trusted root not found",
+            "code": "SOURCE_NOT_FOUND"
+        }))
+        .unwrap(),
+    );
+    answer.headers.insert(
+        "content-type".to_owned(),
+        "application/problem+json".to_owned(),
+    );
+    answer
+}
+
+#[test]
+fn a_primary_root_that_skilld_dev_does_not_serve_falls_back_to_the_backup_root() {
+    let (backup, mut responses) = verified_remote_responses();
+    responses.insert(1, root_not_found());
+    let (http, remote) = linking_remote(
+        responses,
+        TrustedRootPins::new(unserved_pin("root-2026-11"), Some(backup)),
+    );
+
+    let prepared = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        prepared.source_status,
+        SourceStatus::Verified { .. }
+    ));
+    assert_eq!(
+        request_paths(&http)[1..3],
+        [
+            "/api/v1/trusted-roots/root-2026-11",
+            "/api/v1/trusted-roots/root-1"
+        ]
+    );
+}
+
+#[test]
+fn a_primary_root_failure_other_than_404_never_asks_for_the_backup_root() {
+    let failures = [
+        vec![response(403, b"forbidden".to_vec())],
+        vec![
+            response(503, b"unavailable".to_vec()),
+            response(503, b"unavailable".to_vec()),
+            response(503, b"unavailable".to_vec()),
+        ],
+    ];
+    for failure in failures {
+        let (backup, mut responses) = verified_remote_responses();
+        responses.splice(1..2, failure);
+        let (http, remote) = linking_remote(
+            responses,
+            TrustedRootPins::new(unserved_pin("root-2026-11"), Some(backup)),
+        );
+
+        let error = remote
+            .prepare(
+                &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+                false,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "SERVICE_UNAVAILABLE");
+        assert!(
+            request_paths(&http)
+                .iter()
+                .skip(1)
+                .all(|path| path == "/api/v1/trusted-roots/root-2026-11"),
+            "{:?}",
+            request_paths(&http)
+        );
+    }
+}
+
+#[test]
+fn a_served_primary_root_that_fails_verification_never_asks_for_the_backup_root() {
+    let (served, responses) = verified_remote_responses();
+    let primary = TrustedRootPin {
+        public_key: unserved_pin("root-1").public_key,
+        ..served
+    };
+    let (http, remote) = linking_remote(
+        responses,
+        TrustedRootPins::new(primary, Some(unserved_pin("root-backup"))),
+    );
+
+    let error = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "TRUSTED_ROOT_MISMATCH");
+    assert_eq!(request_paths(&http)[1..], ["/api/v1/trusted-roots/root-1"]);
+}
+
+#[test]
+fn a_primary_root_that_cannot_be_read_or_verified_never_asks_for_the_backup_root() {
+    let (backup, responses) = verified_remote_responses();
+    let (ready, backup_root) = (responses[0].clone(), responses[1].clone());
+    let transport = || {
+        Err(RemoteError::new(
+            "HTTP_TRANSPORT",
+            "the connection was reset",
+        ))
+    };
+    let mut redirect = response(302, Vec::new());
+    redirect.headers.insert(
+        "location".to_owned(),
+        "https://elsewhere.example/api/v1/trusted-roots/root-2026-11".to_owned(),
+    );
+    let cases = [
+        // skilld.dev serves the backup root at the primary path.
+        ("TRUSTED_ROOT_MISMATCH", vec![Ok(backup_root.clone())]),
+        (
+            "INVALID_RESPONSE",
+            vec![Ok(response(200, b"not json".to_vec()))],
+        ),
+        (
+            "HTTP_TRANSPORT",
+            vec![transport(), transport(), transport()],
+        ),
+        ("REMOTE_ORIGIN_REJECTED", vec![Ok(redirect)]),
+    ];
+    for (code, primary) in cases {
+        // The backup root stays queued, so a fall through would verify.
+        let queue = std::iter::once(Ok(ready.clone()))
+            .chain(primary)
+            .chain([Ok(backup_root.clone())])
+            .collect();
+        let http = Arc::new(FakeHttp {
+            responses: Mutex::new(queue),
+            ..FakeHttp::default()
+        });
+        let remote = SkilldRemote::new(
+            http.clone(),
+            Arc::new(NoTokenProvider),
+            NativeRemoteConfig::Pinned(TrustedRootPins::new(
+                unserved_pin("root-2026-11"),
+                Some(backup.clone()),
+            )),
+        )
+        .with_endpoint("http://127.0.0.1:8787")
+        .unwrap()
+        .with_sleeper(Arc::new(NoSleep));
+
+        let error = remote
+            .prepare(
+                &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+                false,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, code);
+        assert!(
+            !request_paths(&http).contains(&"/api/v1/trusted-roots/root-1".to_owned()),
+            "{code}: {:?}",
+            request_paths(&http)
+        );
+    }
+}
+
+#[test]
+fn every_pinned_root_unknown_to_skilld_dev_fails_closed_and_names_the_upgrade() {
+    let (_, responses) = verified_remote_responses();
+    let (http, remote) = linking_remote(
+        vec![responses[0].clone(), root_not_found(), root_not_found()],
+        TrustedRootPins::new(
+            unserved_pin("skilld root/2026"),
+            Some(unserved_pin("root-backup")),
+        ),
+    );
+
+    let error = remote
+        .prepare(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "TRUSTED_ROOT_MISMATCH");
+    assert_eq!(
+        error.next_step.as_deref(),
+        Some(
+            "Do not retry. This skilld build does not trust the skilld.dev keys. Tell the user to upgrade skilld with npx skilld@latest or npm i -g skilld@latest. Then run the same command again."
+        )
+    );
+    assert_eq!(
+        request_paths(&http)[1..],
+        [
+            "/api/v1/trusted-roots/skilld%20root%2F2026",
+            "/api/v1/trusted-roots/root-backup"
+        ]
+    );
+}
+
+#[test]
+fn an_update_check_that_trusts_no_served_root_names_the_upgrade() {
+    let (_, responses) = verified_remote_responses();
+    let (_, remote) = linking_remote(
+        vec![responses[0].clone(), root_not_found()],
+        unserved_pin("root-2026-11"),
+    );
+
+    let error = remote
+        .latest_commit(
+            &RemoteSelector::parse("skilld-dev/skills/example").unwrap(),
+            false,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "TRUSTED_ROOT_MISMATCH");
+    assert!(
+        error
+            .next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("npx skilld@latest")),
+        "{:?}",
+        error.next_step
+    );
+}
+
+#[test]
+fn a_build_pins_its_primary_root_then_its_backup_root() {
+    let pin = |key_id: &str, public_key: &str| TrustedRootPin {
+        key_id: key_id.to_owned(),
+        public_key: public_key.to_owned(),
+    };
+
+    assert_eq!(
+        NativeRemoteConfig::from_build_variables(
+            Some("root-a"),
+            Some("key-a"),
+            Some("root-b"),
+            Some("key-b")
+        ),
+        NativeRemoteConfig::Pinned(TrustedRootPins::new(
+            pin("root-a", "key-a"),
+            Some(pin("root-b", "key-b"))
+        ))
+    );
+    assert_eq!(
+        NativeRemoteConfig::from_build_variables(Some("root-a"), Some("key-a"), None, Some("")),
+        NativeRemoteConfig::Pinned(pin("root-a", "key-a").into())
+    );
+}
+
+#[test]
+fn a_build_with_part_of_a_root_pin_is_unconfigured() {
+    let unconfigured = [
+        (None, None, None, None),
+        (Some(""), Some(""), None, None),
+        (Some("root-a"), None, None, None),
+        (None, None, Some("root-b"), Some("key-b")),
+        (Some("root-a"), Some("key-a"), Some("root-b"), None),
+        (Some("root-a"), Some("key-a"), Some(""), Some("key-b")),
+    ];
+    for (root_key_id, root_public_key, backup_key_id, backup_public_key) in unconfigured {
+        assert_eq!(
+            NativeRemoteConfig::from_build_variables(
+                root_key_id,
+                root_public_key,
+                backup_key_id,
+                backup_public_key
+            ),
+            NativeRemoteConfig::Unconfigured,
+            "{root_key_id:?} {root_public_key:?} {backup_key_id:?} {backup_public_key:?}"
+        );
+    }
 }
 
 #[test]
@@ -2654,7 +2953,7 @@ fn prepared_with_page_header(header: Option<&str>) -> Option<String> {
     let remote = SkilldRemote::new(
         Arc::new(FakeHttp::with(responses)),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
@@ -2746,7 +3045,7 @@ fn a_public_grant_may_serve_content_from_a_service_subdomain() {
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("https://skilld.dev")
     .unwrap()
@@ -2796,7 +3095,7 @@ fn artifact_download_errors_preserve_problem_details_and_http_fallbacks() {
         let remote = SkilldRemote::new(
             Arc::new(FakeHttp::with(responses)),
             Arc::new(NoTokenProvider),
-            NativeRemoteConfig::Pinned(pin),
+            NativeRemoteConfig::Pinned(pin.into()),
         )
         .with_endpoint("https://skilld.dev")
         .unwrap()
@@ -2820,7 +3119,7 @@ fn a_public_grant_on_an_unrelated_origin_is_rejected_before_download() {
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("https://skilld.dev")
     .unwrap()
@@ -2853,7 +3152,7 @@ fn a_private_grant_refuses_public_access_without_an_account() {
     let remote = SkilldRemote::new(
         Arc::new(FakeHttp::with(responses)),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("https://skilld.dev")
     .unwrap()
@@ -2889,7 +3188,7 @@ fn a_private_artifact_download_sends_the_account_and_one_time_grant() {
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(FixedToken),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
@@ -3097,7 +3396,7 @@ fn prepare_exact_keeps_a_matching_selector_commit_as_provenance() {
     let remote = SkilldRemote::new(
         http.clone(),
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()
@@ -5082,7 +5381,7 @@ fn pinned_remote(
     SkilldRemote::new(
         http,
         Arc::new(NoTokenProvider),
-        NativeRemoteConfig::Pinned(pin),
+        NativeRemoteConfig::Pinned(pin.into()),
     )
     .with_endpoint("http://127.0.0.1:8787")
     .unwrap()

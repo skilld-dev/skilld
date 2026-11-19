@@ -196,6 +196,9 @@ paths:
       operationId: getTrustedRoot
       tags: [Trust]
       summary: Get attestation verification keys
+      description: >-
+        The root that skilld CLI releases before 3.7.0 pin. Later releases
+        read `/api/v1/trusted-roots/{rootKeyId}`.
       security:
         - {}
       responses:
@@ -205,6 +208,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrustedRoot'
+        '429':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/trusted-roots/{rootKeyId}:
+    get:
+      operationId: getTrustedRootByKeyId
+      tags: [Trust]
+      summary: Get the attestation verification keys of one root
+      description: >-
+        The CLI asks for each root it pins by its id, in pin order. A 404 means
+        the service does not serve that root, and the CLI asks for the next
+        pinned root.
+      security:
+        - {}
+      parameters:
+        - name: rootKeyId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        '200':
+          description: Active and overlapping verification keys that this root signed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustedRoot'
+        '404':
+          $ref: '#/components/responses/Problem'
         '429':
           $ref: '#/components/responses/Problem'
         '503':

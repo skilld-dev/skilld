@@ -13,6 +13,8 @@ on:
 env:
   SKILLD_ROOT_KEY_ID: ${{ vars.SKILLD_ROOT_KEY_ID }}
   SKILLD_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_ROOT_PUBLIC_KEY }}
+  SKILLD_BACKUP_ROOT_KEY_ID: ${{ vars.SKILLD_BACKUP_ROOT_KEY_ID }}
+  SKILLD_BACKUP_ROOT_PUBLIC_KEY: ${{ vars.SKILLD_BACKUP_ROOT_PUBLIC_KEY }}
   SKILLD_RELEASE_PUBLIC_KEY: ${{ vars.SKILLD_RELEASE_PUBLIC_KEY }}
 
 jobs:
@@ -26,21 +28,105 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
-      - name: Require the trusted root
+      - name: Require the trusted roots
         shell: bash
         run: |
-          test -n "$SKILLD_ROOT_KEY_ID" || {
-            echo 'SKILLD_ROOT_KEY_ID is required.' >&2
+          # Root key ids use only unreserved URL characters, so a URL path
+          # holds them without encoding.
+          id_pattern='^[A-Za-z0-9._~-]{1,100}$'
+          # 32 bytes in canonical unpadded base64url: 43 characters, and the
+          # last one leaves its two padding bits unset.
+          key_pattern='^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$'
+          for root in SKILLD_ROOT SKILLD_BACKUP_ROOT; do
+            key_id_name="${root}_KEY_ID"
+            public_key_name="${root}_PUBLIC_KEY"
+            key_id="${!key_id_name}"
+            public_key="${!public_key_name}"
+            if [[ ! $key_id =~ $id_pattern || $key_id == . || $key_id == .. ]]; then
+              echo "$key_id_name must be 1 to 100 characters from A-Z, a-z, 0-9, '.', '_', '~', and '-'." >&2
+              exit 1
+            fi
+            if [[ $key_id == skilld-root-2026 ]]; then
+              echo "$key_id_name names skilld-root-2026. Its private key is lost." >&2
+              exit 1
+            fi
+            if [[ ! $public_key =~ $key_pattern ]]; then
+              echo "$public_key_name must be a 32-byte Ed25519 public key in canonical unpadded base64url." >&2
+              exit 1
+            fi
+          done
+          if [[ $SKILLD_BACKUP_ROOT_KEY_ID == "$SKILLD_ROOT_KEY_ID" \
+            || $SKILLD_BACKUP_ROOT_PUBLIC_KEY == "$SKILLD_ROOT_PUBLIC_KEY" ]]; then
+            echo 'The backup root must have its own key id and public key.' >&2
             exit 1
-          }
-          test -n "$SKILLD_ROOT_PUBLIC_KEY" || {
-            echo 'SKILLD_ROOT_PUBLIC_KEY is required.' >&2
-            exit 1
-          }
+          fi
           test -n "$SKILLD_RELEASE_PUBLIC_KEY" || {
             echo 'SKILLD_RELEASE_PUBLIC_KEY is required. Run node scripts/release/release-signing.mjs generate-key.' >&2
             exit 1
           }
+      - name: Require skilld.dev to serve both pinned roots
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          probe="$(mktemp -d)"
+          trap 'rm -rf "$probe"' EXIT
+          # Resolve this release's public Skill through the deployed service.
+          # Both roots must verify the same attestation before any native build.
+          jq -n --arg commit "$GITHUB_SHA" \
+            '{source: {provider: "github", owner: "skilld-dev", repository: "skilld",
+              selector: {type: "path", path: "skills/skilld"}, ref: {type: "commit", value: $commit}}}' \
+            > "$probe/request.json"
+          status="$(curl --fail --silent --show-error --proto '=https' --max-time 30 \
+            --output "$probe/resolution.json" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' --header 'Skilld-Capabilities: linked-files' \
+            --header "Idempotency-Key: release-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --data-binary "@$probe/request.json" 'https://skilld.dev/api/v1/resolutions')"
+          [[ $status == 200 || $status == 202 ]]
+          resolution_id="$(jq -er '.resolutionId | select(test("^[A-Za-z0-9_-]{1,100}$"))' "$probe/resolution.json")"
+          for attempt in {1..60}; do
+            state="$(jq -er --arg id "$resolution_id" 'select(.resolutionId == $id) | .state' "$probe/resolution.json")"
+            if [[ $state == ready ]]; then
+              break
+            fi
+            [[ $state == pending ]]
+            sleep 2
+            status="$(curl --fail --silent --show-error --proto '=https' --max-time 30 \
+              --output "$probe/resolution.json" --write-out '%{http_code}' \
+              "https://skilld.dev/api/v1/resolutions/$resolution_id")"
+            [[ $status == 200 ]]
+          done
+          jq -e --arg commit "$GITHUB_SHA" --arg id "$resolution_id" \
+            'select(.state == "ready" and .resolutionId == $id)
+              | .artifact | select(.visibility == "public" and .artifactId == .attestation.artifactId)
+              | .attestation | select(.source.owner == "skilld-dev" and .source.repository == "skilld"
+                and .source.skillPath == "skills/skilld" and .source.commitSha == $commit
+                and .source.visibility == "public")' \
+            "$probe/resolution.json" > "$probe/attestation.json"
+          # The CLI asks for each pinned root by its id. A root that skilld.dev
+          # does not serve leaves the release with one root or none.
+          require_served_root() (
+            local key_id_name="$1" public_key_name="$2"
+            local key_id="${!key_id_name}" public_key="${!public_key_name}"
+            local body status
+            body="$probe/$key_id_name.json"
+            # No --location: a redirect fails this check.
+            status="$(curl --fail --silent --show-error --proto '=https' \
+              --retry 3 --max-time 30 --output "$body" --write-out '%{http_code}' \
+              "https://skilld.dev/api/v1/trusted-roots/$key_id")" || {
+              echo "skilld.dev does not serve the trusted root $key_id from $key_id_name." >&2
+              exit 1
+            }
+            if [[ $status != 200 ]]; then
+              echo "skilld.dev answered HTTP $status for the trusted root $key_id from $key_id_name." >&2
+              exit 1
+            fi
+          )
+          require_served_root SKILLD_ROOT_KEY_ID SKILLD_ROOT_PUBLIC_KEY
+          require_served_root SKILLD_BACKUP_ROOT_KEY_ID SKILLD_BACKUP_ROOT_PUBLIC_KEY
+          cargo run --locked --quiet --package skilld-core --example verify-release-root \
+            -- "$probe/SKILLD_ROOT_KEY_ID.json" "$SKILLD_ROOT_KEY_ID" "$SKILLD_ROOT_PUBLIC_KEY" \
+            "$probe/attestation.json" \
+            "$probe/SKILLD_BACKUP_ROOT_KEY_ID.json" "$SKILLD_BACKUP_ROOT_KEY_ID" "$SKILLD_BACKUP_ROOT_PUBLIC_KEY"
       - id: matrix
         name: Read native package matrix
         shell: bash
