@@ -127,6 +127,7 @@ enum Command {
     },
     /// Search for Skills.
     Search {
+        /// The search text, up to 200 bytes.
         query: Vec<String>,
         /// Skills to show, from 1 to 50. The default is 20.
         #[arg(long, value_name = "N", value_parser = search_limit)]
@@ -272,6 +273,7 @@ enum Command {
     },
     /// Remove an installed Skill.
     Remove {
+        /// The installed Skill name.
         skill: String,
         /// Remove a Skill from the global scope.
         #[arg(short = 'g', long)]
@@ -279,6 +281,7 @@ enum Command {
     },
     /// Update installed Skills to their current source commit.
     Update {
+        /// One installed Skill name. Without it, every installed Skill updates.
         skill: Option<String>,
         /// Check update relations without changing files.
         #[arg(long)]
@@ -301,7 +304,10 @@ enum Command {
         allow: Vec<String>,
     },
     /// Verify a Skill source and report its source status.
-    Verify { skill: Option<String> },
+    Verify {
+        /// One installed Skill name. Without it, skilld verifies every Skill in this project.
+        skill: Option<String>,
+    },
     /// Report outdated and unmanaged Skills.
     Outdated {
         /// Check both scopes and every Agent target directory.
@@ -359,6 +365,7 @@ enum Command {
         after_long_help = "Examples:\n  skilld index vercel-labs/agent-skills\n  skilld index https://github.com/vercel-labs/agent-skills"
     )]
     Index {
+        /// The Repository as OWNER/REPOSITORY or a https://github.com URL.
         #[arg(value_name = "REPOSITORY")]
         repository: String,
     },
@@ -475,12 +482,15 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AuthCommand {
+    /// Log in to your skilld.dev account.
     Login {
         /// Print the authorization URL without launching a browser.
         #[arg(long)]
         no_browser: bool,
     },
+    /// Show whether you are logged in, and as which account.
     Status,
+    /// Log out and remove the stored sign-in.
     Logout,
 }
 
@@ -491,8 +501,10 @@ enum AccountCommand {
         long_about = "Change one account setting.\n\nKEY and VALUE:\n  email ADDRESS\n      The address skilld emails. It takes effect at once.\n  digest on|off\n      The email that reports changes to your watched Repositories.\n  weekly on|off\n      The weekly email: Skills you liked that changed, plus what trended.\n  likes-public on|off\n      Whether anyone can read your liked Skills at /@LOGIN/liked.\n  repository-indexing on|off\n      Whether skilld.dev may scan your public Repositories for Skills."
     )]
     Set {
+        /// The setting, such as digest.
         #[arg(value_name = "KEY")]
         key: String,
+        /// The new value, such as off.
         #[arg(value_name = "VALUE")]
         value: String,
     },
@@ -570,8 +582,19 @@ enum TokensCommand {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
-    Get { key: String },
-    Set { key: String, value: String },
+    /// Print one configuration value.
+    Get {
+        /// agent.targets or install.mode.
+        key: String,
+    },
+    /// Save one configuration value for later commands.
+    Set {
+        /// agent.targets or install.mode.
+        key: String,
+        /// Agent target ids separated by commas, or copy or symlink for install.mode.
+        value: String,
+    },
+    /// Print every configuration value.
     List,
 }
 
@@ -5084,6 +5107,35 @@ mod tests {
                 assert!(!named(argv[0]), "help must not name {}", argv[0]);
             }
         }
+    }
+
+    /// Every visible command and argument says what it is in --help.
+    #[test]
+    fn help_describes_every_command_and_argument() {
+        fn blanks(command: &clap::Command, path: &str, found: &mut Vec<String>) {
+            if command.get_about().is_none() && command.get_long_about().is_none() {
+                found.push(path.to_owned());
+            }
+            for argument in command.get_arguments() {
+                let id = argument.get_id().as_str();
+                if argument.is_hide_set() || id == "help" || id == "version" {
+                    continue;
+                }
+                if argument.get_help().is_none() && argument.get_long_help().is_none() {
+                    found.push(format!("{path} {id}"));
+                }
+            }
+            for subcommand in command.get_subcommands().filter(|c| !c.is_hide_set()) {
+                blanks(
+                    subcommand,
+                    &format!("{path} {}", subcommand.get_name()),
+                    found,
+                );
+            }
+        }
+        let mut found = Vec::new();
+        blanks(&Cli::command(), "skilld", &mut found);
+        assert!(found.is_empty(), "help without a description: {found:?}");
     }
 
     struct RecordingHost;
