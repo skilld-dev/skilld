@@ -623,8 +623,10 @@ fn plain_parse_errors_escape_record_delimiters_and_terminal_formatting() {
 
     assert_eq!(exit, 2);
     assert!(stdout.is_empty());
-    assert_eq!(stderr.lines().count(), 1);
-    assert!(stderr.contains("INVALID_ARGUMENT:"));
+    let lines = stderr.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert!(lines[0].starts_with("INVALID_ARGUMENT:"));
+    assert!(lines[1].starts_with("Next step: "));
     assert!(stderr.contains("\\u{0085}"));
     assert!(stderr.contains("\\u{202E}"));
     assert!(stderr.contains("\\rforged\\nline"));
@@ -650,6 +652,50 @@ fn json_parse_errors_keep_the_typed_error_contract_for_untrusted_arguments() {
         error["error"]["message"],
         "unexpected argument '--unknown\u{0085}\u{202e}\rforged"
     );
+}
+
+#[test]
+fn plain_parse_errors_are_one_record_with_a_next_step() {
+    let (exit, stdout, stderr) = run(&["skilld", "serch", "vue", "--plain"], PLAIN);
+
+    assert_eq!((exit, stdout.as_str()), (2, ""));
+    assert_eq!(
+        stderr,
+        "INVALID_ARGUMENT: unrecognized subcommand 'serch'\n\
+         Next step: Did you mean search? Fix the arguments, then run the same command again. skilld --help lists them.\n"
+    );
+    assert!(!stderr.contains("\\n"));
+}
+
+#[test]
+fn json_parse_errors_name_the_suggestion_and_the_missing_detail() {
+    let cases: &[(&[&str], &str, &str)] = &[
+        (
+            &["skilld", "search", "vue", "--lmit", "3", "--json"],
+            "unexpected argument '--lmit' found",
+            "Did you mean --limit? Fix the arguments, then run the same command again. skilld search --help lists them.",
+        ),
+        (
+            &["skilld", "config", "get", "--json"],
+            "the following required arguments were not provided: <KEY>",
+            "Fix the arguments, then run the same command again. skilld config --help lists them.",
+        ),
+        (
+            &["skilld", "browse", "--sort", "x", "--json"],
+            "invalid value 'x' for '--sort <ORDER>' [possible values: stars, likes, updated]",
+            "Fix the arguments, then run the same command again. skilld browse --help lists them.",
+        ),
+    ];
+    for (args, message, next_step) in cases {
+        let (exit, stdout, stderr) = run(args, PLAIN);
+
+        assert_eq!((exit, stdout.as_str()), (2, ""), "{args:?}");
+        let error = serde_json::from_str::<serde_json::Value>(&stderr).unwrap();
+        assert_eq!(error["_tag"], "UsageError", "{args:?}");
+        assert_eq!(error["error"]["code"], "INVALID_ARGUMENT", "{args:?}");
+        assert_eq!(error["error"]["message"], *message, "{args:?}");
+        assert_eq!(error["error"]["nextStep"], *next_step, "{args:?}");
+    }
 }
 
 #[test]

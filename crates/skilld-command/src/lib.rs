@@ -28,7 +28,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::builder::styling::{AnsiColor, Styles};
-use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
+use clap::{CommandFactory, Parser, Subcommand};
 pub use config::{ConfigStore, LocalConfig};
 pub use local_store::{
     AllowTransaction, LocalStore, PreparedStoreInstall, PreparedStoreUpdate, ResolvedTarget,
@@ -1130,30 +1131,12 @@ where
                         error.to_string().trim(),
                     )
                 } else {
-                    let message = error
-                        .to_string()
-                        .lines()
-                        .next()
-                        .unwrap_or("invalid command arguments")
-                        .trim_start_matches("error: ")
-                        .to_owned();
-                    render_error(
-                        &CommandError::usage("INVALID_ARGUMENT", message),
-                        requested_mode,
-                    )
+                    render_error(&parse_error(&error, &args, requested_mode), requested_mode)
                 }
             } else if display || matches!(requested_mode, OutputMode::Human { .. }) {
                 terminal_safe_clap_text(&args, error.kind(), requested_mode).into_bytes()
             } else {
-                let message = error
-                    .to_string()
-                    .trim()
-                    .trim_start_matches("error: ")
-                    .to_owned();
-                render_error(
-                    &CommandError::usage("INVALID_ARGUMENT", message),
-                    requested_mode,
-                )
+                render_error(&parse_error(&error, &args, requested_mode), requested_mode)
             };
             if target.write_all(&rendered).is_err() {
                 return CommandResult {
@@ -1409,6 +1392,73 @@ fn terminal_safe_clap_text(
         }
     }
     safe
+}
+
+/// A parse error as one record: Clap's summary and the name it would suggest.
+fn parse_error(error: &clap::Error, args: &[OsString], mode: OutputMode) -> CommandError {
+    let text = error.to_string();
+    let summary = text
+        .split("\n\n")
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches("error: ");
+    let message = if mode == OutputMode::JsonV1 {
+        // Detail from Clap's context, so a raw newline in an argument stays out.
+        let first = summary.lines().next().unwrap_or_default();
+        match parse_error_detail(error) {
+            Some(detail) => format!("{first} {detail}"),
+            None => first.to_owned(),
+        }
+    } else {
+        // Clap's indented detail joins the summary line.
+        summary.replace("\n  ", " ")
+    };
+    let message = if message.is_empty() {
+        "invalid command arguments".to_owned()
+    } else {
+        message
+    };
+    let suggestion = [
+        ContextKind::SuggestedSubcommand,
+        ContextKind::SuggestedArg,
+        ContextKind::SuggestedValue,
+    ]
+    .into_iter()
+    .find_map(|kind| match error.get(kind) {
+        Some(ContextValue::String(name)) => Some(name.clone()),
+        Some(ContextValue::Strings(names)) if !names.is_empty() => Some(names.join(" or ")),
+        _ => None,
+    });
+    let help = format!("{} --help", display_path(args));
+    let next_step = match suggestion {
+        Some(name) => format!(
+            "Did you mean {name}? Fix the arguments, then run the same command again. {help} lists them."
+        ),
+        None => format!("Fix the arguments, then run the same command again. {help} lists them."),
+    };
+    CommandError {
+        next_step: Some(next_step),
+        ..CommandError::usage("INVALID_ARGUMENT", message)
+    }
+}
+
+/// The names Clap lists under its summary: missing arguments or valid values.
+fn parse_error_detail(error: &clap::Error) -> Option<String> {
+    let names = |kind| match error.get(kind) {
+        Some(ContextValue::Strings(names)) if !names.is_empty() => Some(names.join(", ")),
+        _ => None,
+    };
+    match error.kind() {
+        ErrorKind::MissingRequiredArgument => names(ContextKind::InvalidArg),
+        ErrorKind::InvalidValue => {
+            names(ContextKind::ValidValue).map(|values| format!("[possible values: {values}]"))
+        }
+        ErrorKind::MissingSubcommand => {
+            names(ContextKind::ValidSubcommand).map(|values| format!("[subcommands: {values}]"))
+        }
+        _ => None,
+    }
 }
 
 fn terminal_safe_argument(argument: &OsString) -> OsString {
