@@ -18,7 +18,17 @@ function usage(message) {
   process.exit(2)
 }
 
-const EXTENSIONS = { javascript: 'js', typescript: 'ts', shell: 'sh', bash: 'sh', zsh: 'sh', console: 'sh', yml: 'yaml', jsonc: 'json', markdown: 'md' }
+const EXTENSIONS = {
+  javascript: 'js',
+  typescript: 'ts',
+  shell: 'sh',
+  bash: 'sh',
+  zsh: 'sh',
+  console: 'sh',
+  yml: 'yaml',
+  jsonc: 'json',
+  markdown: 'md',
+}
 // A path comment: `// a/b.ts`, `# a/b.sh`, `-- a.sql`, `/* a.css */`, or `<!-- a.vue -->`. The path needs an extension.
 const PATH_COMMENT = /^\s*(?:\/\/|#|--|\/\*|<!--)\s*([\w@.\-/[\]]+\.\w+)\s*(?:(?:\*\/|-->)\s*)?$/
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})\s*([\w+-]*)/
@@ -35,7 +45,10 @@ function parseArgs(argv) {
     const split = pair.indexOf('=')
     if (split <= 0)
       usage('--replace needs FROM=TO.')
-    replacements.push([pair.slice(0, split), pair.slice(split + 1)])
+    replacements.push([
+      pair.slice(0, split),
+      pair.slice(split + 1),
+    ])
   }
   return { file, out, replacements }
 }
@@ -53,7 +66,11 @@ function fencedBlocks(markdown) {
     let end = start
     while (end < lines.length && !new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(lines[end]))
       end++
-    blocks.push({ line: start + 1, lang: lang.toLowerCase(), body: lines.slice(start, end).join('\n') })
+    blocks.push({
+      line: start + 1,
+      lang: lang.toLowerCase(),
+      body: lines.slice(start, end).join('\n'),
+    })
     index = end
   }
   return blocks
@@ -85,8 +102,15 @@ for (const [index, block] of fencedBlocks(markdown).entries()) {
   const content = replacements.reduce((text, [from, to]) => text.replaceAll(from, to), block.body)
   const destination = join(out, String(number), target.path)
   await mkdir(dirname(destination), { recursive: true })
-  await writeFile(destination, content.endsWith('\n') ? content : `${content}\n`)
-  manifest.push({ block: number, line: block.line, lang: block.lang, file: join(String(number), target.path) })
+  await writeFile(destination, content.endsWith('\n')
+    ? content
+    : `${content}\n`)
+  manifest.push({
+    block: number,
+    line: block.line,
+    lang: block.lang,
+    file: join(String(number), target.path),
+  })
   process.stderr.write(`block ${number} line ${block.line} ${block.lang || '-'} -> ${join(String(number), target.path)}\n`)
 }
 await mkdir(out, { recursive: true })

@@ -58,14 +58,25 @@ it('refuses to stage a release when the signing key does not match the pinned pu
   const other = generateReleaseKey()
 
   await assert.rejects(
-    stageRelease({ packagesRoot: '/nonexistent', outputRoot: '/nonexistent', version: '3.1.0', seed: signer.seed, publicKey: other.publicKey }),
+    stageRelease({
+      packagesRoot: '/nonexistent',
+      outputRoot: '/nonexistent',
+      version: '3.1.0',
+      seed: signer.seed,
+      publicKey: other.publicKey,
+    }),
     /does not match SKILLD_RELEASE_PUBLIC_KEY/,
   )
 })
 
 it('rejects a changed manifest', () => {
   const { seed, publicKey } = generateReleaseKey()
-  const manifest = buildReleaseManifest('3.1.0', [{ name: 'skilld-cli-darwin-arm64', bytes: Buffer.from('a') }])
+  const manifest = buildReleaseManifest('3.1.0', [
+    {
+      name: 'skilld-cli-darwin-arm64',
+      bytes: Buffer.from('a'),
+    },
+  ])
   const signature = signReleaseManifest(manifest, seed)
 
   assert.ok(verifyReleaseSignature(manifest, signature, publicKey))

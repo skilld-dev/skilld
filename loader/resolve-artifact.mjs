@@ -24,7 +24,9 @@ export function nativePackage(runtime) {
 export async function selectArtifact(runtime, resolvePackage) {
   const packageName = nativePackage(runtime)
   if (packageName) {
-    const file = runtime.platform === 'win32' ? 'bin/skilld.exe' : 'bin/skilld'
+    const file = runtime.platform === 'win32'
+      ? 'bin/skilld.exe'
+      : 'bin/skilld'
     const executable = await resolvePackage(packageName, file)
     if (executable)
       return { _tag: 'Native', executable }

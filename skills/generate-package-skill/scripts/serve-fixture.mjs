@@ -33,7 +33,14 @@ function parseSeconds(flag, value) {
 }
 
 function parseArgs(argv) {
-  const options = { fetch: [], headers: {}, out: undefined, hold: undefined, timeout: 120, command: [] }
+  const options = {
+    fetch: [],
+    headers: {},
+    out: undefined,
+    hold: undefined,
+    timeout: 120,
+    command: [],
+  }
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]
     if (flag === '--') {
@@ -44,11 +51,18 @@ function parseArgs(argv) {
     if (value === undefined)
       usage(`${flag} needs a value.`)
     if (flag === '--fetch' || flag === '--fetch-raw') {
-      options.fetch.push({ path: value.startsWith('/') ? value : `/${value}`, raw: flag === '--fetch-raw' })
+      options.fetch.push({
+        path: value.startsWith('/')
+          ? value
+          : `/${value}`,
+        raw: flag === '--fetch-raw',
+      })
     }
     else if (flag === '--header') {
       const split = value.indexOf(':')
-      const name = split > 0 ? value.slice(0, split).trim().toLowerCase() : ''
+      const name = split > 0
+        ? value.slice(0, split).trim().toLowerCase()
+        : ''
       if (!name || !value.slice(split + 1).trim())
         usage('--header needs NAME: VALUE, such as \'User-Agent: Googlebot/2.1\'.')
       options.headers[name] = value.slice(split + 1).trim()
@@ -113,7 +127,12 @@ const [command, ...args] = options.command.map(part => part.replaceAll('{port}',
 const child = spawn(command, args, {
   detached: true,
   stdio: ['ignore', 2, 2],
-  env: { ...process.env, PORT: String(port), NITRO_PORT: String(port), NUXT_PORT: String(port) },
+  env: {
+    ...process.env,
+    PORT: String(port),
+    NITRO_PORT: String(port),
+    NUXT_PORT: String(port),
+  },
 })
 let exited = false
 const exit = new Promise((resolve) => {
@@ -150,7 +169,10 @@ function stop() {
     if (child.pid === undefined)
       return
     signalGroup('SIGTERM')
-    await Promise.race([exit, delay(5000)])
+    await Promise.race([
+      exit,
+      delay(5000),
+    ])
     // Kill any group member that ignored SIGTERM or outlived the leader.
     kill()
   })()
@@ -196,11 +218,21 @@ const responses = []
 // node:http, because `fetch` silently replaces a `Host` header with the origin's host.
 function get(path, raw, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(`${origin}${path}`, { headers: { accept: raw ? '*/*' : 'text/html', ...options.headers }, signal: AbortSignal.timeout(timeoutMs) }, (response) => {
+    const req = httpRequest(`${origin}${path}`, {
+      headers: {
+        accept: raw ? '*/*' : 'text/html',
+        ...options.headers,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    }, (response) => {
       const chunks = []
       response.on('data', chunk => chunks.push(chunk))
       response.once('error', reject)
-      response.once('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }))
+      response.once('end', () => resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        body: Buffer.concat(chunks),
+      }))
     })
     req.once('error', reject)
     req.end()
@@ -215,7 +247,14 @@ async function fetchPath({ path, raw }) {
     const file = fileName(path, contentType)
     await mkdir(options.out, { recursive: true })
     await writeFile(join(options.out, file), body)
-    responses.push({ path, file, status, contentType, bytes: body.byteLength, headers })
+    responses.push({
+      path,
+      file,
+      status,
+      contentType,
+      bytes: body.byteLength,
+      headers,
+    })
     await writeFile(join(options.out, 'responses.json'), `${JSON.stringify(responses, null, 2)}\n`)
   }
   else {
@@ -243,8 +282,14 @@ async function run() {
       status = 1
     })
   }
-  if (options.fetch.length === 0 || options.hold !== undefined)
-    await Promise.race([exit, options.hold === undefined ? new Promise(() => {}) : delay(options.hold * 1000)])
+  if (options.fetch.length === 0 || options.hold !== undefined) {
+    await Promise.race([
+      exit,
+      options.hold === undefined
+        ? new Promise(() => {})
+        : delay(options.hold * 1000),
+    ])
+  }
   return status
 }
 

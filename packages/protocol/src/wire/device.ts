@@ -26,7 +26,12 @@ export const DeviceStartResponseSchema = z.object({
 })
 
 export const DevicePollResponseSchema = z.object({
-  status: z.enum(['pending', 'authorized', 'expired', 'denied']),
+  status: z.enum([
+    'pending',
+    'authorized',
+    'expired',
+    'denied',
+  ]),
   tokens: TokenResponseSchema.optional(),
 })
 

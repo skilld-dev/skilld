@@ -14,28 +14,28 @@ onlyBuiltDependencies:
   - esbuild
 
 catalog:
-  '@ai-sdk/harness': ^1.0.128
-  '@ai-sdk/provider-utils': ^5.0.36
+  '@ai-sdk/harness': ^1.0.195
+  '@ai-sdk/provider-utils': ^5.0.85
   '@arethetypeswrong/cli': ^0.18.5
-  '@redocly/cli': ^2.51.0
+  '@redocly/cli': ^2.84.0
   '@rollup/plugin-replace': ^6.0.3
   '@typescript/native': npm:typescript@7.0.2
-  bumpp: ^12.2.3
+  bumpp: ^12.3.0
   openapi-typescript: ^7.13.0
-  publint: ^0.3.24
+  publint: ^0.3.25
   typescript: npm:@typescript/typescript6@^6.0.2
-  vite: 7.3.1
-  yaml: ^2.9.0
-  zod: ^4.5.4
+  vite: 8.4.0
+  yaml: ^2.9.1
+  zod: ^4.6.7
 
 catalogs:
   dev-build:
-    '@types/node': ^26.4.1
-    obuild: ^0.4.39
-    tsdown: ^0.22.14
-    tsx: ^4.23.13
+    '@types/node': ^26.6.11
+    obuild: ^0.4.45
+    tsdown: ^0.23.7
+    tsx: ^4.23.15
   dev-lint:
-    '@antfu/eslint-config': ^9.5.1
-    eslint: ^10.9.1
+    '@antfu/eslint-config': ^10.0.0
+    eslint: ^10.15.0
   dev-test:
-    vitest: ^4.1.11
+    vitest: ^5.1.2

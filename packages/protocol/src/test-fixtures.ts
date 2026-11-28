@@ -39,7 +39,14 @@ export const fixtures = {
       id: 'antfu/skills/motion-v',
       audits: [
         { provider: 'skills.sh', slug: 'static', status: 'pass' },
-        { provider: 'skills.sh', slug: 'deps', status: 'warn', summary: 'wildcard import', riskLevel: 'medium', categories: ['imports'] },
+        {
+          provider: 'skills.sh',
+          slug: 'deps',
+          status: 'warn',
+          summary: 'wildcard import',
+          riskLevel: 'medium',
+          categories: ['imports'],
+        },
       ],
       source: 'skills.sh',
       fetchedAt: '2026-05-13T00:00:00.000Z',
@@ -130,7 +137,12 @@ export const fixtures = {
       windowStart: 1_715_500_000,
       windowEnd: 1_715_600_000,
       entries: [
-        { repo: 'antfu/skills', skill: 'vue', at: '2026-05-13T00:00:00.000Z', summary: 'Added Pinia composables.' },
+        {
+          repo: 'antfu/skills',
+          skill: 'vue',
+          at: '2026-05-13T00:00:00.000Z',
+          summary: 'Added Pinia composables.',
+        },
       ],
     },
   },

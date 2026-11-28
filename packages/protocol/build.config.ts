@@ -13,16 +13,18 @@ export default defineBuildConfig({
       ],
       outDir: './dist',
       rolldown: {
-        plugins: [{
-          name: 'escape-environment-pattern',
-          generateBundle(_options, bundle) {
+        plugins: [
+          {
+            name: 'escape-environment-pattern',
+            generateBundle(_options, bundle) {
             // Nitro replaces this text inside strings. Preserve its runtime value.
-            for (const output of Object.values(bundle)) {
-              if (output.type === 'chunk')
-                output.code = output.code.replaceAll('"import.meta.env"', '["import.", "meta.env"].join("")')
-            }
+              for (const output of Object.values(bundle)) {
+                if (output.type === 'chunk')
+                  output.code = output.code.replaceAll('"import.meta.env"', '["import.", "meta.env"].join("")')
+              }
+            },
           },
-        }],
+        ],
       },
     },
   ],

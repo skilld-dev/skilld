@@ -29,5 +29,7 @@ export function syncCargoVersion(operation) {
   writeFileSync(manifest, setCargoWorkspaceVersion(readFileSync(manifest, 'utf8'), state.newVersion))
   execFileSync('cargo', ['update', '--workspace', '--offline'], { cwd: options.cwd, stdio: 'inherit' })
   // bumpp commits only updatedFiles. Hook-written files must join that commit explicitly.
-  operation.update({ updatedFiles: [...state.updatedFiles, manifest, lockfile] })
+  operation.update({
+    updatedFiles: [...state.updatedFiles, manifest, lockfile],
+  })
 }

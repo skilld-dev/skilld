@@ -12,6 +12,12 @@ describe('constants are canonical tuples', () => {
   })
 
   it('source kinds cover npm, gh, crate, collection, curator', () => {
-    expect(new Set(SOURCE_KINDS)).toEqual(new Set(['npm', 'gh', 'crate', 'collection', 'curator']))
+    expect(new Set(SOURCE_KINDS)).toEqual(new Set([
+      'npm',
+      'gh',
+      'crate',
+      'collection',
+      'curator',
+    ]))
   })
 })

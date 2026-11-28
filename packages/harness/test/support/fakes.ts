@@ -7,9 +7,9 @@ import type {
 } from '@ai-sdk/harness'
 import type { Experimental_SandboxSession } from '@ai-sdk/provider-utils'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -166,6 +166,30 @@ async function createSandboxSession(onDestroy: () => void): Promise<HarnessV1Net
     async writeTextFile({ path, content, encoding = 'utf8' }) {
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, content, { encoding: encoding as BufferEncoding })
+    },
+    async stat({ path }) {
+      const info = await stat(resolve(root, path)).catch(error => (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : Promise.reject(error))
+      if (info === null)
+        return null
+      return {
+        type: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other',
+        size: info.size,
+      }
+    },
+    async listDirectory({ path }) {
+      const entries = await readdir(resolve(root, path), { withFileTypes: true }).catch(error => (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : Promise.reject(error))
+      if (entries === null)
+        return null
+      return entries.map(entry => ({
+        name: entry.name,
+        type: entry.isSymbolicLink() ? 'symlink' : entry.isFile() ? 'file' : entry.isDirectory() ? 'directory' : 'other',
+      }))
+    },
+    async deleteFile({ path }) {
+      return unlink(resolve(root, path)).then(
+        () => true,
+        error => (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : Promise.reject(error),
+      )
     },
     async run({ command, workingDirectory, env, abortSignal }) {
       const result = await execFileAsync('/bin/sh', ['-c', command], {
