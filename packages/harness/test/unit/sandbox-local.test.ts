@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -122,6 +122,28 @@ describe('local sandbox processes', () => {
       await session.destroy()
     }
   })
+
+  it('writes to stdin when requested and closes stdin otherwise', async () => {
+    const session = await createLocalSandbox().createSession()
+    try {
+      const writable = await session.spawn({ command: 'cat', stdin: true })
+      const writer = writable.stdin.getWriter()
+      await writer.write(new TextEncoder().encode('from-stdin'))
+      await writer.close()
+      const [stdout, exit] = await Promise.all([readStream(writable.stdout), writable.wait()])
+      expect(stdout).toBe('from-stdin')
+      expect(exit.exitCode).toBe(0)
+
+      const closed = await session.spawn({ command: 'cat' })
+      expect('stdin' in closed).toBe(false)
+      const [closedStdout, closedExit] = await Promise.all([readStream(closed.stdout), closed.wait()])
+      expect(closedStdout).toBe('')
+      expect(closedExit.exitCode).toBe(0)
+    }
+    finally {
+      await session.destroy()
+    }
+  })
 })
 
 describe('local sandbox files', () => {
@@ -168,6 +190,36 @@ describe('local sandbox files', () => {
     try {
       await session.writeBinaryFile({ path: join(root, 'bytes.bin'), content: Uint8Array.from([1, 2, 3]) })
       await expect(session.readBinaryFile({ path: join(root, 'bytes.bin') })).resolves.toEqual(Uint8Array.from([1, 2, 3]))
+    }
+    finally {
+      await session.destroy()
+    }
+  })
+
+  it('stats, lists, and deletes files, directories, and symlinks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skilld-sandbox-test-'))
+    const session = await createLocalSandbox({ root }).createSession()
+    try {
+      await session.writeTextFile({ path: 'dir/note.txt', content: 'hello' })
+      await symlink(join(root, 'dir/note.txt'), join(root, 'dir/link.txt'))
+
+      await expect(session.stat({ path: 'dir/note.txt' })).resolves.toEqual({ type: 'file', size: 5 })
+      await expect(session.stat({ path: 'dir/link.txt' })).resolves.toEqual({ type: 'file', size: 5 })
+      await expect(session.stat({ path: 'dir' })).resolves.toMatchObject({ type: 'directory' })
+      await expect(session.stat({ path: 'missing.txt' })).resolves.toBeNull()
+
+      const entries = await session.listDirectory({ path: 'dir' })
+      expect(entries?.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+        { name: 'link.txt', type: 'symlink' },
+        { name: 'note.txt', type: 'file' },
+      ])
+      await expect(session.listDirectory({ path: 'missing-dir' })).resolves.toBeNull()
+      await expect(session.listDirectory({ path: 'dir/note.txt' })).rejects.toThrow()
+
+      await expect(session.deleteFile({ path: 'dir/link.txt' })).resolves.toBe(true)
+      await expect(session.stat({ path: 'dir/note.txt' })).resolves.toEqual({ type: 'file', size: 5 })
+      await expect(session.deleteFile({ path: 'dir/link.txt' })).resolves.toBe(false)
+      await expect(session.deleteFile({ path: 'dir' })).rejects.toThrow()
     }
     finally {
       await session.destroy()

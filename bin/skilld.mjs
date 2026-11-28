@@ -22,7 +22,9 @@ function resolvePackage(packageName, file) {
 async function main() {
   const artifact = await selectArtifact({
     arch: process.arch,
-    libc: process.platform === 'linux' ? detectLibc() : undefined,
+    libc: process.platform === 'linux'
+      ? detectLibc()
+      : undefined,
     platform: process.platform,
   }, resolvePackage)
 

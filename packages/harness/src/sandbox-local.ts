@@ -1,11 +1,12 @@
 import type { HarnessV1NetworkSandboxSession, HarnessV1PortEndpoint, HarnessV1SandboxProvider } from '@ai-sdk/harness'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessByStdio } from 'node:child_process'
+import type { Readable as NodeReadable, Writable as NodeWritable } from 'node:stream'
 import { spawn as spawnChildProcess } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { constants, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { Readable } from 'node:stream'
+import { dirname, join, resolve } from 'node:path'
+import { Readable, Writable } from 'node:stream'
 
 /**
  * The local sandbox runs real processes on this computer.
@@ -94,14 +95,19 @@ function sessionEnvironment(
 /** The file and process surface the Harness hands to Skill code. */
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession['restricted']>
 type SandboxProcessOptions = Parameters<SandboxSession['run']>[0]
-type SandboxProcess = Awaited<ReturnType<SandboxSession['spawn']>>
+type SandboxSpawnOptions = SandboxProcessOptions & { readonly stdin?: boolean }
+type SandboxSpawnOptionsWithStdin = SandboxProcessOptions & { readonly stdin: true }
+type SandboxSpawnOptionsWithoutStdin = SandboxProcessOptions & { readonly stdin?: false }
+type WritableSandboxProcess = Extract<Awaited<ReturnType<SandboxSession['spawn']>>, { readonly stdin: WritableStream<Uint8Array> }>
+type SandboxProcess = Omit<WritableSandboxProcess, 'stdin'>
+type ManagedChildProcess = ChildProcessByStdio<NodeWritable | null, NodeReadable, NodeReadable>
 
 const { signals } = constants
 
 /** The processes one session started, so that `stop` can reach all of them. */
 interface SessionProcesses {
   /** Processes that have not closed yet. */
-  readonly live: Set<ChildProcessWithoutNullStreams>
+  readonly live: Set<ManagedChildProcess>
   /**
    * Group identifiers, kept after the leader exits. A command like
    * `agent &` leaves the shell dead and the agent alive in the same group.
@@ -127,7 +133,7 @@ function killProcessGroup(pid: number): void {
 }
 
 /** Terminate a child's group, and the child alone if it leads no group. */
-function killChild(child: ChildProcessWithoutNullStreams): void {
+function killChild(child: ManagedChildProcess): void {
   if (child.pid === undefined)
     return
   try {
@@ -170,8 +176,8 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-interface StartedProcess {
-  readonly handle: SandboxProcess
+interface StartedProcess<Handle extends SandboxProcess = SandboxProcess> {
+  readonly handle: Handle
   /** Resolves with the exit code even when the caller aborted the process. */
   readonly exited: Promise<{ exitCode: number }>
 }
@@ -181,7 +187,7 @@ interface StartedProcess {
  * The listener is removed on close so that a shared signal does not collect
  * one listener for every process the session runs.
  */
-function watchAbort(child: ChildProcessWithoutNullStreams, abortSignal: AbortSignal): Promise<never> {
+function watchAbort(child: ManagedChildProcess, abortSignal: AbortSignal): Promise<never> {
   return new Promise<never>((_, reject) => {
     const onAbort = (): void => {
       killChild(child)
@@ -197,26 +203,48 @@ function watchAbort(child: ChildProcessWithoutNullStreams, abortSignal: AbortSig
 }
 
 function startProcess(
-  options: SandboxProcessOptions,
+  options: SandboxSpawnOptionsWithStdin,
   root: string,
   environment: Readonly<Record<string, string>>,
   processes: SessionProcesses,
-): StartedProcess {
-  // The process leads its own group so that killing it also kills what it
-  // started. The OpenCode bridge starts OpenCode, which starts more processes.
-  const child = spawnChildProcess('/bin/sh', ['-c', options.command], {
-    cwd: options.workingDirectory ?? root,
+): StartedProcess<WritableSandboxProcess>
+function startProcess(
+  options: SandboxSpawnOptionsWithoutStdin,
+  root: string,
+  environment: Readonly<Record<string, string>>,
+  processes: SessionProcesses,
+): StartedProcess<SandboxProcess>
+function startProcess(
+  options: SandboxSpawnOptions,
+  root: string,
+  environment: Readonly<Record<string, string>>,
+  processes: SessionProcesses,
+): StartedProcess<SandboxProcess | WritableSandboxProcess>
+function startProcess(
+  options: SandboxSpawnOptions,
+  root: string,
+  environment: Readonly<Record<string, string>>,
+  processes: SessionProcesses,
+): StartedProcess<SandboxProcess | WritableSandboxProcess> {
+  const openStdin = options.stdin === true
+  const spawnOptions = {
+    cwd: options.workingDirectory === undefined ? root : resolve(root, options.workingDirectory),
     env: { ...environment, ...options.env },
     detached: true,
-  })
+  }
+  // The process leads its own group so that killing it also kills what it
+  // started. The OpenCode bridge starts OpenCode, which starts more processes.
+  const child: ManagedChildProcess = openStdin
+    ? spawnChildProcess('/bin/sh', ['-c', options.command], { ...spawnOptions, stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawnChildProcess('/bin/sh', ['-c', options.command], { ...spawnOptions, stdio: ['ignore', 'pipe', 'pipe'] })
   processes.live.add(child)
   if (child.pid !== undefined)
     processes.groups.add(child.pid)
 
-  const exited = new Promise<{ exitCode: number }>((resolve) => {
+  const exited = new Promise<{ exitCode: number }>((resolveExit) => {
     child.once('close', (code, signal) => {
       processes.live.delete(child)
-      resolve({ exitCode: code ?? (signal === null ? 1 : 128 + (signals[signal] ?? 0)) })
+      resolveExit({ exitCode: code ?? (signal === null ? 1 : 128 + (signals[signal] ?? 0)) })
     })
   })
 
@@ -231,24 +259,42 @@ function startProcess(
   // The abort rejection is reported through `wait`. Nothing else observes it.
   aborted?.catch(() => {})
 
-  return {
-    exited,
-    handle: {
-      pid: child.pid,
-      stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-      stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
-      wait: () => aborted === undefined ? exited : Promise.race([exited, aborted]),
-      kill,
-    },
+  const baseHandle: SandboxProcess = {
+    pid: child.pid,
+    stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
+    wait: () => aborted === undefined ? exited : Promise.race([exited, aborted]),
+    kill,
   }
+
+  if (openStdin && child.stdin !== null) {
+    return {
+      exited,
+      handle: {
+        ...baseHandle,
+        stdin: Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+      },
+    }
+  }
+
+  return { exited, handle: baseHandle }
 }
 
 function createSandboxSession(root: string, environment: Readonly<Record<string, string>>, processes: SessionProcesses): SandboxSession {
+  const resolvePath = (path: string): string => resolve(root, path)
+
   const readBinaryFile = async ({ path }: { path: string }): Promise<Uint8Array | null> =>
-    readFile(path).then(
+    readFile(resolvePath(path)).then(
       value => Uint8Array.from(value),
       cause => errorCode(cause) === 'ENOENT' ? null : Promise.reject(cause),
     )
+
+  async function spawn(options: SandboxSpawnOptionsWithStdin): Promise<WritableSandboxProcess>
+  async function spawn(options: SandboxSpawnOptionsWithoutStdin): Promise<SandboxProcess>
+  async function spawn(options: SandboxSpawnOptions): Promise<SandboxProcess | WritableSandboxProcess>
+  async function spawn(options: SandboxSpawnOptions): Promise<SandboxProcess | WritableSandboxProcess> {
+    return startProcess(options, root, environment, processes).handle
+  }
 
   return {
     description: `Local sandbox rooted at ${root}. POSIX sh, real processes, a session home directory, no process isolation.`,
@@ -267,7 +313,7 @@ function createSandboxSession(root: string, environment: Readonly<Record<string,
     },
 
     async readTextFile({ path, encoding = 'utf8', startLine, endLine }) {
-      const content = await readFile(path, { encoding: encoding as BufferEncoding })
+      const content = await readFile(resolvePath(path), { encoding: encoding as BufferEncoding })
         .catch(cause => errorCode(cause) === 'ENOENT' ? null : Promise.reject(cause))
       if (content === null || (startLine === undefined && endLine === undefined))
         return content
@@ -276,23 +322,59 @@ function createSandboxSession(root: string, environment: Readonly<Record<string,
     },
 
     async writeFile({ path, content }) {
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, Buffer.from(await readStream(content), 'utf8'))
+      const target = resolvePath(path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, Buffer.from(await readStream(content), 'utf8'))
     },
 
     async writeBinaryFile({ path, content }) {
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, content)
+      const target = resolvePath(path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, content)
     },
 
     async writeTextFile({ path, content, encoding = 'utf8' }) {
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, content, { encoding: encoding as BufferEncoding })
+      const target = resolvePath(path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, content, { encoding: encoding as BufferEncoding })
     },
 
-    async spawn(options) {
-      return startProcess(options, root, environment, processes).handle
+    async stat({ path }) {
+      const info = await stat(resolvePath(path))
+        .catch(cause => errorCode(cause) === 'ENOENT' ? null : Promise.reject(cause))
+      if (info === null)
+        return null
+      return {
+        type: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other',
+        size: info.size,
+      }
     },
+
+    async listDirectory({ path }) {
+      const entries = await readdir(resolvePath(path), { withFileTypes: true })
+        .catch(cause => errorCode(cause) === 'ENOENT' ? null : Promise.reject(cause))
+      if (entries === null)
+        return null
+      return entries.map(entry => ({
+        name: entry.name,
+        type: entry.isSymbolicLink()
+          ? 'symlink'
+          : entry.isFile()
+            ? 'file'
+            : entry.isDirectory()
+              ? 'directory'
+              : 'other',
+      }))
+    },
+
+    async deleteFile({ path }) {
+      return unlink(resolvePath(path)).then(
+        () => true,
+        cause => errorCode(cause) === 'ENOENT' ? false : Promise.reject(cause),
+      )
+    },
+
+    spawn,
 
     async run(options) {
       // An aborted `run` reports the exit code of the killed process.

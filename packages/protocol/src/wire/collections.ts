@@ -53,7 +53,10 @@ export const ChangeEntrySchema = z.object({
  * `lastDigestAt` watermark when persisting; reads `entries` for rendering.
  */
 export const DigestResponseSchema = z.object({
-  user: z.object({ id: z.number(), login: z.string() }).optional(),
+  user: z.object({
+    id: z.number(),
+    login: z.string(),
+  }).optional(),
   windowStart: z.number(),
   windowEnd: z.number(),
   entries: z.array(ChangeEntrySchema),

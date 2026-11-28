@@ -236,7 +236,10 @@ async function writeNativePackage(root, spec) {
     cpu: [spec.cpu],
     files: [`bin/${spec.executable}`],
     publishConfig: spec.executableMode
-      ? { access: 'public', executableFiles: [`bin/${spec.executable}`] }
+      ? {
+          access: 'public',
+          executableFiles: [`bin/${spec.executable}`],
+        }
       : { access: 'public' },
   }
   if (spec.libc)
@@ -252,9 +255,18 @@ async function writeNativePackage(root, spec) {
 async function writeReleaseManifests(root, sharedVersion, protocolVersion) {
   await writeFile(join(root, 'Cargo.toml'), `[workspace.package]\nversion = "${sharedVersion}"\n`)
   const manifests = [
-    ['package.json', { name: 'skilld', version: sharedVersion }],
-    ['packages/harness/package.json', { name: 'skilld-harness', version: sharedVersion }],
-    ['packages/protocol/package.json', { name: 'skilld-protocol', version: protocolVersion }],
+    [
+      'package.json',
+      { name: 'skilld', version: sharedVersion },
+    ],
+    [
+      'packages/harness/package.json',
+      { name: 'skilld-harness', version: sharedVersion },
+    ],
+    [
+      'packages/protocol/package.json',
+      { name: 'skilld-protocol', version: protocolVersion },
+    ],
     ...nativePackageSpecs.map(spec => [
       `packages/${spec.directory}/package.json`,
       { name: spec.packageName, version: sharedVersion },
@@ -270,13 +282,17 @@ function executableBytes(format, cpu) {
   if (format === 'elf') {
     const bytes = Buffer.alloc(20)
     Buffer.from([0x7F, 0x45, 0x4C, 0x46, 2, 1, 1, 0]).copy(bytes)
-    bytes.writeUInt16LE(cpu === 'arm64' ? 0xB7 : 0x3E, 18)
+    bytes.writeUInt16LE(cpu === 'arm64'
+      ? 0xB7
+      : 0x3E, 18)
     return bytes
   }
   if (format === 'mach-o') {
     const bytes = Buffer.alloc(8)
     Buffer.from([0xCF, 0xFA, 0xED, 0xFE]).copy(bytes)
-    bytes.writeUInt32LE(cpu === 'arm64' ? 0x0100000C : 0x01000007, 4)
+    bytes.writeUInt32LE(cpu === 'arm64'
+      ? 0x0100000C
+      : 0x01000007, 4)
     return bytes
   }
 
@@ -284,6 +300,8 @@ function executableBytes(format, cpu) {
   bytes.write('MZ')
   bytes.writeUInt32LE(64, 0x3C)
   bytes.write('PE\0\0', 64, 'binary')
-  bytes.writeUInt16LE(cpu === 'arm64' ? 0xAA64 : 0x8664, 68)
+  bytes.writeUInt16LE(cpu === 'arm64'
+    ? 0xAA64
+    : 0x8664, 68)
   return bytes
 }

@@ -52,7 +52,10 @@ const ruleSchema = z.strictObject({
   substrings: z.array(pattern).default([]),
   fences: z.array(pattern).default([]),
   tools: z.array(pattern).default([]),
-  codepoints: z.array(z.tuple([z.string(), z.string()])).default([]),
+  codepoints: z.array(z.tuple([
+    z.string(),
+    z.string(),
+  ])).default([]),
   executable: z.boolean().default(false),
   extensions: z.array(pattern).default([]),
 })
@@ -76,7 +79,10 @@ export function behaviorRules(): readonly BehaviorRule[] {
   parsed ??= documentSchema.parse(rawRules).behaviors.map(rule => ({
     ...rule,
     ranges: rule.codepoints.map(([start, end]) => {
-      const range: [number, number] = [Number.parseInt(start, 16), Number.parseInt(end, 16)]
+      const range: [number, number] = [
+        Number.parseInt(start, 16),
+        Number.parseInt(end, 16),
+      ]
       if (range.some(Number.isNaN))
         throw new Error(`behavior ${rule.id} has a codepoint range that is not hexadecimal`)
       return range
@@ -109,7 +115,17 @@ export function detectBehaviors(files: readonly BehaviorFile[]): Behavior[] {
   }
   return rules.flatMap((rule, index) => {
     const { locations, total } = found[index]!
-    return total > 0 ? [{ id: rule.id, tier: rule.tier, label: rule.label, locations, total }] : []
+    return total > 0
+      ? [
+          {
+            id: rule.id,
+            tier: rule.tier,
+            label: rule.label,
+            locations,
+            total,
+          },
+        ]
+      : []
   })
 }
 
@@ -140,10 +156,14 @@ function scanText(
   raw: string,
   record: (index: number, path: string, line: number | null) => void,
 ): void {
-  const text = raw.startsWith('\uFEFF') ? raw.slice(1) : raw
+  const text = raw.startsWith('\uFEFF')
+    ? raw.slice(1)
+    : raw
   const markdown = isMarkdown(path)
   const lines = rustLines(text)
-  const frontmatter = path === 'SKILL.md' ? frontmatterEnd(lines) : 0
+  const frontmatter = path === 'SKILL.md'
+    ? frontmatterEnd(lines)
+    : 0
   const fence: { open?: Fence } = {}
   const list = { open: false }
   const prose = openProse()
@@ -183,7 +203,9 @@ function lineMatches(rule: BehaviorRule, line: string, code: string[], facts: Li
 }
 
 function toolMatches(pattern: string, tool: string): boolean {
-  return pattern.endsWith('*') ? tool.startsWith(pattern.slice(0, -1)) : tool === pattern
+  return pattern.endsWith('*')
+    ? tool.startsWith(pattern.slice(0, -1))
+    : tool === pattern
 }
 
 function isMarkdown(path: string): boolean {
@@ -196,7 +218,9 @@ function frontmatterEnd(lines: string[]): number {
   if (lines.length === 0 || trimEnd(lines[0]!) !== '---')
     return 0
   const close = lines.findIndex((line, index) => index > 0 && trimEnd(line) === '---')
-  return close < 0 ? 0 : close + 1
+  return close < 0
+    ? 0
+    : close + 1
 }
 
 /**
@@ -300,31 +324,98 @@ interface Prose {
 }
 
 /** One-word prohibitions. */
-const PROHIBITIONS = new Set(['dont', 'don\'t', 'never', 'avoid', 'mustn\'t', 'shouldn\'t'])
+const PROHIBITIONS = new Set([
+  'dont',
+  'don\'t',
+  'never',
+  'avoid',
+  'mustn\'t',
+  'shouldn\'t',
+])
 
 /** Words that negate the code span right after them, as in "no `curl | bash`". */
-const NEGATIONS = new Set(['no', 'not', 'never', 'avoid', 'dont', 'don\'t'])
+const NEGATIONS = new Set([
+  'no',
+  'not',
+  'never',
+  'avoid',
+  'dont',
+  'don\'t',
+])
 
 /** Words that prohibit when `not` or `never` follows. */
 const MODALS = new Set(['do', 'must', 'should'])
 
 /** A prohibition of one of these words asks for the action, as in "don't forget to run". */
-const REQUESTS = new Set(['forget', 'hesitate', 'skip', 'miss', 'omit', 'worry', 'panic', 'mind'])
+const REQUESTS = new Set([
+  'forget',
+  'hesitate',
+  'skip',
+  'miss',
+  'omit',
+  'worry',
+  'panic',
+  'mind',
+])
 
 /** A table cell that opens with one of these words rejects the code in the other cells of its row. */
-const ROW_REJECTIONS = new Set(['rejected', 'blocked', 'block', 'deny', 'denied', 'forbidden', 'never', 'disallowed'])
+const ROW_REJECTIONS = new Set([
+  'rejected',
+  'blocked',
+  'block',
+  'deny',
+  'denied',
+  'forbidden',
+  'never',
+  'disallowed',
+])
 
 /** Characters that end a verdict: a cell edge, punctuation, or a dash. */
-const VERDICT_ENDS = new Set(['|', ';', ',', '.', ':', '!', '(', '-', '\u2013', '\u2014'])
+const VERDICT_ENDS = new Set([
+  '|',
+  ';',
+  ',',
+  '.',
+  ':',
+  '!',
+  '(',
+  '-',
+  '\u2013',
+  '\u2014',
+])
 
 /** A heading that opens with one of these words rejects the code in its section. */
-const SECTION_REJECTIONS = new Set(['forbidden', 'never', 'rejected', 'blocked', 'antipattern', 'antipatterns'])
+const SECTION_REJECTIONS = new Set([
+  'forbidden',
+  'never',
+  'rejected',
+  'blocked',
+  'antipattern',
+  'antipatterns',
+])
 
 /** A sentence with one of these words names an exception or a condition, so its code still counts. */
-const EXCEPTIONS = new Set(['unless', 'except', 'without', 'instead', 'but', 'only', 'if', 'when', 'whenever', 'while'])
+const EXCEPTIONS = new Set([
+  'unless',
+  'except',
+  'without',
+  'instead',
+  'but',
+  'only',
+  'if',
+  'when',
+  'whenever',
+  'while',
+])
 
 function openProse(): Prose {
-  return { negated: false, opening: true, leadIn: false, list: undefined, rejecting: undefined }
+  return {
+    negated: false,
+    opening: true,
+    leadIn: false,
+    list: undefined,
+    rejecting: undefined,
+  }
 }
 
 /** A fenced block closes the sentence, the lead-in, and the list. The section goes on. */
@@ -347,13 +438,17 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
     prose.opening = true
     return
   }
-  const level = indent <= 3 ? headingLevel(characters, indent) : 0
+  const level = indent <= 3
+    ? headingLevel(characters, indent)
+    : 0
   const heading = level > 0
   const table = characters[indent] === '|'
   // A heading at the same level or above ends the section a rejecting heading opened.
   if (heading && prose.rejecting !== undefined && level <= prose.rejecting)
     prose.rejecting = undefined
-  const item = heading || table ? 0 : listMarker(characters, indent)
+  const item = heading || table
+    ? 0
+    : listMarker(characters, indent)
   if (heading || table) {
     prose.list = undefined
     prose.leadIn = false
@@ -383,7 +478,9 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
   const spans: Array<{ text: string, sentence: number, cell: number, negated: boolean }> = []
   const exceptions = [false]
   // Per table cell: whether it opens with a rejection, and whether it names an exception.
-  const cells = [{ rejects: false, excepts: false }]
+  const cells = [
+    { rejects: false, excepts: false },
+  ]
   let cellOpening = table
   // A dash ends the section's rejection for the rest of its sentence: "❌ X — use `Y`".
   let dashed = false
@@ -396,11 +493,18 @@ function proseLine(line: string, prose: Prose, facts: LineFacts): void {
     if (index % 2 === 1) {
       prose.opening = false
       cellOpening = false
-      spans.push({ text: segment, sentence: exceptions.length - 1, cell: cells.length - 1, negated: prose.negated || governed || NEGATIONS.has(before) || (section && !dashed) })
+      spans.push({
+        text: segment,
+        sentence: exceptions.length - 1,
+        cell: cells.length - 1,
+        negated: prose.negated || governed || NEGATIONS.has(before) || (section && !dashed),
+      })
       before = ''
       return
     }
-    const text = [...segment].slice(index === 0 ? indent + item : 0)
+    const text = [...segment].slice(index === 0
+      ? indent + item
+      : 0)
     const last = index === segments.length - 1
     let at = 0
     while (at < text.length) {
@@ -484,7 +588,9 @@ function headingLevel(characters: string[], at: number): number {
   while (characters[at + run] === '#')
     run++
   const after = characters[at + run]
-  return run >= 1 && run <= 6 && (after === undefined || after === ' ' || after === '\t') ? run : 0
+  return run >= 1 && run <= 6 && (after === undefined || after === ' ' || after === '\t')
+    ? run
+    : 0
 }
 
 /**
@@ -506,7 +612,9 @@ function standsAlone(text: string[], end: number, last: boolean): boolean {
   let at = end
   while (at < text.length && (isWhitespace(text[at]!) || text[at] === '*' || text[at] === '_' || text[at] === '~'))
     at++
-  return at === text.length ? last : VERDICT_ENDS.has(text[at]!)
+  return at === text.length
+    ? last
+    : VERDICT_ENDS.has(text[at]!)
 }
 
 /** Whether a heading that opens with this word rejects its section: "Never", "Do not", "What not to do", "Anti-patterns". */
@@ -517,7 +625,9 @@ function rejectsSection(word: string, text: string[], end: number): boolean {
     return ['pattern', 'patterns'].includes(nextWord(text, end + 1)[0])
   const [next, afterNext] = nextWord(text, end)
   // A label colon still asks: "DON'T: Forget to set the delegate".
-  const asks = (at: number): boolean => REQUESTS.has(nextWord(text, text[at] === ':' ? at + 1 : at)[0])
+  const asks = (at: number): boolean => REQUESTS.has(nextWord(text, text[at] === ':'
+    ? at + 1
+    : at)[0])
   if (word === 'dont' || word === 'don\'t')
     return !asks(end)
   if (word === 'do' && next === 'not')
@@ -557,10 +667,15 @@ function readWord(text: string[], at: number): [string, number] {
   let end = at
   let word = ''
   while (end < text.length && (isAsciiAlphanumeric(text[end]!) || text[end] === '\'' || text[end] === '’')) {
-    word += text[end] === '’' ? '\'' : text[end]!
+    word += text[end] === '’'
+      ? '\''
+      : text[end]!
     end++
   }
-  return [asciiLower(word.replace(/'+$/, '')), end]
+  return [
+    asciiLower(word.replace(/'+$/, '')),
+    end,
+  ]
 }
 
 /** The next word after emphasis and whitespace, or '' when something else comes first. */
@@ -568,7 +683,9 @@ function nextWord(text: string[], at: number): [string, number] {
   let start = at
   while (start < text.length && (isWhitespace(text[start]!) || text[start] === '*' || text[start] === '_' || text[start] === '~'))
     start++
-  return start < text.length && isAsciiAlphanumeric(text[start]!) ? readWord(text, start) : ['', start]
+  return start < text.length && isAsciiAlphanumeric(text[start]!)
+    ? readWord(text, start)
+    : ['', start]
 }
 
 function opensProhibition(word: string, text: string[], end: number): boolean {
@@ -581,7 +698,16 @@ function opensProhibition(word: string, text: string[], end: number): boolean {
 }
 
 /** Closing marks that may follow the end of a sentence, as in `**Never.**` or `(see below.)`. */
-const CLOSERS = new Set(['*', '_', ')', ']', '"', '\'', '\u2019', '\u201D'])
+const CLOSERS = new Set([
+  '*',
+  '_',
+  ')',
+  ']',
+  '"',
+  '\'',
+  '\u2019',
+  '\u201D',
+])
 
 /**
  * What the character at `at` ends, if anything.
@@ -610,7 +736,11 @@ function boundary(text: string[], at: number, last: boolean): 'sentence' | 'clau
   let next = at + 1
   while (next < text.length && CLOSERS.has(text[next]!))
     next++
-  return (next === text.length ? last : isWhitespace(text[next]!)) ? 'sentence' : undefined
+  return (next === text.length
+    ? last
+    : isWhitespace(text[next]!))
+    ? 'sentence'
+    : undefined
 }
 
 /** A period after a lone letter, as in "e.g.", abbreviates and ends no sentence. */
@@ -641,7 +771,18 @@ function leadingRun(value: string, marker: string): number {
 }
 
 /** Characters that delimit a shell token on their own. */
-const SELF_DELIMITING = new Set(['|', '&', ';', '(', ')', '<', '>', '\'', '"', '`'])
+const SELF_DELIMITING = new Set([
+  '|',
+  '&',
+  ';',
+  '(',
+  ')',
+  '<',
+  '>',
+  '\'',
+  '"',
+  '`',
+])
 
 function commandMatches(line: string, tokens: readonly string[]): boolean {
   let from = 0
@@ -733,7 +874,9 @@ function rustLines(text: string): string[] {
   if (text === '')
     return []
   const parts = text.split('\n')
-  const lines = parts.map((part, index) => index < parts.length - 1 && part.endsWith('\r') ? part.slice(0, -1) : part)
+  const lines = parts.map((part, index) => index < parts.length - 1 && part.endsWith('\r')
+    ? part.slice(0, -1)
+    : part)
   if (text.endsWith('\n'))
     lines.pop()
   return lines

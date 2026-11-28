@@ -348,19 +348,26 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     log: RunLog,
     signal?: AbortSignal,
   ): Promise<RunOutcome> {
+    const workDir = sandboxConfig.workDir ?? 'skilld-session'
     let active: ActiveSandbox | undefined
+    let preparedSession: Promise<void> | undefined
     const userOnSession = sandboxConfig.onSession
+    const prepareSession = (sessionOptions: Parameters<NonNullable<typeof sandboxConfig.onSession>>[0]): Promise<void> => {
+      active = { sandbox: sessionOptions.session, workDir: sessionOptions.sessionWorkDir }
+      preparedSession ??= (async () => {
+        await writePreparedSource(active, prepared, signal)
+        await userOnSession?.(sessionOptions)
+      })()
+      return preparedSession
+    }
     const agent = new HarnessAgent({
       harness,
       skills: [skill],
       permissionMode: 'allow-all',
       sandboxConfig: {
         ...sandboxConfig,
-        onSession: async (sessionOptions) => {
-          active = { sandbox: sessionOptions.session, workDir: sessionOptions.sessionWorkDir }
-          await writePreparedSource(active, prepared, signal)
-          await userOnSession?.(sessionOptions)
-        },
+        workDir,
+        onSession: prepareSession,
       },
     })
 
@@ -370,6 +377,18 @@ export function createSkillHarness(options: CreateSkillHarnessOptions): SkillHar
     const session = sessionResult.value
 
     try {
+      // Adapters without a bootstrap recipe defer onSession until first sandbox use.
+      // Prepare the session up front so inputs exist and prompt paths are known before the first turn.
+      if (!active) {
+        const sessionWorkDir = posix.join(sandboxSession.defaultWorkingDirectory, workDir)
+        const preparedResult = await prepareSession({
+          session: sandboxSession.restricted(),
+          sessionWorkDir,
+          abortSignal: signal,
+        }).then(ok, cause => err(cause))
+        if (preparedResult._tag === 'Err')
+          return toAgentError(preparedResult.error, signal)
+      }
       if (!active)
         return err({ _tag: 'AgentFailed', message: 'Harness did not provide its sandbox session.' })
       const sourcePath = sourcePathOf(active, prepared)

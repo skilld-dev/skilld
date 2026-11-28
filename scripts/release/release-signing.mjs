@@ -17,7 +17,9 @@ export const RELEASE_SIGNATURE_ASSET = 'skilld-release.sig'
 const PKCS8_ED25519_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex')
 
 export function releaseAssetName(spec) {
-  return `skilld-${spec.directory}${spec.os === 'win32' ? '.exe' : ''}`
+  return `skilld-${spec.directory}${spec.os === 'win32'
+    ? '.exe'
+    : ''}`
 }
 
 /** The exact bytes the release key signs. The CLI parses this format strictly. */
@@ -32,11 +34,18 @@ function privateKey(seed) {
   const bytes = Buffer.from(seed, 'base64url')
   if (bytes.length !== 32 || bytes.toString('base64url') !== seed)
     throw new Error('SKILLD_RELEASE_SIGNING_KEY must be a canonical base64url 32-byte Ed25519 seed.')
-  return createPrivateKey({ key: Buffer.concat([PKCS8_ED25519_PREFIX, bytes]), format: 'der', type: 'pkcs8' })
+  return createPrivateKey({
+    key: Buffer.concat([PKCS8_ED25519_PREFIX, bytes]),
+    format: 'der',
+    type: 'pkcs8',
+  })
 }
 
 function signedMessage(manifest) {
-  return Buffer.concat([RELEASE_DOMAIN, createHash('sha256').update(manifest).digest()])
+  return Buffer.concat([
+    RELEASE_DOMAIN,
+    createHash('sha256').update(manifest).digest(),
+  ])
 }
 
 export function releasePublicKey(seed) {
@@ -48,14 +57,20 @@ export function signReleaseManifest(manifest, seed) {
 }
 
 export function verifyReleaseSignature(manifest, signature, publicKey) {
-  const key = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' })
+  const key = createPublicKey({
+    key: { kty: 'OKP', crv: 'Ed25519', x: publicKey },
+    format: 'jwk',
+  })
   return verify(null, signedMessage(manifest), key, Buffer.from(signature, 'base64url'))
 }
 
 export function generateReleaseKey() {
   const { privateKey: key } = generateKeyPairSync('ed25519')
   const seed = key.export({ format: 'jwk' }).d
-  return { seed, publicKey: releasePublicKey(seed) }
+  return {
+    seed,
+    publicKey: releasePublicKey(seed),
+  }
 }
 
 /** Copies every native binary to its release asset name, then writes the signed manifest. */
@@ -76,7 +91,11 @@ export async function stageRelease({ packagesRoot, outputRoot, version, seed, pu
     throw new Error('The release manifest signature does not verify.')
   await writeFile(join(outputRoot, RELEASE_MANIFEST_ASSET), manifest)
   await writeFile(join(outputRoot, RELEASE_SIGNATURE_ASSET), `${signature}\n`)
-  return [...assets.map(asset => asset.name), RELEASE_MANIFEST_ASSET, RELEASE_SIGNATURE_ASSET]
+  return [
+    ...assets.map(asset => asset.name),
+    RELEASE_MANIFEST_ASSET,
+    RELEASE_SIGNATURE_ASSET,
+  ]
 }
 
 async function setGithubSecret(name, value) {
@@ -102,7 +121,13 @@ async function main([command, ...rest]) {
   if (command === 'generate-key') {
     const { seed, publicKey } = generateReleaseKey()
     await setGithubSecret('SKILLD_RELEASE_SIGNING_KEY', seed)
-    await execFileAsync('gh', ['variable', 'set', 'SKILLD_RELEASE_PUBLIC_KEY', '--body', publicKey])
+    await execFileAsync('gh', [
+      'variable',
+      'set',
+      'SKILLD_RELEASE_PUBLIC_KEY',
+      '--body',
+      publicKey,
+    ])
     process.stdout.write(`Set SKILLD_RELEASE_SIGNING_KEY and SKILLD_RELEASE_PUBLIC_KEY.\nPublic key: ${publicKey}\n`)
     if (rest[0] === '--print-seed')
       process.stdout.write(`Back up this seed offline, then clear your terminal: ${seed}\n`)

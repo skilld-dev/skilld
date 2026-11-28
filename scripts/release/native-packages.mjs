@@ -12,14 +12,75 @@ const REGISTRY_RESPONSE_LIMIT = 1024 * 1024
 const SEMVER_WITH_NPM_CHANNEL = /^\d+\.\d+\.\d+(?:-([a-z][a-z0-9-]*)(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z.-]+)?$/
 
 export const nativePackageSpecs = Object.freeze([
-  nativePackage({ directory: 'cli-darwin-arm64', runner: 'macos-15', target: 'aarch64-apple-darwin', os: 'darwin', cpu: 'arm64', format: 'mach-o' }),
-  nativePackage({ directory: 'cli-darwin-x64', runner: 'macos-15-intel', target: 'x86_64-apple-darwin', os: 'darwin', cpu: 'x64', format: 'mach-o' }),
-  nativePackage({ directory: 'cli-linux-arm64-gnu', runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-gnu', os: 'linux', cpu: 'arm64', libc: 'glibc', format: 'elf' }),
-  nativePackage({ directory: 'cli-linux-arm64-musl', runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-musl', os: 'linux', cpu: 'arm64', libc: 'musl', format: 'elf', cflags: '-mno-outline-atomics' }),
-  nativePackage({ directory: 'cli-linux-x64-gnu', runner: 'ubuntu-24.04', target: 'x86_64-unknown-linux-gnu', os: 'linux', cpu: 'x64', libc: 'glibc', format: 'elf' }),
-  nativePackage({ directory: 'cli-linux-x64-musl', runner: 'ubuntu-24.04', target: 'x86_64-unknown-linux-musl', os: 'linux', cpu: 'x64', libc: 'musl', format: 'elf' }),
-  nativePackage({ directory: 'cli-win32-arm64-msvc', runner: 'windows-11-arm', target: 'aarch64-pc-windows-msvc', os: 'win32', cpu: 'arm64', format: 'pe' }),
-  nativePackage({ directory: 'cli-win32-x64-msvc', runner: 'windows-2025', target: 'x86_64-pc-windows-msvc', os: 'win32', cpu: 'x64', format: 'pe' }),
+  nativePackage({
+    directory: 'cli-darwin-arm64',
+    runner: 'macos-15',
+    target: 'aarch64-apple-darwin',
+    os: 'darwin',
+    cpu: 'arm64',
+    format: 'mach-o',
+  }),
+  nativePackage({
+    directory: 'cli-darwin-x64',
+    runner: 'macos-15-intel',
+    target: 'x86_64-apple-darwin',
+    os: 'darwin',
+    cpu: 'x64',
+    format: 'mach-o',
+  }),
+  nativePackage({
+    directory: 'cli-linux-arm64-gnu',
+    runner: 'ubuntu-24.04-arm',
+    target: 'aarch64-unknown-linux-gnu',
+    os: 'linux',
+    cpu: 'arm64',
+    libc: 'glibc',
+    format: 'elf',
+  }),
+  nativePackage({
+    directory: 'cli-linux-arm64-musl',
+    runner: 'ubuntu-24.04-arm',
+    target: 'aarch64-unknown-linux-musl',
+    os: 'linux',
+    cpu: 'arm64',
+    libc: 'musl',
+    format: 'elf',
+    cflags: '-mno-outline-atomics',
+  }),
+  nativePackage({
+    directory: 'cli-linux-x64-gnu',
+    runner: 'ubuntu-24.04',
+    target: 'x86_64-unknown-linux-gnu',
+    os: 'linux',
+    cpu: 'x64',
+    libc: 'glibc',
+    format: 'elf',
+  }),
+  nativePackage({
+    directory: 'cli-linux-x64-musl',
+    runner: 'ubuntu-24.04',
+    target: 'x86_64-unknown-linux-musl',
+    os: 'linux',
+    cpu: 'x64',
+    libc: 'musl',
+    format: 'elf',
+  }),
+  nativePackage({
+    directory: 'cli-win32-arm64-msvc',
+    runner: 'windows-11-arm',
+    target: 'aarch64-pc-windows-msvc',
+    os: 'win32',
+    cpu: 'arm64',
+    format: 'pe',
+  }),
+  nativePackage({
+    directory: 'cli-win32-x64-msvc',
+    runner: 'windows-2025',
+    target: 'x86_64-pc-windows-msvc',
+    os: 'win32',
+    cpu: 'x64',
+    format: 'pe',
+  }),
 ])
 
 export function nativeReleaseMatrix() {
@@ -47,7 +108,9 @@ export async function verifyNativePackage(directory, spec) {
   assertEqual(manifest.name, spec.packageName, `${spec.packageName} has the wrong package name`)
   assertEqual(manifest.os, [spec.os], `${spec.packageName} has the wrong operating system`)
   assertEqual(manifest.cpu, [spec.cpu], `${spec.packageName} has the wrong CPU`)
-  assertEqual(manifest.libc, spec.libc ? [spec.libc] : undefined, `${spec.packageName} has the wrong libc`)
+  assertEqual(manifest.libc, spec.libc
+    ? [spec.libc]
+    : undefined, `${spec.packageName} has the wrong libc`)
   assertEqual(manifest.files, [`bin/${spec.executable}`], `${spec.packageName} has the wrong package files`)
   if (spec.executableMode) {
     assertEqual(
@@ -203,7 +266,9 @@ export async function lookupIndependentPackage({
 }
 
 function nativePackage(spec) {
-  const executable = spec.os === 'win32' ? 'skilld.exe' : 'skilld'
+  const executable = spec.os === 'win32'
+    ? 'skilld.exe'
+    : 'skilld'
   return Object.freeze({
     ...spec,
     executable,
@@ -214,7 +279,9 @@ function nativePackage(spec) {
 
 function verifyBinaryFormat(bytes, spec) {
   if (spec.format === 'elf') {
-    const machine = spec.cpu === 'arm64' ? 0xB7 : 0x3E
+    const machine = spec.cpu === 'arm64'
+      ? 0xB7
+      : 0x3E
     const valid = bytes.length >= 20
       && bytes.subarray(0, 4).equals(Buffer.from([0x7F, 0x45, 0x4C, 0x46]))
       && bytes.readUInt16LE(18) === machine
@@ -222,7 +289,9 @@ function verifyBinaryFormat(bytes, spec) {
       throw new Error(`${spec.packageName} does not contain an ELF binary for ${spec.cpu}`)
   }
   if (spec.format === 'mach-o') {
-    const cpu = spec.cpu === 'arm64' ? 0x0100000C : 0x01000007
+    const cpu = spec.cpu === 'arm64'
+      ? 0x0100000C
+      : 0x01000007
     const valid = bytes.length >= 8
       && bytes.subarray(0, 4).equals(Buffer.from([0xCF, 0xFA, 0xED, 0xFE]))
       && bytes.readUInt32LE(4) === cpu
@@ -230,8 +299,12 @@ function verifyBinaryFormat(bytes, spec) {
       throw new Error(`${spec.packageName} does not contain a Mach-O binary for ${spec.cpu}`)
   }
   if (spec.format === 'pe') {
-    const offset = bytes.length >= 64 ? bytes.readUInt32LE(0x3C) : bytes.length
-    const machine = spec.cpu === 'arm64' ? 0xAA64 : 0x8664
+    const offset = bytes.length >= 64
+      ? bytes.readUInt32LE(0x3C)
+      : bytes.length
+    const machine = spec.cpu === 'arm64'
+      ? 0xAA64
+      : 0x8664
     const valid = bytes.subarray(0, 2).equals(Buffer.from('MZ'))
       && bytes.subarray(offset, offset + 4).equals(Buffer.from('PE\0\0', 'binary'))
       && bytes.length >= offset + 6

@@ -37,23 +37,39 @@ async function install({ tamperSignature = false, tamperBinary = false, publicKe
   const asset = `skilld-cli-linux-x64-${libc}`
   const binary = '#!/bin/sh\necho "skilld 9.0.0"\n'
   const key = generateReleaseKey()
-  const manifest = buildReleaseManifest('9.0.0', [{ name: asset, bytes: Buffer.from(binary) }])
-  const signature = signReleaseManifest(tamperSignature ? manifest.replace('9.0.0', '9.0.1') : manifest, key.seed)
+  const manifest = buildReleaseManifest('9.0.0', [
+    {
+      name: asset,
+      bytes: Buffer.from(binary),
+    },
+  ])
+  const signature = signReleaseManifest(tamperSignature
+    ? manifest.replace('9.0.0', '9.0.1')
+    : manifest, key.seed)
   await writeFile(join(release, 'skilld-release.txt'), manifest)
   await writeFile(join(release, 'skilld-release.sig'), `${signature}\n`)
-  await writeFile(join(release, asset), tamperBinary ? `${binary}# changed\n` : binary)
+  await writeFile(join(release, asset), tamperBinary
+    ? `${binary}# changed\n`
+    : binary)
 
   const script = (await readFile('install.sh', 'utf8'))
     .replace('__SKILLD_RELEASE_PUBLIC_KEY__', publicKey ?? key.publicKey)
     .replace(/download\(\) \{[\s\S]*?\n\}\n/, `download() {\n  cp "${release}/$(basename "$1")" "$2"\n}\n`)
   await writeFile(join(root, 'install.sh'), script)
   const target = installDir ?? join(root, 'bin')
-  const runEnv = { ...process.env, SKILLD_INSTALL_DIR: target, HOME: home ?? await temporaryDirectory('skilld-home-'), SHELL: shell }
+  const runEnv = {
+    ...process.env,
+    SKILLD_INSTALL_DIR: target,
+    HOME: home ?? await temporaryDirectory('skilld-home-'),
+    SHELL: shell,
+  }
   delete runEnv.ZDOTDIR
   delete runEnv.XDG_CONFIG_HOME
   delete runEnv.SKILLD_NO_MODIFY_PATH
   Object.assign(runEnv, env)
-  const result = await execFileAsync('sh', [join(root, 'install.sh')], { env: runEnv })
+  const result = await execFileAsync('sh', [
+    join(root, 'install.sh'),
+  ], { env: runEnv })
     .then(output => ({ ok: true, ...output }), error => ({ ok: false, ...error }))
   return { result, installDir: target }
 }
@@ -64,7 +80,13 @@ async function install({ tamperSignature = false, tamperBinary = false, publicKe
  * `--norc` keeps that to the one explicit read.
  */
 function newShell(shell, home, profile, command) {
-  return execFileAsync(shell, [...(shell === 'bash' ? ['--norc'] : []), '-c', `. "${profile}"; ${command}`], {
+  return execFileAsync(shell, [
+    ...(shell === 'bash'
+      ? ['--norc']
+      : []),
+    '-c',
+    `. "${profile}"; ${command}`,
+  ], {
     env: { HOME: home, PATH: '/usr/bin:/bin' },
   })
 }
@@ -125,7 +147,10 @@ it.runIf(supported)('puts skilld on PATH through .profile for other shells', asy
 
 it.runIf(supported)('leaves shell profiles alone when SKILLD_NO_MODIFY_PATH=1', async () => {
   const home = await temporaryDirectory('skilld-home-')
-  const { result, installDir } = await install({ home, env: { SKILLD_NO_MODIFY_PATH: '1' } })
+  const { result, installDir } = await install({
+    home,
+    env: { SKILLD_NO_MODIFY_PATH: '1' },
+  })
 
   assert.ok(result.ok, result.stderr)
   assert.match(result.stdout, new RegExp(`Add ${installDir} to your PATH`))
